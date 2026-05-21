@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0ea5e9">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tasks">
+<title>Tasks</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --surface-2: #f5f5f4;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+    --accent: #0ea5e9;
+    --accent-fg: #ffffff;
+    --high: #ef4444;
+    --med: #f59e0b;
+    --low: #10b981;
+    --danger: #ef4444;
+    --hover: rgba(0,0,0,0.04);
+    --shadow: 0 4px 20px rgba(0,0,0,0.08);
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0a09;
+      --surface: #1c1917;
+      --surface-2: #292524;
+      --border: #292524;
+      --text: #fafaf9;
+      --muted: #a8a29e;
+      --accent: #38bdf8;
+      --accent-fg: #0c0a09;
+      --high: #f87171;
+      --med: #fbbf24;
+      --low: #34d399;
+      --hover: rgba(255,255,255,0.05);
+      --shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--bg); margin: 0; }
+  body {
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard", "Apple SD Gothic Neo", sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    padding: calc(var(--safe-top) + 16px) 16px calc(var(--safe-bottom) + 96px);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 24px;
+  }
+  .title-row h1 { font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .icon-btn {
+    appearance: none; -webkit-appearance: none;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    width: 40px; height: 40px; border-radius: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 18px; transition: all 0.12s;
+  }
+  .icon-btn:hover { background: var(--surface-2); }
+  .icon-btn:active { transform: scale(0.96); }
+
+  .section { margin-bottom: 22px; }
+  .section-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    color: var(--muted); margin: 0 0 8px 0; text-transform: uppercase;
+    display: flex; align-items: center; gap: 8px; padding-left: 4px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .pri-high .dot { background: var(--high); }
+  .pri-med  .dot { background: var(--med); }
+  .pri-low  .dot { background: var(--low); }
+  .count { color: var(--muted); margin-left: auto; font-weight: 500; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 4px; overflow: hidden;
+  }
+  .task {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px; border-radius: 8px; position: relative; min-height: 44px;
+    transition: background 0.12s;
+  }
+  .task:hover { background: var(--hover); }
+  .task input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 20px; height: 20px; margin: 1px 0 0 0;
+    border: 1.5px solid var(--border); border-radius: 5px;
+    background: transparent; cursor: pointer;
+    flex-shrink: 0; transition: all 0.15s; position: relative;
+  }
+  .task input[type="checkbox"]:checked {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .task input[type="checkbox"]:checked::after {
+    content: ""; position: absolute; left: 5px; top: 1px;
+    width: 5px; height: 10px;
+    border: solid var(--accent-fg); border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .task-text {
+    flex: 1; cursor: text; min-width: 0;
+    word-break: break-word; padding: 1px 0;
+  }
+  .task-text:focus { outline: none; }
+  .task.done .task-text { color: var(--muted); text-decoration: line-through; }
+  .meta-inline { color: var(--muted); font-size: 12px; margin-left: 6px; font-variant-numeric: tabular-nums; }
+  .task-actions {
+    display: flex; gap: 2px; opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .task:hover .task-actions, .task.menu-open .task-actions { opacity: 1; }
+  @media (hover: none) {
+    .task-actions { opacity: 1; }
+  }
+  .row-btn {
+    appearance: none; -webkit-appearance: none;
+    background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    width: 28px; height: 28px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; transition: all 0.12s;
+  }
+  .row-btn:hover { background: var(--surface-2); color: var(--text); }
+  .row-btn.danger:hover { background: var(--danger); color: white; }
+
+  .bullet { padding: 4px 10px 4px 40px; color: var(--muted); font-size: 13px; }
+  .indent-1 { padding-left: 36px; }
+  .indent-2 { padding-left: 60px; }
+  .indent-3 { padding-left: 84px; }
+  .empty {
+    padding: 12px 10px; color: var(--muted); font-size: 13px; font-style: italic;
+  }
+
+  /* FAB - Add button */
+  .fab {
+    position: fixed; right: 20px; bottom: calc(var(--safe-bottom) + 20px);
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg);
+    border: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; font-weight: 300;
+    box-shadow: var(--shadow);
+    z-index: 10;
+    transition: transform 0.12s;
+  }
+  .fab:active { transform: scale(0.94); }
+
+  /* Modal / Bottom sheet */
+  .scrim {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s; z-index: 20;
+  }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: var(--surface); border-radius: 16px 16px 0 0;
+    padding: 20px 20px calc(var(--safe-bottom) + 20px);
+    transform: translateY(100%); transition: transform 0.25s ease;
+    z-index: 21; max-width: 560px; margin: 0 auto;
+  }
+  .sheet.show { transform: translateY(0); }
+  .sheet h2 { font-size: 17px; margin: 0 0 14px 0; font-weight: 600; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+  .field input[type="text"], .field input[type="password"], .field textarea {
+    width: 100%; padding: 10px 12px; font-size: 15px;
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: inherit; resize: vertical;
+  }
+  .field input:focus, .field textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .pri-picker { display: flex; gap: 8px; }
+  .pri-pill {
+    flex: 1; padding: 10px; border-radius: 8px; cursor: pointer;
+    background: var(--surface-2); border: 1.5px solid transparent;
+    text-align: center; font-size: 14px; font-weight: 500;
+    transition: all 0.12s; user-select: none;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .pri-pill:hover { background: var(--hover); }
+  .pri-pill.selected { border-color: var(--accent); background: var(--surface); }
+  .pri-pill .dot { width: 10px; height: 10px; }
+
+  .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .btn {
+    appearance: none; -webkit-appearance: none;
+    padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: all 0.12s; border: 1px solid transparent;
+    font-family: inherit;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); flex: 1; }
+  .btn-primary:hover { filter: brightness(1.05); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-ghost:hover { background: var(--surface-2); }
+  .btn-danger { background: var(--danger); color: white; }
+
+  /* Setup screen */
+  .setup {
+    max-width: 480px; margin: 80px auto; padding: 24px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  }
+  .setup h1 { font-size: 20px; margin: 0 0 6px 0; }
+  .setup p { color: var(--muted); font-size: 14px; margin: 0 0 16px 0; line-height: 1.5; }
+  .setup ol { font-size: 13px; color: var(--muted); padding-left: 18px; margin: 0 0 16px 0; }
+  .setup ol li { margin-bottom: 4px; }
+  .setup code {
+    background: var(--surface-2); padding: 2px 5px; border-radius: 4px;
+    font-size: 12px; font-family: ui-monospace, monospace;
+  }
+  .setup .err { color: var(--danger); font-size: 13px; margin-top: 8px; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: calc(var(--safe-bottom) + 90px); left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--text); color: var(--bg);
+    padding: 9px 16px; border-radius: 999px; font-size: 13px;
+    opacity: 0; transition: opacity 0.18s, transform 0.18s; pointer-events: none;
+    z-index: 50; white-space: nowrap; max-width: 90vw;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .toast.show { opacity: 0.94; transform: translateX(-50%) translateY(0); }
+
+  /* Skeleton */
+  .skeleton {
+    height: 16px; background: linear-gradient(90deg, var(--surface-2), var(--border), var(--surface-2));
+    background-size: 200% 100%; animation: shimmer 1.5s infinite;
+    border-radius: 4px; margin: 8px 0;
+  }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  /* Sync indicator */
+  .sync-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--muted);
+    padding: 3px 8px; background: var(--surface-2); border-radius: 999px;
+  }
+  .sync-pill .dot { background: var(--low); width: 6px; height: 6px; }
+  .sync-pill.saving .dot { background: var(--med); animation: pulse 1s infinite; }
+  .sync-pill.error .dot { background: var(--danger); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* Hover-action UX on mobile: tap to reveal */
+  @media (max-width: 600px) {
+    .task-actions { opacity: 1; }
+    .icon-btn { width: 44px; height: 44px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="app"></div>
+
+<button class="fab" id="fab" aria-label="Add task" hidden>+</button>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- Add/Edit sheet -->
+<div class="sheet" id="sheet" role="dialog" aria-modal="true">
+  <h2 id="sheet-title">새 할 일</h2>
+  <div class="field">
+    <label>우선순위</label>
+    <div class="pri-picker" id="pri-picker">
+      <div class="pri-pill pri-high" data-pri="high"><span class="dot"></span>High</div>
+      <div class="pri-pill pri-med selected" data-pri="medium"><span class="dot"></span>Medium</div>
+      <div class="pri-pill pri-low" data-pri="low"><span class="dot"></span>Low</div>
+    </div>
+  </div>
+  <div class="field">
+    <label>내용</label>
+    <input type="text" id="sheet-text" placeholder="할 일을 입력하세요" autocomplete="off">
+  </div>
+  <div class="actions">
+    <button class="btn btn-ghost" id="sheet-cancel">취소</button>
+    <button class="btn btn-primary" id="sheet-save">저장</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ============ Config ============
+const OWNER = 'minsootask-web';
+const REPO  = 'tasks-data';
+const FILE  = 'active.md';
+const API   = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`;
+const SECTION_KEYS = { high: '🔥 High', medium: '🟡 Medium', low: '🟢 Low' };
+
+// ============ State ============
+const state = {
+  token: localStorage.getItem('gh_pat') || null,
+  content: '',
+  sha: '',
+  sections: [],
+  saving: false,
+};
+
+let sheetMode = 'add'; // 'add' | 'edit'
+let editingLine = -1;
+
+// ============ Utilities ============
+const $ = (q) => document.querySelector(q);
+const fmtDate = (d) => {
+  const days = ['일','월','화','수','목','금','토'];
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} (${days[d.getDay()]})`;
+};
+const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const highlightMeta = (s) => esc(s).replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>');
+
+let toastTimer;
+function toast(msg, ms = 1400) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// utf-8 safe base64
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+function base64ToUtf8(b64) {
+  const bin = atob(b64.replace(/\s/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+// ============ GitHub API ============
+async function ghLoad() {
+  const res = await fetch(API, {
+    headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
+    cache: 'no-cache',
+  });
+  if (!res.ok) {
+    if (res.status === 401) throw Object.assign(new Error('unauthorized'), { code: 401 });
+    if (res.status === 404) throw Object.assign(new Error('not-found'), { code: 404 });
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  state.sha = data.sha;
+  state.content = base64ToUtf8(data.content);
+  state.sections = parseSections(state.content);
+}
+
+async function ghSave(newContent, message) {
+  state.saving = true;
+  renderSync();
+  try {
+    let attempt = 0;
+    let mutated = newContent;
+    while (true) {
+      const res = await fetch(API, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message, content: utf8ToBase64(mutated), sha: state.sha }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        state.sha = data.content.sha;
+        state.content = mutated;
+        state.sections = parseSections(state.content);
+        state.saving = false;
+        renderSync();
+        return;
+      }
+      // 409 = sha conflict → refetch and bail (caller should retry mutation)
+      if (res.status === 409 && attempt === 0) {
+        attempt++;
+        await ghLoad();
+        throw Object.assign(new Error('conflict'), { code: 409 });
+      }
+      throw new Error(`PUT ${res.status}`);
+    }
+  } catch (e) {
+    state.saving = false;
+    renderSync(true);
+    throw e;
+  }
+}
+
+// ============ Parsing / Mutation ============
+function parseSections(text) {
+  const lines = text.split('\n');
+  const sections = [];
+  let cur = null;
+  lines.forEach((line, idx) => {
+    const hd = line.match(/^##\s+(.+)$/);
+    if (hd) {
+      cur = { title: hd[1].trim(), items: [], headerLine: idx };
+      sections.push(cur);
+      return;
+    }
+    if (!cur) return;
+    const cb = line.match(/^(\s*)- \[([ xX])\] (.*)$/);
+    if (cb) {
+      cur.items.push({
+        type: 'task',
+        indent: Math.floor(cb[1].length / 2),
+        checked: cb[2].toLowerCase() === 'x',
+        text: cb[3],
+        lineIndex: idx,
+      });
+      return;
+    }
+    const bl = line.match(/^(\s*)- (.+)$/);
+    if (bl && bl[2].trim() !== '') {
+      cur.items.push({
+        type: 'bullet',
+        indent: Math.floor(bl[1].length / 2),
+        text: bl[2],
+        lineIndex: idx,
+      });
+    }
+  });
+  return sections;
+}
+
+function findSectionByKey(key) {
+  const want = SECTION_KEYS[key];
+  return state.sections.find((s) => s.title === want);
+}
+
+function toggleAt(lineIndex, checked) {
+  const lines = state.content.split('\n');
+  const line = lines[lineIndex];
+  lines[lineIndex] = checked
+    ? line.replace('- [ ]', '- [x]')
+    : line.replace('- [x]', '- [ ]');
+  return lines.join('\n');
+}
+
+function appendToSection(key, text) {
+  const lines = state.content.split('\n');
+  const want = SECTION_KEYS[key];
+  const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+  if (headerIdx === -1) throw new Error('section not found: ' + key);
+  // Find insertion point: after last non-empty line within this section
+  let insertAfter = headerIdx;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    if (lines[i].trim() !== '') insertAfter = i;
+  }
+  // If last line of section is just "- " placeholder, replace it
+  if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
+    lines[insertAfter] = `- [ ] ${text}`;
+  } else {
+    lines.splice(insertAfter + 1, 0, `- [ ] ${text}`);
+  }
+  return lines.join('\n');
+}
+
+function editLine(lineIndex, newText) {
+  const lines = state.content.split('\n');
+  const line = lines[lineIndex];
+  const m = line.match(/^(\s*- \[[ xX]\] )(.*)$/);
+  if (!m) throw new Error('not a task line');
+  lines[lineIndex] = m[1] + newText;
+  return lines.join('\n');
+}
+
+function deleteAt(lineIndex) {
+  const lines = state.content.split('\n');
+  const base = lines[lineIndex];
+  const baseIndent = (base.match(/^(\s*)/)?.[0] || '').length;
+  let removeUntil = lineIndex;
+  for (let i = lineIndex + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    const ind = (lines[i].match(/^(\s*)/)?.[0] || '').length;
+    if (lines[i].trim() === '') continue;
+    if (ind > baseIndent) removeUntil = i;
+    else break;
+  }
+  lines.splice(lineIndex, removeUntil - lineIndex + 1);
+  return lines.join('\n');
+}
+
+function moveLineToSection(lineIndex, targetKey) {
+  const lines = state.content.split('\n');
+  // gather block: this line + indented descendants
+  const baseIndent = (lines[lineIndex].match(/^(\s*)/)?.[0] || '').length;
+  let endIdx = lineIndex;
+  for (let i = lineIndex + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    const ind = (lines[i].match(/^(\s*)/)?.[0] || '').length;
+    if (lines[i].trim() === '') continue;
+    if (ind > baseIndent) endIdx = i;
+    else break;
+  }
+  const block = lines.splice(lineIndex, endIdx - lineIndex + 1);
+  // Find target section header (after removal)
+  const want = SECTION_KEYS[targetKey];
+  const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+  if (headerIdx === -1) throw new Error('target section not found');
+  let insertAfter = headerIdx;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    if (lines[i].trim() !== '') insertAfter = i;
+  }
+  if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
+    lines.splice(insertAfter, 1, ...block);
+  } else {
+    lines.splice(insertAfter + 1, 0, ...block);
+  }
+  return lines.join('\n');
+}
+
+// ============ Rendering ============
+function renderSync(isError) {
+  const el = $('#sync-pill');
+  if (!el) return;
+  el.classList.remove('saving', 'error');
+  if (state.saving) { el.classList.add('saving'); el.lastElementChild.textContent = '저장 중'; }
+  else if (isError) { el.classList.add('error'); el.lastElementChild.textContent = '저장 실패'; }
+  else el.lastElementChild.textContent = '동기화됨';
+}
+
+function renderApp() {
+  if (!state.token) { renderSetup(); return; }
+  const app = $('#app');
+  const totalLine = state.sections.reduce((acc, s) => {
+    return acc + s.items.filter((i) => i.type === 'task' && i.text.trim()).length;
+  }, 0);
+  const doneLine = state.sections.reduce((acc, s) => {
+    return acc + s.items.filter((i) => i.type === 'task' && i.checked && i.text.trim()).length;
+  }, 0);
+
+  app.innerHTML = `
+    <header>
+      <div class="title-row">
+        <h1>오늘의 Tasks</h1>
+        <div class="meta">
+          ${fmtDate(new Date())} · ${totalLine ? `${doneLine}/${totalLine} 완료` : ''}
+          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
+        </div>
+      </div>
+      <div>
+        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
+        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
+      </div>
+    </header>
+    <div id="sections"></div>
+  `;
+
+  const root = $('#sections');
+  ['high','medium','low'].forEach((key) => {
+    const sec = findSectionByKey(key);
+    if (!sec) return;
+    const cls = key === 'high' ? 'pri-high' : key === 'medium' ? 'pri-med' : 'pri-low';
+    const realItems = sec.items.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim());
+    const taskCount = sec.items.filter((i) => i.type === 'task' && i.text.trim()).length;
+
+    const div = document.createElement('div');
+    div.className = `section ${cls}`;
+    div.innerHTML = `
+      <div class="section-title">
+        <span class="dot"></span>${esc(sec.title)}
+        ${taskCount ? `<span class="count">${taskCount}</span>` : ''}
+      </div>
+      <div class="card"></div>
+    `;
+    const card = div.querySelector('.card');
+    if (realItems.length === 0) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = '비어 있음';
+      card.appendChild(e);
+    } else {
+      sec.items.forEach((item) => {
+        if (item.type === 'task' && item.text.trim()) {
+          card.appendChild(renderTask(item, key));
+        } else if (item.type === 'bullet') {
+          const b = document.createElement('div');
+          b.className = `bullet indent-${Math.min(item.indent, 3)}`;
+          b.textContent = '• ' + item.text;
+          card.appendChild(b);
+        }
+      });
+    }
+    root.appendChild(div);
+  });
+  $('#fab').hidden = false;
+}
+
+function renderTask(item, key) {
+  const t = document.createElement('div');
+  t.className = `task indent-${Math.min(item.indent, 3)}` + (item.checked ? ' done' : '');
+  t.dataset.line = item.lineIndex;
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = item.checked;
+  cb.addEventListener('change', (e) => onToggle(item.lineIndex, e.target.checked, t, cb));
+
+  const span = document.createElement('div');
+  span.className = 'task-text';
+  span.innerHTML = highlightMeta(item.text);
+  span.title = '탭하여 편집';
+  span.addEventListener('click', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (item.indent === 0) openEditSheet(item);
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'task-actions';
+  if (item.indent === 0) {
+    // priority change cycle: high → med → low → high
+    const move = document.createElement('button');
+    move.className = 'row-btn';
+    move.title = '우선순위 변경';
+    move.innerHTML = '↕';
+    move.addEventListener('click', (e) => { e.stopPropagation(); cyclePriority(item.lineIndex, key); });
+    actions.appendChild(move);
+
+    const del = document.createElement('button');
+    del.className = 'row-btn danger';
+    del.title = '삭제';
+    del.innerHTML = '×';
+    del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
+    actions.appendChild(del);
+  }
+
+  t.appendChild(cb);
+  t.appendChild(span);
+  t.appendChild(actions);
+  return t;
+}
+
+function renderSetup() {
+  $('#fab').hidden = true;
+  $('#app').innerHTML = `
+    <div class="setup">
+      <h1>초기 설정</h1>
+      <p>이 앱은 GitHub의 <code>${OWNER}/${REPO}</code> 의 <code>${FILE}</code> 파일을 직접 읽고 씁니다. 처음 한 번만 GitHub Personal Access Token (PAT)을 입력해주세요. 토큰은 이 기기 브라우저에만 저장됩니다.</p>
+      <ol>
+        <li>github.com → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b></li>
+        <li>"Generate new token" → 만료 기한 적절히 설정</li>
+        <li>Repository access: <b>Only select repositories</b> → <code>${OWNER}/${REPO}</code> 선택</li>
+        <li>Repository permissions → <b>Contents: Read and write</b> 만 부여</li>
+        <li>생성된 <code>github_pat_…</code> 토큰을 아래 붙여넣기</li>
+      </ol>
+      <div class="field">
+        <label>Fine-grained PAT</label>
+        <input type="password" id="setup-token" placeholder="github_pat_..." autocomplete="off">
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="setup-save">저장하고 시작</button>
+      </div>
+      <div class="err" id="setup-err"></div>
+    </div>
+  `;
+  $('#setup-save').addEventListener('click', onSetupSave);
+  $('#setup-token').addEventListener('keydown', (e) => { if (e.key === 'Enter') onSetupSave(); });
+}
+
+async function onSetupSave() {
+  const tok = $('#setup-token').value.trim();
+  if (!tok) return;
+  const errEl = $('#setup-err');
+  errEl.textContent = '';
+  state.token = tok;
+  try {
+    await ghLoad();
+    localStorage.setItem('gh_pat', tok);
+    renderApp();
+    toast('연결됨');
+  } catch (e) {
+    state.token = null;
+    if (e.code === 401) errEl.textContent = '토큰이 유효하지 않습니다.';
+    else if (e.code === 404) errEl.textContent = `repo 또는 ${FILE} 파일을 찾을 수 없습니다.`;
+    else errEl.textContent = `오류: ${e.message}`;
+  }
+}
+
+// ============ Event handlers (CRUD) ============
+async function safeMutate(producer, msg, label) {
+  try {
+    const newContent = producer();
+    await ghSave(newContent, msg);
+    renderApp();
+    toast(label);
+  } catch (e) {
+    if (e.code === 409) {
+      // Conflict: state.content was refreshed by ghSave. Re-render and notify.
+      renderApp();
+      toast('충돌 — 최신 데이터 가져옴, 다시 시도하세요');
+    } else {
+      toast(`실패: ${e.message}`);
+      console.error(e);
+    }
+  }
+}
+
+async function onToggle(lineIndex, checked, el, cb) {
+  el.classList.toggle('done', checked);
+  try {
+    await ghSave(toggleAt(lineIndex, checked), checked ? 'toggle: done' : 'toggle: undo');
+    renderApp();
+  } catch (e) {
+    cb.checked = !checked;
+    el.classList.toggle('done', !checked);
+    toast(`실패: ${e.message}`);
+  }
+}
+
+function onAdd(priority, text) {
+  return safeMutate(
+    () => appendToSection(priority, text),
+    `add: ${text}`,
+    '추가됨'
+  );
+}
+
+function onEdit(lineIndex, text) {
+  return safeMutate(
+    () => editLine(lineIndex, text),
+    `edit: ${text}`,
+    '수정됨'
+  );
+}
+
+function onDelete(item) {
+  if (!confirm(`삭제할까요?\n\n"${item.text}"`)) return;
+  return safeMutate(
+    () => deleteAt(item.lineIndex),
+    `delete: ${item.text}`,
+    '삭제됨'
+  );
+}
+
+function cyclePriority(lineIndex, currentKey) {
+  const order = ['high', 'medium', 'low'];
+  const next = order[(order.indexOf(currentKey) + 1) % order.length];
+  return safeMutate(
+    () => moveLineToSection(lineIndex, next),
+    `move to ${next}`,
+    `${SECTION_KEYS[next]} 으로 이동`
+  );
+}
+
+// ============ Sheet (add/edit) ============
+function openAddSheet() {
+  sheetMode = 'add';
+  editingLine = -1;
+  $('#sheet-title').textContent = '새 할 일';
+  $('#sheet-text').value = '';
+  $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === 'medium'));
+  showSheet();
+}
+
+function openEditSheet(item) {
+  sheetMode = 'edit';
+  editingLine = item.lineIndex;
+  $('#sheet-title').textContent = '편집';
+  $('#sheet-text').value = item.text;
+  // current section
+  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
+  const cur = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+  $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === cur));
+  showSheet();
+}
+
+function showSheet() {
+  $('#scrim').classList.add('show');
+  $('#sheet').classList.add('show');
+  setTimeout(() => $('#sheet-text').focus(), 100);
+}
+function hideSheet() {
+  $('#scrim').classList.remove('show');
+  $('#sheet').classList.remove('show');
+}
+
+function sheetSave() {
+  const text = $('#sheet-text').value.trim();
+  if (!text) return;
+  const pri = $('#pri-picker .pri-pill.selected')?.dataset.pri || 'medium';
+  hideSheet();
+  if (sheetMode === 'add') {
+    onAdd(pri, text);
+  } else {
+    // Edit: if priority changed, also move
+    const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === editingLine));
+    const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+    if (curKey !== pri) {
+      // Edit then move — do as two saves to keep mutations simple
+      safeMutate(
+        () => {
+          const c1 = editLine(editingLine, text);
+          state.content = c1;
+          state.sections = parseSections(c1);
+          return moveLineToSection(editingLine, pri);
+        },
+        `edit+move: ${text}`,
+        '수정됨'
+      );
+    } else {
+      onEdit(editingLine, text);
+    }
+  }
+}
+
+// ============ Init ============
+function init() {
+  $('#fab').addEventListener('click', openAddSheet);
+  $('#scrim').addEventListener('click', hideSheet);
+  $('#sheet-cancel').addEventListener('click', hideSheet);
+  $('#sheet-save').addEventListener('click', sheetSave);
+  $('#sheet-text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sheetSave();
+    if (e.key === 'Escape') hideSheet();
+  });
+  $('#pri-picker').addEventListener('click', (e) => {
+    const pill = e.target.closest('.pri-pill');
+    if (!pill) return;
+    $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.remove('selected'));
+    pill.classList.add('selected');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.id === 'refresh-btn') refresh();
+    if (e.target.id === 'settings-btn') openSettings();
+  });
+
+  // PWA SW
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  // Refresh on visibility
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.token) refresh();
+  });
+
+  // Initial render
+  if (!state.token) {
+    renderSetup();
+  } else {
+    renderApp();
+    refresh();
+  }
+}
+
+async function refresh() {
+  if (!state.token) return;
+  try {
+    await ghLoad();
+    renderApp();
+  } catch (e) {
+    if (e.code === 401) {
+      localStorage.removeItem('gh_pat');
+      state.token = null;
+      renderSetup();
+      const err = document.querySelector('#setup-err');
+      if (err) err.textContent = '토큰이 만료되었거나 권한이 변경되었습니다. 다시 입력해주세요.';
+    } else {
+      toast(`로드 실패: ${e.message}`);
+    }
+  }
+}
+
+function openSettings() {
+  if (confirm('토큰을 재입력하시겠습니까?\n(기존 토큰은 로컬에서 삭제됩니다)')) {
+    localStorage.removeItem('gh_pat');
+    state.token = null;
+    renderSetup();
+  }
+}
+
+init();
+</script>
+</body>
+</html>
