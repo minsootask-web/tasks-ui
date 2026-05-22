@@ -291,9 +291,24 @@
   .inbox-item {
     display: flex; align-items: center; gap: 8px;
     padding: 10px; border-radius: 8px; min-height: 44px;
-    transition: background 0.12s;
+    transition: background 0.12s; cursor: pointer;
   }
   .inbox-item:hover { background: var(--hover); }
+  .inbox-item.selected { background: rgba(14,165,233,0.08); }
+  .inbox-cb {
+    appearance: none; -webkit-appearance: none;
+    width: 20px; height: 20px; flex-shrink: 0; margin: 0;
+    border: 1.5px solid var(--border); border-radius: 5px;
+    background: transparent; cursor: pointer;
+    transition: all 0.15s; position: relative;
+  }
+  .inbox-cb:checked { background: var(--accent); border-color: var(--accent); }
+  .inbox-cb:checked::after {
+    content: ""; position: absolute; left: 5px; top: 1px;
+    width: 5px; height: 10px;
+    border: solid var(--accent-fg); border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
   .inbox-text { flex: 1; word-break: break-word; font-size: 15px; }
   .inbox-actions { display: flex; gap: 4px; flex-shrink: 0; }
   .pri-mini {
@@ -307,6 +322,31 @@
   .pri-mini.h:hover { border-color: var(--high); }
   .pri-mini.m:hover { border-color: var(--med); }
   .pri-mini.l:hover { border-color: var(--low); }
+
+  /* Bulk action bar */
+  .inbox-bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding: 10px 16px calc(var(--safe-bottom) + 10px);
+    display: flex; align-items: center; gap: 6px;
+    z-index: 10; transform: translateY(100%); transition: transform 0.22s ease;
+    max-width: 720px; margin: 0 auto;
+  }
+  .inbox-bar.show { transform: translateY(0); }
+  .inbox-bar-label { font-size: 13px; color: var(--muted); flex: 1; white-space: nowrap; }
+  .bar-btn {
+    appearance: none; -webkit-appearance: none;
+    border: 1.5px solid var(--border); background: var(--surface-2); color: var(--text);
+    font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 8px;
+    cursor: pointer; transition: all 0.12s; font-family: inherit; white-space: nowrap;
+  }
+  .bar-btn.h:hover { border-color: var(--high); color: var(--high); }
+  .bar-btn.m:hover { border-color: var(--med); color: var(--med); }
+  .bar-btn.l:hover { border-color: var(--low); color: var(--low); }
+  .bar-btn.danger { border-color: transparent; }
+  .bar-btn.danger:hover { background: var(--danger); border-color: var(--danger); color: white; }
+  .bar-btn.ghost { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
+  .bar-btn.ghost:hover { background: var(--surface-2); color: var(--text); }
 </style>
 </head>
 <body>
@@ -340,6 +380,16 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- Inbox bulk action bar -->
+<div class="inbox-bar" id="inbox-bar">
+  <span class="inbox-bar-label" id="inbox-bar-label"></span>
+  <button class="bar-btn ghost" id="bar-select-all">전체선택</button>
+  <button class="bar-btn h" id="bar-high">H</button>
+  <button class="bar-btn m" id="bar-med">M</button>
+  <button class="bar-btn l" id="bar-low">L</button>
+  <button class="bar-btn danger" id="bar-delete">🗑</button>
+</div>
+
 <script>
 'use strict';
 
@@ -365,6 +415,7 @@ const state = {
 };
 
 let currentTab = 'active';
+let selectedInbox = new Set();
 let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
 
@@ -500,6 +551,12 @@ function removeInboxLine(lineIdx) {
   return lines.join('\n');
 }
 
+function removeInboxLines(lineIdxs) {
+  const lines = state.inboxContent.split('\n');
+  [...lineIdxs].sort((a, b) => b - a).forEach((idx) => lines.splice(idx, 1));
+  return lines.join('\n');
+}
+
 function parseSections(text) {
   const lines = text.split('\n');
   const sections = [];
@@ -626,7 +683,21 @@ function moveLineToSection(lineIndex, targetKey) {
 }
 
 // ============ Inbox rendering & handlers ============
+function updateInboxBar() {
+  const bar = $('#inbox-bar');
+  if (!bar) return;
+  const n = selectedInbox.size;
+  const all = state.inboxItems.length;
+  bar.classList.toggle('show', n > 0);
+  if (n > 0) {
+    $('#inbox-bar-label').textContent = `${n}개 선택`;
+    $('#bar-select-all').textContent = n === all ? '전체해제' : '전체선택';
+  }
+}
+
 function renderInbox() {
+  selectedInbox.clear();
+  updateInboxBar();
   const app = $('#app');
   const count = state.inboxItems.length;
   app.innerHTML = `
@@ -651,6 +722,7 @@ function renderInbox() {
     </div>
   `;
   bindTabEvents();
+  bindBarEvents();
   const list = $('#inbox-list');
   state.inboxItems.forEach((item) => list.appendChild(renderInboxItem(item)));
   $('#fab').hidden = true;
@@ -658,21 +730,68 @@ function renderInbox() {
 
 function renderInboxItem(item) {
   const div = document.createElement('div');
-  div.className = 'inbox-item';
-  div.innerHTML = `
-    <div class="inbox-text">${esc(item.text)}</div>
-    <div class="inbox-actions">
-      <button class="pri-mini h" title="High로 추가" data-pri="high" data-idx="${item.lineIdx}">H</button>
-      <button class="pri-mini m" title="Medium으로 추가" data-pri="medium" data-idx="${item.lineIdx}">M</button>
-      <button class="pri-mini l" title="Low로 추가" data-pri="low" data-idx="${item.lineIdx}">L</button>
-      <button class="row-btn danger" title="삭제" data-delete="${item.lineIdx}">×</button>
-    </div>
-  `;
-  div.querySelectorAll('.pri-mini').forEach((btn) => {
-    btn.addEventListener('click', () => onMoveToActive(item, btn.dataset.pri));
+  div.className = 'inbox-item' + (selectedInbox.has(item.lineIdx) ? ' selected' : '');
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'inbox-cb';
+  cb.checked = selectedInbox.has(item.lineIdx);
+  cb.addEventListener('change', (e) => {
+    e.stopPropagation();
+    toggleInboxSelect(item.lineIdx, div, cb);
   });
-  div.querySelector('[data-delete]').addEventListener('click', () => onDeleteFromInbox(item));
+
+  const text = document.createElement('div');
+  text.className = 'inbox-text';
+  text.textContent = item.text;
+
+  const actions = document.createElement('div');
+  actions.className = 'inbox-actions';
+  actions.innerHTML = `
+    <button class="pri-mini h" title="High로 추가">H</button>
+    <button class="pri-mini m" title="Medium으로 추가">M</button>
+    <button class="pri-mini l" title="Low로 추가">L</button>
+    <button class="row-btn danger" title="삭제">×</button>
+  `;
+  actions.querySelectorAll('.pri-mini').forEach((btn) => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); onMoveToActive(item, btn.classList.contains('h') ? 'high' : btn.classList.contains('m') ? 'medium' : 'low'); });
+  });
+  actions.querySelector('.row-btn').addEventListener('click', (e) => { e.stopPropagation(); onDeleteFromInbox(item); });
+
+  div.addEventListener('click', () => toggleInboxSelect(item.lineIdx, div, cb));
+  div.appendChild(cb);
+  div.appendChild(text);
+  div.appendChild(actions);
   return div;
+}
+
+function toggleInboxSelect(lineIdx, div, cb) {
+  if (selectedInbox.has(lineIdx)) {
+    selectedInbox.delete(lineIdx);
+    div.classList.remove('selected');
+    cb.checked = false;
+  } else {
+    selectedInbox.add(lineIdx);
+    div.classList.add('selected');
+    cb.checked = true;
+  }
+  updateInboxBar();
+}
+
+function bindBarEvents() {
+  $('#bar-select-all')?.addEventListener('click', () => {
+    const all = state.inboxItems.length;
+    if (selectedInbox.size === all) {
+      selectedInbox.clear();
+    } else {
+      state.inboxItems.forEach((i) => selectedInbox.add(i.lineIdx));
+    }
+    renderInbox();
+  });
+  $('#bar-high')?.addEventListener('click', () => onBulkMove('high'));
+  $('#bar-med')?.addEventListener('click',  () => onBulkMove('medium'));
+  $('#bar-low')?.addEventListener('click',  () => onBulkMove('low'));
+  $('#bar-delete')?.addEventListener('click', onBulkDelete);
 }
 
 async function onMoveToActive(item, priority) {
@@ -680,9 +799,37 @@ async function onMoveToActive(item, priority) {
     await ghLoad();
     const newActive = appendToSection(priority, item.text);
     await ghSave(newActive, `inbox → active: ${item.text}`);
-    const newInbox = removeInboxLine(item.lineIdx);
-    await ghSaveInbox(newInbox, `remove from inbox: ${item.text}`);
+    await ghSaveInbox(removeInboxLine(item.lineIdx), `remove from inbox: ${item.text}`);
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
+    renderInbox();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+async function onBulkMove(priority) {
+  const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
+  if (!items.length) return;
+  try {
+    await ghLoad();
+    for (const item of items) {
+      state.content = appendToSection(priority, item.text);
+      state.sections = parseSections(state.content);
+    }
+    await ghSave(state.content, `inbox → active (${items.length}개)`);
+    await ghSaveInbox(removeInboxLines(items.map((i) => i.lineIdx)), `remove ${items.length} from inbox`);
+    selectedInbox.clear();
+    toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
+    renderInbox();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+async function onBulkDelete() {
+  const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
+  if (!items.length) return;
+  if (!confirm(`${items.length}개를 삭제할까요?`)) return;
+  try {
+    await ghSaveInbox(removeInboxLines(items.map((i) => i.lineIdx)), `delete ${items.length} from inbox`);
+    selectedInbox.clear();
+    toast(`${items.length}개 삭제됨`);
     renderInbox();
   } catch (e) { toast(`실패: ${e.message}`); }
 }
@@ -697,7 +844,7 @@ async function onDeleteFromInbox(item) {
 }
 
 function bindTabEvents() {
-  $('#tab-active')?.addEventListener('click', () => { currentTab = 'active'; renderApp(); });
+  $('#tab-active')?.addEventListener('click', () => { currentTab = 'active'; selectedInbox.clear(); updateInboxBar(); renderApp(); });
   $('#tab-inbox')?.addEventListener('click', () => { currentTab = 'inbox'; renderInbox(); });
 }
 
