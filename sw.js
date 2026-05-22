@@ -1,5 +1,5 @@
 // 단순 서비스 워커: 정적 자원만 캐시-퍼스트, API는 항상 네트워크.
-const CACHE = "tasks-v1";
+const CACHE = "tasks-v2";
 const ASSETS = [
   "./",
   "./index.html",
