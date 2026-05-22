@@ -318,10 +318,10 @@
     cursor: pointer; transition: all 0.12s;
     display: inline-flex; align-items: center; justify-content: center;
   }
-  .pri-mini.h { color: var(--high); border-color: var(--high); }
-  .pri-mini.m { color: var(--med); border-color: var(--med); }
-  .pri-mini.l { color: var(--low); border-color: var(--low); }
-  .pri-mini:hover { filter: brightness(1.1); background: var(--surface); }
+  .pri-mini:hover { border-color: var(--accent); color: var(--text); background: var(--surface); }
+  .pri-mini.h:hover { border-color: var(--high); }
+  .pri-mini.m:hover { border-color: var(--med); }
+  .pri-mini.l:hover { border-color: var(--low); }
 
   /* Bulk action bar */
   .inbox-bar {
