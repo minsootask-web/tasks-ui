@@ -505,6 +505,14 @@
   <button class="bar-btn danger" id="bar-delete">🗑</button>
 </div>
 
+<!-- Archive bulk action bar -->
+<div class="inbox-bar" id="archive-bar">
+  <span class="inbox-bar-label" id="archive-bar-label"></span>
+  <button class="bar-btn ghost" id="archive-bar-select-all">전체선택</button>
+  <button class="bar-btn" id="archive-bar-restore">↺ 복구</button>
+  <button class="bar-btn danger" id="archive-bar-purge">🗑</button>
+</div>
+
 <script>
 'use strict';
 
@@ -542,6 +550,7 @@ const state = {
 
 let currentTab = 'active';
 let selectedInbox = new Set();
+let selectedArchive = new Set();
 let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
 
@@ -1095,6 +1104,8 @@ function toggleInboxSelect(lineIdx, div, cb) {
 function renderArchive() {
   selectedInbox.clear();
   updateInboxBar();
+  selectedArchive.clear();
+  updateArchiveBar();
   const app = $('#app');
   const items = [...state.archiveItems].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
   const inboxCount = state.inboxItems.length;
@@ -1129,7 +1140,16 @@ function renderArchive() {
 
 function renderArchiveItem(entry) {
   const div = document.createElement('div');
-  div.className = 'inbox-item archive-item';
+  div.className = 'inbox-item archive-item' + (selectedArchive.has(entry.id) ? ' selected' : '');
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'inbox-cb';
+  cb.checked = selectedArchive.has(entry.id);
+  cb.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleArchiveSelect(entry.id, div, cb);
+  });
 
   const meta = document.createElement('span');
   meta.className = 'archive-badge';
@@ -1166,10 +1186,95 @@ function renderArchiveItem(entry) {
   actions.appendChild(restore);
   actions.appendChild(del);
 
+  div.addEventListener('click', () => toggleArchiveSelect(entry.id, div, cb));
+  div.appendChild(cb);
   div.appendChild(meta);
   div.appendChild(text);
   div.appendChild(actions);
   return div;
+}
+
+function toggleArchiveSelect(id, div, cb) {
+  if (selectedArchive.has(id)) {
+    selectedArchive.delete(id);
+    div.classList.remove('selected');
+    cb.checked = false;
+  } else {
+    selectedArchive.add(id);
+    div.classList.add('selected');
+    cb.checked = true;
+  }
+  updateArchiveBar();
+}
+
+function updateArchiveBar() {
+  const bar = $('#archive-bar');
+  if (!bar) return;
+  const n = selectedArchive.size;
+  const all = state.archiveItems.length;
+  bar.classList.toggle('show', n > 0);
+  if (n > 0) {
+    $('#archive-bar-label').textContent = `${n}개 선택`;
+    $('#archive-bar-select-all').textContent = n === all ? '전체해제' : '전체선택';
+  }
+}
+
+async function onBulkRestore() {
+  const ids = [...selectedArchive];
+  const entries = state.archiveItems.filter((i) => selectedArchive.has(i.id));
+  if (!entries.length) return;
+  try {
+    const activeEntries = entries.filter((e) => e.source === 'active');
+    if (activeEntries.length) {
+      await ghLoad();
+      const lines = state.content.split('\n');
+      activeEntries.forEach((entry) => {
+        const want = SECTION_KEYS[entry.priority];
+        const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+        if (headerIdx === -1) return;
+        let insertAfter = headerIdx;
+        for (let i = headerIdx + 1; i < lines.length; i++) {
+          if (lines[i].startsWith('## ')) break;
+          if (lines[i].trim() !== '') insertAfter = i;
+        }
+        const block = entry.block || [];
+        if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
+          lines.splice(insertAfter, 1, ...block);
+        } else {
+          lines.splice(insertAfter + 1, 0, ...block);
+        }
+      });
+      await ghSave(lines.join('\n'), `restore ${activeEntries.length} from archive`);
+    }
+
+    const inboxEntries = entries.filter((e) => e.source === 'inbox');
+    if (inboxEntries.length) {
+      await ghLoadInbox();
+      let c = state.inboxContent;
+      if (c && !c.endsWith('\n')) c += '\n';
+      inboxEntries.forEach((e) => { c += `- ${e.text}\n`; });
+      await ghSaveInbox(c, `restore ${inboxEntries.length} from archive`);
+    }
+
+    await ghLoadArchive();
+    await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `restore done: ${ids.length}`);
+    selectedArchive.clear();
+    toast(`${ids.length}개 복구됨`);
+    renderArchive();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+async function onBulkPurge() {
+  const ids = [...selectedArchive];
+  if (!ids.length) return;
+  if (!confirm(`${ids.length}개를 영구 삭제할까요?`)) return;
+  try {
+    await ghLoadArchive();
+    await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `purge ${ids.length} from archive`);
+    selectedArchive.clear();
+    toast(`${ids.length}개 영구 삭제됨`);
+    renderArchive();
+  } catch (e) { toast(`실패: ${e.message}`); }
 }
 
 function genArchiveId() {
@@ -1636,9 +1741,13 @@ async function onDeleteFromInbox(item) {
 }
 
 function bindTabEvents() {
-  $('#tab-active')?.addEventListener('click', () => { currentTab = 'active'; selectedInbox.clear(); updateInboxBar(); renderApp(); });
-  $('#tab-inbox')?.addEventListener('click', () => { currentTab = 'inbox'; renderInbox(); });
-  $('#tab-memo')?.addEventListener('click', () => { currentTab = 'memo'; selectedInbox.clear(); updateInboxBar(); renderMemos(); });
+  const clearAll = () => {
+    selectedInbox.clear(); updateInboxBar();
+    selectedArchive.clear(); updateArchiveBar();
+  };
+  $('#tab-active')?.addEventListener('click', () => { currentTab = 'active'; clearAll(); renderApp(); });
+  $('#tab-inbox')?.addEventListener('click', () => { currentTab = 'inbox'; selectedArchive.clear(); updateArchiveBar(); renderInbox(); });
+  $('#tab-memo')?.addEventListener('click', () => { currentTab = 'memo'; clearAll(); renderMemos(); });
   $('#tab-archive')?.addEventListener('click', () => { currentTab = 'archive'; selectedInbox.clear(); updateInboxBar(); renderArchive(); });
 }
 
@@ -1758,14 +1867,12 @@ function renderTask(item, key) {
   handle.addEventListener('click', (e) => e.stopPropagation());
   actions.appendChild(handle);
 
-  if (item.indent === 0) {
-    const del = document.createElement('button');
-    del.className = 'row-btn danger';
-    del.title = '삭제';
-    del.innerHTML = '×';
-    del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
-    actions.appendChild(del);
-  }
+  const del = document.createElement('button');
+  del.className = 'row-btn danger';
+  del.title = item.indent === 0 ? '보관함으로 이동' : '삭제';
+  del.innerHTML = '×';
+  del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
+  actions.appendChild(del);
 
   t.appendChild(cb);
   t.appendChild(span);
@@ -1867,6 +1974,15 @@ function onEdit(lineIndex, text) {
 }
 
 async function onDelete(item) {
+  if (item.indent > 0) {
+    if (!confirm(`삭제할까요?\n\n"${item.text}"`)) return;
+    try {
+      await ghSave(deleteAt(item.lineIndex), `delete sub: ${item.text}`);
+      renderApp();
+      toast('삭제됨');
+    } catch (e) { toast(`실패: ${e.message}`); }
+    return;
+  }
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
   try {
     await archiveActiveTask(item);
@@ -2081,6 +2197,15 @@ function init() {
     if (currentTab === 'memo') onAddMemo();
     else openAddSheet();
   });
+
+  $('#archive-bar-select-all')?.addEventListener('click', () => {
+    const all = state.archiveItems.length;
+    if (selectedArchive.size === all) selectedArchive.clear();
+    else state.archiveItems.forEach((e) => selectedArchive.add(e.id));
+    renderArchive();
+  });
+  $('#archive-bar-restore')?.addEventListener('click', onBulkRestore);
+  $('#archive-bar-purge')?.addEventListener('click', onBulkPurge);
   $('#scrim').addEventListener('click', hideSheet);
   $('#sheet-cancel').addEventListener('click', hideSheet);
   $('#sheet-save').addEventListener('click', sheetSave);
