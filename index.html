@@ -715,6 +715,12 @@ function moveLineToPosition(srcLineIndex, target) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, srcLineIndex);
   const blockLen = end - start + 1;
+
+  // Guard: refuse insertion inside the moving block (would corrupt structure)
+  if (target.beforeLine != null && target.beforeLine > start && target.beforeLine <= end) {
+    throw new Error('invalid drop target inside source block');
+  }
+
   const block = lines.splice(start, blockLen);
 
   if (target.beforeLine != null) {
@@ -1156,8 +1162,12 @@ function onDragStart(e, item, key, taskEl) {
   const indicator = document.createElement('div');
   indicator.className = 'drop-indicator';
 
+  const blockRange = extractBlock(state.content.split('\n'), item.lineIndex);
+
   dragCtx.active = true;
   dragCtx.srcLine = item.lineIndex;
+  dragCtx.srcStart = blockRange.start;
+  dragCtx.srcEnd = blockRange.end;
   dragCtx.srcKey = key;
   dragCtx.srcEl = taskEl;
   dragCtx.ghost = ghost;
@@ -1203,7 +1213,13 @@ function onDragMove(e) {
   const card = section.querySelector('.card');
   const taskUnder = el.closest('.task');
 
-  if (taskUnder && card.contains(taskUnder) && taskUnder !== dragCtx.srcEl) {
+  const isOwnBlock = (el2) => {
+    if (!el2) return false;
+    const ln = +el2.dataset.line;
+    return ln >= dragCtx.srcStart && ln <= dragCtx.srcEnd;
+  };
+
+  if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
     const r = taskUnder.getBoundingClientRect();
     const above = e.clientY < r.top + r.height / 2;
     if (above) {
@@ -1212,7 +1228,7 @@ function onDragMove(e) {
     } else {
       card.insertBefore(indicator, taskUnder.nextSibling);
       let next = taskUnder.nextElementSibling;
-      while (next && !next.classList.contains('task')) next = next.nextElementSibling;
+      while (next && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
       dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null };
     }
   } else {
