@@ -159,6 +159,7 @@
     z-index: 10;
     transition: transform 0.12s;
   }
+  .fab[hidden] { display: none; }
   .fab:active { transform: scale(0.94); }
 
   /* Modal / Bottom sheet */
@@ -370,6 +371,97 @@
   .section.drop-active .card {
     background: color-mix(in srgb, var(--accent) 5%, var(--surface));
   }
+  .task.drop-into {
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    border-radius: 8px;
+  }
+
+  /* Archive */
+  .archive-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; flex-shrink: 0;
+    font-size: 13px; line-height: 1;
+  }
+
+  /* Memo board (masonry / column-based) */
+  .memo-board {
+    --cols: 3;
+    --gap: 10px;
+    display: grid;
+    grid-template-columns: repeat(var(--cols), 1fr);
+    gap: var(--gap);
+    min-height: 200px;
+  }
+  .memo-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    min-height: 60px;
+  }
+  .memo {
+    background: #fef3c7;
+    color: #1c1917;
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 13px; line-height: 1.5;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+    cursor: grab;
+    word-break: break-word;
+    white-space: pre-wrap;
+    position: relative;
+    transition: box-shadow 0.12s;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+    min-height: 56px;
+  }
+  .memo:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.1); }
+  .memo.dragging { opacity: 0.3; }
+  .memo.editing {
+    cursor: text; user-select: text; -webkit-user-select: text;
+    outline: 2px solid var(--accent); outline-offset: 1px;
+    background: #fffbeb;
+  }
+  .memo .memo-text {
+    min-height: 36px;
+    outline: none;
+  }
+  .memo .memo-del {
+    position: absolute; top: 2px; right: 2px;
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 0; background: rgba(0,0,0,0.08); color: #1c1917;
+    font-size: 13px; line-height: 1; cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .memo:hover .memo-del { display: inline-flex; }
+  @media (hover: none) { .memo .memo-del { display: inline-flex; } }
+  .memo-ghost {
+    position: fixed; pointer-events: none; z-index: 100;
+    background: #fef3c7; color: #1c1917;
+    border-radius: 4px; padding: 10px 12px;
+    font-size: 13px; line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    opacity: 0.92;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .memo-drop-placeholder {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 2px dashed var(--accent);
+    border-radius: 4px;
+    height: 56px;
+    pointer-events: none;
+  }
+  @media (max-width: 600px) {
+    .memo-board { --cols: 2; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .memo { background: #facc15; color: #1c1917; }
+    .memo.editing { background: #fde047; }
+    .memo-ghost { background: #facc15; color: #1c1917; }
+  }
 </style>
 </head>
 <body>
@@ -421,9 +513,15 @@ const OWNER = 'minsootask-web';
 const REPO  = 'tasks-data';
 const FILE  = 'active.md';
 const INBOX_FILE = 'inbox.md';
+const ARCHIVE_FILE = 'archive.json';
+const MEMOS_FILE = 'memos.json';
 const API   = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`;
 const INBOX_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${INBOX_FILE}`;
+const ARCHIVE_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ARCHIVE_FILE}`;
+const MEMOS_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${MEMOS_FILE}`;
 const SECTION_KEYS = { high: '🔥 High', medium: '🟡 Medium', low: '🟢 Low' };
+function getMemoCols() { return window.innerWidth <= 600 ? 2 : 3; }
+const MEMO_MAX_COLS = 3;
 
 // ============ State ============
 const state = {
@@ -435,6 +533,11 @@ const state = {
   inboxContent: '',
   inboxSha: '',
   inboxItems: [],
+  archiveContent: '',
+  archiveSha: '',
+  archiveItems: [],
+  memosSha: '',
+  memos: [],
 };
 
 let currentTab = 'active';
@@ -485,6 +588,100 @@ async function ghLoadInbox() {
   state.inboxSha = data.sha;
   state.inboxContent = base64ToUtf8(data.content);
   state.inboxItems = parseInbox(state.inboxContent);
+}
+
+async function ghLoadArchive() {
+  const res = await fetch(ARCHIVE_API, {
+    headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
+    cache: 'no-cache',
+  });
+  if (res.status === 404) {
+    await ghCreateArchive();
+    return ghLoadArchive();
+  }
+  if (!res.ok) return;
+  const data = await res.json();
+  state.archiveSha = data.sha;
+  state.archiveContent = base64ToUtf8(data.content);
+  try { state.archiveItems = JSON.parse(state.archiveContent) || []; }
+  catch { state.archiveItems = []; }
+}
+
+async function ghCreateArchive() {
+  const res = await fetch(ARCHIVE_API, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message: 'init: archive', content: utf8ToBase64('[]\n') }),
+  });
+  if (!res.ok) throw new Error(`create archive ${res.status}`);
+}
+
+async function ghSaveArchive(newItems, message) {
+  const content = JSON.stringify(newItems, null, 2) + '\n';
+  const res = await fetch(ARCHIVE_API, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.archiveSha }),
+  });
+  if (!res.ok) throw new Error(`PUT archive ${res.status}`);
+  const data = await res.json();
+  state.archiveSha = data.content.sha;
+  state.archiveContent = content;
+  state.archiveItems = newItems;
+}
+
+async function ghLoadMemos() {
+  const res = await fetch(MEMOS_API, {
+    headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
+    cache: 'no-cache',
+  });
+  if (res.status === 404) {
+    await ghCreateMemos();
+    return ghLoadMemos();
+  }
+  if (!res.ok) return;
+  const data = await res.json();
+  state.memosSha = data.sha;
+  try { state.memos = JSON.parse(base64ToUtf8(data.content)) || []; }
+  catch { state.memos = []; }
+}
+
+async function ghCreateMemos() {
+  const res = await fetch(MEMOS_API, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message: 'init: memos', content: utf8ToBase64('[]\n') }),
+  });
+  if (!res.ok) throw new Error(`create memos ${res.status}`);
+}
+
+async function ghSaveMemos(newMemos, message) {
+  const content = JSON.stringify(newMemos, null, 2) + '\n';
+  const res = await fetch(MEMOS_API, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.memosSha }),
+  });
+  if (!res.ok) throw new Error(`PUT memos ${res.status}`);
+  const data = await res.json();
+  state.memosSha = data.content.sha;
+  state.memos = newMemos;
 }
 
 async function ghSaveInbox(newContent, message) {
@@ -688,6 +885,22 @@ function extractBlock(lines, lineIndex) {
   return { start: lineIndex, end: endIdx };
 }
 
+function getLineIndent(line) {
+  const m = line.match(/^(\s*)/);
+  return Math.floor((m?.[0]?.length || 0) / 2);
+}
+
+function adjustBlockIndent(block, deltaIndent) {
+  if (deltaIndent === 0) return block;
+  return block.map((line) => {
+    if (line.trim() === '') return line;
+    const m = line.match(/^(\s*)(.*)$/);
+    const curIndent = Math.floor(m[1].length / 2);
+    const newIndent = Math.max(0, curIndent + deltaIndent);
+    return '  '.repeat(newIndent) + m[2];
+  });
+}
+
 function moveLineToSection(lineIndex, targetKey) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, lineIndex);
@@ -708,20 +921,55 @@ function moveLineToSection(lineIndex, targetKey) {
   return lines.join('\n');
 }
 
-// Move a task block to a specific position.
-// target: { sectionKey, beforeLine } — beforeLine is the lineIndex to insert before,
-// or null/undefined to append at end of section.
+// Move a task block.
+// target: { sectionKey, beforeLine?, intoLine? }
+//   - beforeLine: insert before this line at the target line's indent (sibling)
+//   - intoLine: insert as the last child of this line (indent = target + 1)
+//   - neither: append at end of section as a main task (indent 0)
 function moveLineToPosition(srcLineIndex, target) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, srcLineIndex);
   const blockLen = end - start + 1;
 
-  // Guard: refuse insertion inside the moving block (would corrupt structure)
   if (target.beforeLine != null && target.beforeLine > start && target.beforeLine <= end) {
-    throw new Error('invalid drop target inside source block');
+    throw new Error('invalid drop: before-target is inside source block');
+  }
+  if (target.intoLine != null && target.intoLine >= start && target.intoLine <= end) {
+    throw new Error('invalid drop: cannot make self/descendant into a child');
   }
 
-  const block = lines.splice(start, blockLen);
+  const srcBaseIndent = getLineIndent(lines[start]);
+  let block = lines.splice(start, blockLen);
+
+  let targetIndent;
+  if (target.intoLine != null) {
+    let intoIdx = target.intoLine;
+    if (intoIdx > start) intoIdx -= blockLen;
+    targetIndent = getLineIndent(lines[intoIdx]) + 1;
+  } else if (target.beforeLine != null) {
+    let beforeIdx = target.beforeLine;
+    if (beforeIdx > start) beforeIdx -= blockLen;
+    targetIndent = getLineIndent(lines[beforeIdx]);
+  } else {
+    targetIndent = 0;
+  }
+  block = adjustBlockIndent(block, targetIndent - srcBaseIndent);
+
+  if (target.intoLine != null) {
+    let parentIdx = target.intoLine;
+    if (parentIdx > start) parentIdx -= blockLen;
+    const parentIndent = getLineIndent(lines[parentIdx]);
+    let insertAt = parentIdx + 1;
+    while (insertAt < lines.length) {
+      const l = lines[insertAt];
+      if (l.startsWith('## ')) break;
+      if (l.trim() === '') { insertAt++; continue; }
+      if (getLineIndent(l) <= parentIndent) break;
+      insertAt++;
+    }
+    lines.splice(insertAt, 0, ...block);
+    return lines.join('\n');
+  }
 
   if (target.beforeLine != null) {
     let insertAt = target.beforeLine;
@@ -767,7 +1015,7 @@ function renderInbox() {
   app.innerHTML = `
     <header>
       <div class="title-row">
-        <h1>오늘의 Tasks</h1>
+        <h1>오늘의 할 일</h1>
         <div class="meta">
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
@@ -778,8 +1026,10 @@ function renderInbox() {
       </div>
     </header>
     <div class="tabs">
-      <button class="tab" id="tab-active">할 일</button>
+      <button class="tab" id="tab-active">Task</button>
       <button class="tab active" id="tab-inbox">Inbox ${count ? `<span class="badge">${count}</span>` : ''}</button>
+      <button class="tab" id="tab-memo">Memo</button>
+      <button class="tab" id="tab-archive">Archive</button>
     </div>
     <div class="card" id="inbox-list">
       ${count === 0 ? '<div class="empty">Inbox가 비어 있어요</div>' : ''}
@@ -842,6 +1092,476 @@ function toggleInboxSelect(lineIdx, div, cb) {
   updateInboxBar();
 }
 
+function renderArchive() {
+  selectedInbox.clear();
+  updateInboxBar();
+  const app = $('#app');
+  const items = [...state.archiveItems].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
+  const inboxCount = state.inboxItems.length;
+  app.innerHTML = `
+    <header>
+      <div class="title-row">
+        <h1>오늘의 할 일</h1>
+        <div class="meta">
+          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
+        </div>
+      </div>
+      <div>
+        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
+        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
+      </div>
+    </header>
+    <div class="tabs">
+      <button class="tab" id="tab-active">Task</button>
+      <button class="tab" id="tab-inbox">Inbox ${inboxCount ? `<span class="badge">${inboxCount}</span>` : ''}</button>
+      <button class="tab" id="tab-memo">Memo</button>
+      <button class="tab active" id="tab-archive">Archive</button>
+    </div>
+    <div class="card" id="archive-list">
+      ${items.length === 0 ? '<div class="empty">보관된 항목이 없습니다</div>' : ''}
+    </div>
+  `;
+  bindTabEvents();
+  const list = $('#archive-list');
+  items.forEach((entry) => list.appendChild(renderArchiveItem(entry)));
+  $('#fab').hidden = true;
+}
+
+function renderArchiveItem(entry) {
+  const div = document.createElement('div');
+  div.className = 'inbox-item archive-item';
+
+  const meta = document.createElement('span');
+  meta.className = 'archive-badge';
+  if (entry.source === 'active') {
+    meta.classList.add('pri-' + entry.priority);
+    const dot = entry.priority === 'high' ? '🔥' : entry.priority === 'medium' ? '🟡' : '🟢';
+    meta.textContent = dot;
+    meta.title = `Task / ${entry.priority}`;
+  } else {
+    meta.textContent = '📥';
+    meta.title = 'Inbox';
+  }
+
+  const text = document.createElement('div');
+  text.className = 'inbox-text';
+  const firstLine = entry.source === 'active'
+    ? (entry.block?.[0] || '').replace(/^\s*- \[[ xX]\] /, '')
+    : (entry.text || '');
+  const extraCount = entry.source === 'active' && entry.block && entry.block.length > 1 ? entry.block.length - 1 : 0;
+  text.innerHTML = esc(firstLine) + (extraCount ? ` <span class="meta-inline">+${extraCount}</span>` : '');
+
+  const actions = document.createElement('div');
+  actions.className = 'inbox-actions';
+  const restore = document.createElement('button');
+  restore.className = 'row-btn';
+  restore.title = '복구';
+  restore.innerHTML = '↺';
+  restore.addEventListener('click', (e) => { e.stopPropagation(); onRestore(entry); });
+  const del = document.createElement('button');
+  del.className = 'row-btn danger';
+  del.title = '영구 삭제';
+  del.innerHTML = '×';
+  del.addEventListener('click', (e) => { e.stopPropagation(); onPurge(entry); });
+  actions.appendChild(restore);
+  actions.appendChild(del);
+
+  div.appendChild(meta);
+  div.appendChild(text);
+  div.appendChild(actions);
+  return div;
+}
+
+function genArchiveId() {
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+async function archiveActiveTask(item) {
+  const lines = state.content.split('\n');
+  const { start, end } = extractBlock(lines, item.lineIndex);
+  const block = lines.slice(start, end + 1);
+  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
+  const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+  const entry = {
+    id: genArchiveId(),
+    deletedAt: new Date().toISOString(),
+    source: 'active',
+    priority,
+    block,
+  };
+  await ghLoadArchive();
+  await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
+  await ghSave(deleteAt(item.lineIndex), `archive (from active): ${item.text}`);
+}
+
+async function archiveInboxItem(item) {
+  const entry = {
+    id: genArchiveId(),
+    deletedAt: new Date().toISOString(),
+    source: 'inbox',
+    text: item.text,
+  };
+  await ghLoadArchive();
+  await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
+  await ghSaveInbox(removeInboxLine(item.lineIdx), `archive (from inbox): ${item.text}`);
+}
+
+async function onRestore(entry) {
+  try {
+    if (entry.source === 'active') {
+      await ghLoad();
+      const lines = state.content.split('\n');
+      const want = SECTION_KEYS[entry.priority];
+      const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+      if (headerIdx === -1) throw new Error('section not found');
+      let insertAfter = headerIdx;
+      for (let i = headerIdx + 1; i < lines.length; i++) {
+        if (lines[i].startsWith('## ')) break;
+        if (lines[i].trim() !== '') insertAfter = i;
+      }
+      const block = entry.block;
+      if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
+        lines.splice(insertAfter, 1, ...block);
+      } else {
+        lines.splice(insertAfter + 1, 0, ...block);
+      }
+      await ghSave(lines.join('\n'), `restore: ${block[0]}`);
+    } else if (entry.source === 'inbox') {
+      await ghLoadInbox();
+      let c = state.inboxContent;
+      if (c && !c.endsWith('\n')) c += '\n';
+      c += `- ${entry.text}\n`;
+      await ghSaveInbox(c, `restore: ${entry.text}`);
+    }
+    await ghLoadArchive();
+    await ghSaveArchive(state.archiveItems.filter((i) => i.id !== entry.id), `restore done`);
+    toast('복구됨');
+    renderArchive();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+async function onPurge(entry) {
+  if (!confirm('영구 삭제할까요?')) return;
+  try {
+    await ghLoadArchive();
+    await ghSaveArchive(state.archiveItems.filter((i) => i.id !== entry.id), `purge: archive`);
+    toast('영구 삭제됨');
+    renderArchive();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+// ============ Memos ============
+function renderMemos() {
+  selectedInbox.clear();
+  updateInboxBar();
+  const app = $('#app');
+  const inboxCount = state.inboxItems.length;
+  app.innerHTML = `
+    <header>
+      <div class="title-row">
+        <h1>오늘의 할 일</h1>
+        <div class="meta">
+          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
+        </div>
+      </div>
+      <div>
+        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
+        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
+      </div>
+    </header>
+    <div class="tabs">
+      <button class="tab" id="tab-active">Task</button>
+      <button class="tab" id="tab-inbox">Inbox ${inboxCount ? `<span class="badge">${inboxCount}</span>` : ''}</button>
+      <button class="tab active" id="tab-memo">Memo</button>
+      <button class="tab" id="tab-archive">Archive</button>
+    </div>
+    <div class="memo-board" id="memo-board"></div>
+  `;
+  bindTabEvents();
+  drawMemos();
+  $('#fab').hidden = false;
+}
+
+function memoCol(m) {
+  // Backward-compat: { x, y } → { col, order }
+  if (m.col != null) return m.col;
+  if (m.x != null) return m.x;
+  return 0;
+}
+function memoOrder(m) {
+  if (m.order != null) return m.order;
+  if (m.y != null) return m.y;
+  return 0;
+}
+
+function drawMemos() {
+  const board = $('#memo-board');
+  if (!board) return;
+  const cols = getMemoCols();
+  board.style.setProperty('--cols', cols);
+  board.innerHTML = '';
+
+  const grouped = Array.from({ length: cols }, () => []);
+  state.memos.forEach((m) => {
+    const c = Math.min(cols - 1, Math.max(0, memoCol(m)));
+    grouped[c].push(m);
+  });
+  grouped.forEach((arr) => arr.sort((a, b) => memoOrder(a) - memoOrder(b)));
+
+  grouped.forEach((arr, c) => {
+    const col = document.createElement('div');
+    col.className = 'memo-col';
+    col.dataset.col = c;
+    arr.forEach((m) => col.appendChild(renderMemoEl(m)));
+    board.appendChild(col);
+  });
+}
+
+function renderMemoEl(m) {
+  const div = document.createElement('div');
+  div.className = 'memo';
+  div.dataset.id = m.id;
+
+  const textEl = document.createElement('div');
+  textEl.className = 'memo-text';
+  textEl.textContent = m.text || '';
+  div.appendChild(textEl);
+
+  const del = document.createElement('button');
+  del.className = 'memo-del';
+  del.innerHTML = '×';
+  del.title = '삭제';
+  del.addEventListener('pointerdown', (e) => e.stopPropagation());
+  del.addEventListener('click', (e) => { e.stopPropagation(); onDeleteMemo(m.id); });
+  div.appendChild(del);
+
+  div.addEventListener('pointerdown', (e) => onMemoPointerDown(e, m, div));
+  return div;
+}
+
+function onMemoPointerDown(e, m, div) {
+  if (div.classList.contains('editing')) return;
+  if (e.target.closest('.memo-del')) return;
+  if (e.button != null && e.button !== 0) return;
+
+  const startX = e.clientX, startY = e.clientY;
+  let started = false;
+
+  const onMove = (e2) => {
+    if (started) return;
+    if (Math.hypot(e2.clientX - startX, e2.clientY - startY) > 5) {
+      started = true;
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      startMemoDrag(e2, m, div);
+    }
+  };
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    if (!started) startEditMemo(div, m);
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+const memoDragCtx = {};
+
+function startMemoDrag(e, m, div) {
+  const divRect = div.getBoundingClientRect();
+
+  const ghost = div.cloneNode(true);
+  ghost.classList.add('memo-ghost');
+  ghost.classList.remove('dragging');
+  ghost.style.left = divRect.left + 'px';
+  ghost.style.top = divRect.top + 'px';
+  ghost.style.width = divRect.width + 'px';
+  document.body.appendChild(ghost);
+
+  const placeholder = document.createElement('div');
+  placeholder.className = 'memo-drop-placeholder';
+
+  Object.assign(memoDragCtx, {
+    div, m, ghost, placeholder,
+    offsetX: e.clientX - divRect.left,
+    offsetY: e.clientY - divRect.top,
+    targetCol: memoCol(m),
+    targetIdx: -1,
+  });
+  div.classList.add('dragging');
+  document.addEventListener('pointermove', onMemoDragMove);
+  document.addEventListener('pointerup', onMemoDragEnd);
+  document.addEventListener('pointercancel', onMemoDragEnd);
+}
+
+function onMemoDragMove(e) {
+  const { ghost, placeholder, offsetX, offsetY, div } = memoDragCtx;
+  ghost.style.left = (e.clientX - offsetX) + 'px';
+  ghost.style.top = (e.clientY - offsetY) + 'px';
+
+  const board = $('#memo-board');
+  if (!board) return;
+  const colsEls = [...board.querySelectorAll('.memo-col')];
+  if (!colsEls.length) return;
+
+  // Find which column horizontally
+  let targetCol = colsEls.find((c) => {
+    const r = c.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right;
+  });
+  if (!targetCol) {
+    const first = colsEls[0].getBoundingClientRect();
+    const last = colsEls[colsEls.length - 1].getBoundingClientRect();
+    targetCol = e.clientX < first.left ? colsEls[0] : colsEls[colsEls.length - 1];
+  }
+
+  // Find insertion index within the column (excluding dragged + existing placeholder)
+  const siblings = [...targetCol.children].filter((el) => el !== div && el !== placeholder);
+  let insertIdx = siblings.length;
+  for (let i = 0; i < siblings.length; i++) {
+    const r = siblings[i].getBoundingClientRect();
+    if (e.clientY < r.top + r.height / 2) { insertIdx = i; break; }
+  }
+
+  // Place placeholder
+  if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+  if (insertIdx >= siblings.length) targetCol.appendChild(placeholder);
+  else targetCol.insertBefore(placeholder, siblings[insertIdx]);
+
+  memoDragCtx.targetCol = +targetCol.dataset.col;
+  memoDragCtx.targetIdx = insertIdx;
+}
+
+async function onMemoDragEnd() {
+  document.removeEventListener('pointermove', onMemoDragMove);
+  document.removeEventListener('pointerup', onMemoDragEnd);
+  document.removeEventListener('pointercancel', onMemoDragEnd);
+
+  const { div, m, ghost, placeholder, targetCol, targetIdx } = memoDragCtx;
+  ghost?.remove();
+  placeholder?.remove();
+  div?.classList.remove('dragging');
+
+  if (targetIdx < 0) return;
+
+  const cols = getMemoCols();
+  const grouped = Array.from({ length: cols }, () => []);
+  state.memos.forEach((x) => {
+    if (x.id === m.id) return;
+    const c = Math.min(cols - 1, Math.max(0, memoCol(x)));
+    grouped[c].push(x);
+  });
+  grouped.forEach((arr) => arr.sort((a, b) => memoOrder(a) - memoOrder(b)));
+  grouped[targetCol].splice(targetIdx, 0, m);
+
+  const newMemos = [];
+  grouped.forEach((arr, c) => {
+    arr.forEach((x, i) => {
+      const updated = { ...x, col: c, order: i };
+      delete updated.x; delete updated.y;
+      newMemos.push(updated);
+    });
+  });
+
+  if (sameMemos(newMemos, state.memos)) return;
+
+  try {
+    await ghSaveMemos(newMemos, `memo: move`);
+    drawMemos();
+  } catch (e) { toast(`실패: ${e.message}`); drawMemos(); }
+}
+
+function sameMemos(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b.find((q) => q.id === x.id);
+    if (!y) return false;
+    if ((y.col ?? y.x ?? 0) !== x.col) return false;
+    if ((y.order ?? y.y ?? 0) !== x.order) return false;
+  }
+  return true;
+}
+
+function startEditMemo(div, m) {
+  if (div.classList.contains('editing')) return;
+  const textEl = div.querySelector('.memo-text');
+  if (!textEl) return;
+  div.classList.add('editing');
+  textEl.setAttribute('contenteditable', 'plaintext-only');
+  textEl.focus();
+  const range = document.createRange();
+  range.selectNodeContents(textEl);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  let committing = false;
+  const finish = async (commit) => {
+    if (committing) return;
+    committing = true;
+    textEl.removeEventListener('blur', onBlur);
+    textEl.removeEventListener('keydown', onKey);
+    textEl.removeAttribute('contenteditable');
+    div.classList.remove('editing');
+    const newText = textEl.textContent.trim();
+    if (!commit) { textEl.textContent = m.text || ''; return; }
+    if (newText === (m.text || '')) return;
+    const newMemos = state.memos.map((x) => x.id === m.id ? { ...x, text: newText } : x);
+    try { await ghSaveMemos(newMemos, `memo: edit`); }
+    catch (e) { toast(`실패: ${e.message}`); textEl.textContent = m.text || ''; }
+  };
+  const onBlur = () => finish(true);
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); textEl.blur(); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); textEl.blur(); }
+  };
+  textEl.addEventListener('blur', onBlur);
+  textEl.addEventListener('keydown', onKey);
+}
+
+async function onAddMemo() {
+  // Insert at top of shortest column
+  const cols = getMemoCols();
+  const counts = Array.from({ length: cols }, () => 0);
+  state.memos.forEach((m) => {
+    const c = Math.min(cols - 1, Math.max(0, memoCol(m)));
+    counts[c]++;
+  });
+  let targetCol = 0;
+  for (let i = 1; i < cols; i++) if (counts[i] < counts[targetCol]) targetCol = i;
+
+  // Shift others in target column down by 1
+  const newMemos = state.memos.map((m) => {
+    if (Math.min(cols - 1, Math.max(0, memoCol(m))) === targetCol) {
+      return { ...m, col: targetCol, order: memoOrder(m) + 1, x: undefined, y: undefined };
+    }
+    return m;
+  });
+  const newMemo = {
+    id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+    text: '',
+    col: targetCol,
+    order: 0,
+  };
+  try {
+    await ghSaveMemos([newMemo, ...newMemos], 'memo: add');
+    drawMemos();
+    const el = document.querySelector(`.memo[data-id="${newMemo.id}"]`);
+    if (el) startEditMemo(el, newMemo);
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+async function onDeleteMemo(id) {
+  const m = state.memos.find((x) => x.id === id);
+  if (!m) return;
+  if (m.text && !confirm(`메모를 삭제할까요?\n\n"${m.text.slice(0, 40)}"`)) return;
+  try {
+    await ghSaveMemos(state.memos.filter((x) => x.id !== id), `memo: delete`);
+    drawMemos();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
 function bindBarEvents() {
   $('#bar-select-all')?.addEventListener('click', () => {
     const all = state.inboxItems.length;
@@ -889,20 +1609,28 @@ async function onBulkMove(priority) {
 async function onBulkDelete() {
   const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
   if (!items.length) return;
-  if (!confirm(`${items.length}개를 삭제할까요?`)) return;
+  if (!confirm(`${items.length}개를 보관함으로 옮길까요?`)) return;
   try {
-    await ghSaveInbox(removeInboxLines(items.map((i) => i.lineIdx)), `delete ${items.length} from inbox`);
+    await ghLoadArchive();
+    const entries = items.map((i) => ({
+      id: genArchiveId(),
+      deletedAt: new Date().toISOString(),
+      source: 'inbox',
+      text: i.text,
+    }));
+    await ghSaveArchive([...state.archiveItems, ...entries], `archive ${items.length} from inbox`);
+    await ghSaveInbox(removeInboxLines(items.map((i) => i.lineIdx)), `archive ${items.length} from inbox`);
     selectedInbox.clear();
-    toast(`${items.length}개 삭제됨`);
+    toast(`${items.length}개 보관됨`);
     renderInbox();
   } catch (e) { toast(`실패: ${e.message}`); }
 }
 
 async function onDeleteFromInbox(item) {
-  if (!confirm(`삭제할까요?\n\n"${item.text}"`)) return;
+  if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
   try {
-    await ghSaveInbox(removeInboxLine(item.lineIdx), `delete inbox: ${item.text}`);
-    toast('삭제됨');
+    await archiveInboxItem(item);
+    toast('보관됨');
     renderInbox();
   } catch (e) { toast(`실패: ${e.message}`); }
 }
@@ -910,6 +1638,8 @@ async function onDeleteFromInbox(item) {
 function bindTabEvents() {
   $('#tab-active')?.addEventListener('click', () => { currentTab = 'active'; selectedInbox.clear(); updateInboxBar(); renderApp(); });
   $('#tab-inbox')?.addEventListener('click', () => { currentTab = 'inbox'; renderInbox(); });
+  $('#tab-memo')?.addEventListener('click', () => { currentTab = 'memo'; selectedInbox.clear(); updateInboxBar(); renderMemos(); });
+  $('#tab-archive')?.addEventListener('click', () => { currentTab = 'archive'; selectedInbox.clear(); updateInboxBar(); renderArchive(); });
 }
 
 // ============ Rendering ============
@@ -936,7 +1666,7 @@ function renderApp() {
   app.innerHTML = `
     <header>
       <div class="title-row">
-        <h1>오늘의 Tasks</h1>
+        <h1>오늘의 할 일</h1>
         <div class="meta">
           ${fmtDate(new Date())} · ${totalLine ? `${doneLine}/${totalLine} 완료` : ''}
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
@@ -948,8 +1678,10 @@ function renderApp() {
       </div>
     </header>
     <div class="tabs">
-      <button class="tab active" id="tab-active">할 일</button>
+      <button class="tab active" id="tab-active">Task</button>
       <button class="tab" id="tab-inbox">Inbox ${inboxCount ? `<span class="badge">${inboxCount}</span>` : ''}</button>
+      <button class="tab" id="tab-memo">Memo</button>
+      <button class="tab" id="tab-archive">Archive</button>
     </div>
     <div id="sections"></div>
   `;
@@ -1016,16 +1748,17 @@ function renderTask(item, key) {
 
   const actions = document.createElement('div');
   actions.className = 'task-actions';
-  if (item.indent === 0) {
-    const handle = document.createElement('button');
-    handle.className = 'row-btn drag-handle';
-    handle.title = '드래그하여 이동';
-    handle.setAttribute('aria-label', '드래그하여 이동');
-    handle.innerHTML = '⋮⋮';
-    handle.addEventListener('pointerdown', (e) => onDragStart(e, item, key, t));
-    handle.addEventListener('click', (e) => e.stopPropagation());
-    actions.appendChild(handle);
 
+  const handle = document.createElement('button');
+  handle.className = 'row-btn drag-handle';
+  handle.title = '드래그하여 이동';
+  handle.setAttribute('aria-label', '드래그하여 이동');
+  handle.innerHTML = '⋮⋮';
+  handle.addEventListener('pointerdown', (e) => onDragStart(e, item, key, t));
+  handle.addEventListener('click', (e) => e.stopPropagation());
+  actions.appendChild(handle);
+
+  if (item.indent === 0) {
     const del = document.createElement('button');
     del.className = 'row-btn danger';
     del.title = '삭제';
@@ -1133,13 +1866,16 @@ function onEdit(lineIndex, text) {
   );
 }
 
-function onDelete(item) {
-  if (!confirm(`삭제할까요?\n\n"${item.text}"`)) return;
-  return safeMutate(
-    () => deleteAt(item.lineIndex),
-    `delete: ${item.text}`,
-    '삭제됨'
-  );
+async function onDelete(item) {
+  if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
+  try {
+    await archiveActiveTask(item);
+    renderApp();
+    toast('보관됨');
+  } catch (e) {
+    toast(`실패: ${e.message}`);
+    console.error(e);
+  }
 }
 
 // ============ Drag & Drop ============
@@ -1218,20 +1954,35 @@ function onDragMove(e) {
     const ln = +el2.dataset.line;
     return ln >= dragCtx.srcStart && ln <= dragCtx.srcEnd;
   };
+  const clearInto = () => {
+    if (dragCtx.intoEl) { dragCtx.intoEl.classList.remove('drop-into'); dragCtx.intoEl = null; }
+  };
 
   if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
     const r = taskUnder.getBoundingClientRect();
-    const above = e.clientY < r.top + r.height / 2;
-    if (above) {
+    const y = e.clientY - r.top;
+    const zoneTop = r.height * 0.25;
+    const zoneBottom = r.height * 0.75;
+
+    if (y >= zoneTop && y <= zoneBottom) {
+      indicator.remove();
+      if (dragCtx.intoEl && dragCtx.intoEl !== taskUnder) dragCtx.intoEl.classList.remove('drop-into');
+      taskUnder.classList.add('drop-into');
+      dragCtx.intoEl = taskUnder;
+      dragCtx.target = { sectionKey, intoLine: +taskUnder.dataset.line };
+    } else if (y < zoneTop) {
+      clearInto();
       card.insertBefore(indicator, taskUnder);
       dragCtx.target = { sectionKey, beforeLine: +taskUnder.dataset.line };
     } else {
+      clearInto();
       card.insertBefore(indicator, taskUnder.nextSibling);
       let next = taskUnder.nextElementSibling;
       while (next && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
       dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null };
     }
   } else {
+    clearInto();
     card.appendChild(indicator);
     dragCtx.target = { sectionKey, beforeLine: null };
   }
@@ -1243,15 +1994,18 @@ function onDragEnd() {
   document.removeEventListener('pointerup', onDragEnd);
   document.removeEventListener('pointercancel', onDragEnd);
 
-  const { srcLine, srcEl, ghost, indicator, target, lastSection } = dragCtx;
+  const { srcLine, srcEl, ghost, indicator, target, lastSection, intoEl } = dragCtx;
   ghost?.remove();
   indicator?.remove();
   srcEl?.classList.remove('dragging');
   lastSection?.classList.remove('drop-active');
+  intoEl?.classList.remove('drop-into');
+  dragCtx.intoEl = null;
   dragCtx.active = false;
 
   if (!target) return;
   if (target.beforeLine === srcLine) return;
+  if (target.intoLine === srcLine) return;
 
   safeMutate(
     () => moveLineToPosition(srcLine, target),
@@ -1323,7 +2077,10 @@ function sheetSave() {
 
 // ============ Init ============
 function init() {
-  $('#fab').addEventListener('click', openAddSheet);
+  $('#fab').addEventListener('click', () => {
+    if (currentTab === 'memo') onAddMemo();
+    else openAddSheet();
+  });
   $('#scrim').addEventListener('click', hideSheet);
   $('#sheet-cancel').addEventListener('click', hideSheet);
   $('#sheet-save').addEventListener('click', sheetSave);
@@ -1353,20 +2110,31 @@ function init() {
     if (!document.hidden && state.token) refresh();
   });
 
+  // Re-layout memos on resize (column count may change)
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    if (currentTab !== 'memo') return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => drawMemos(), 120);
+  });
+
   // Initial render
   if (!state.token) {
     renderSetup();
   } else {
     renderApp();
-    Promise.all([ghLoad(), ghLoadInbox()]).then(() => renderApp()).catch(() => {});
+    Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]).then(() => renderApp()).catch(() => {});
   }
 }
 
 async function refresh() {
   if (!state.token) return;
   try {
-    await Promise.all([ghLoad(), ghLoadInbox()]);
-    currentTab === 'inbox' ? renderInbox() : renderApp();
+    await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
+    if (currentTab === 'inbox') renderInbox();
+    else if (currentTab === 'archive') renderArchive();
+    else if (currentTab === 'memo') renderMemos();
+    else renderApp();
   } catch (e) {
     if (e.code === 401) {
       localStorage.removeItem('gh_pat');
