@@ -347,6 +347,29 @@
   .bar-btn.danger:hover { background: var(--danger); border-color: var(--danger); color: white; }
   .bar-btn.ghost { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
   .bar-btn.ghost:hover { background: var(--surface-2); color: var(--text); }
+
+  /* Drag & drop */
+  .drag-handle {
+    cursor: grab; touch-action: none;
+    user-select: none; -webkit-user-select: none;
+    font-size: 16px; line-height: 1;
+  }
+  .drag-handle:active { cursor: grabbing; }
+  .task.dragging { opacity: 0.3; }
+  .drag-ghost {
+    position: fixed; pointer-events: none; z-index: 100;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    opacity: 0.92; transition: none;
+  }
+  .drop-indicator {
+    height: 2px; background: var(--accent);
+    margin: 0 8px; border-radius: 1px;
+    pointer-events: none;
+  }
+  .section.drop-active .card {
+    background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  }
 </style>
 </head>
 <body>
@@ -652,9 +675,7 @@ function deleteAt(lineIndex) {
   return lines.join('\n');
 }
 
-function moveLineToSection(lineIndex, targetKey) {
-  const lines = state.content.split('\n');
-  // gather block: this line + indented descendants
+function extractBlock(lines, lineIndex) {
   const baseIndent = (lines[lineIndex].match(/^(\s*)/)?.[0] || '').length;
   let endIdx = lineIndex;
   for (let i = lineIndex + 1; i < lines.length; i++) {
@@ -664,9 +685,46 @@ function moveLineToSection(lineIndex, targetKey) {
     if (ind > baseIndent) endIdx = i;
     else break;
   }
-  const block = lines.splice(lineIndex, endIdx - lineIndex + 1);
-  // Find target section header (after removal)
+  return { start: lineIndex, end: endIdx };
+}
+
+function moveLineToSection(lineIndex, targetKey) {
+  const lines = state.content.split('\n');
+  const { start, end } = extractBlock(lines, lineIndex);
+  const block = lines.splice(start, end - start + 1);
   const want = SECTION_KEYS[targetKey];
+  const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+  if (headerIdx === -1) throw new Error('target section not found');
+  let insertAfter = headerIdx;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    if (lines[i].trim() !== '') insertAfter = i;
+  }
+  if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
+    lines.splice(insertAfter, 1, ...block);
+  } else {
+    lines.splice(insertAfter + 1, 0, ...block);
+  }
+  return lines.join('\n');
+}
+
+// Move a task block to a specific position.
+// target: { sectionKey, beforeLine } — beforeLine is the lineIndex to insert before,
+// or null/undefined to append at end of section.
+function moveLineToPosition(srcLineIndex, target) {
+  const lines = state.content.split('\n');
+  const { start, end } = extractBlock(lines, srcLineIndex);
+  const blockLen = end - start + 1;
+  const block = lines.splice(start, blockLen);
+
+  if (target.beforeLine != null) {
+    let insertAt = target.beforeLine;
+    if (insertAt > start) insertAt -= blockLen;
+    lines.splice(insertAt, 0, ...block);
+    return lines.join('\n');
+  }
+
+  const want = SECTION_KEYS[target.sectionKey];
   const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
   if (headerIdx === -1) throw new Error('target section not found');
   let insertAfter = headerIdx;
@@ -953,13 +1011,14 @@ function renderTask(item, key) {
   const actions = document.createElement('div');
   actions.className = 'task-actions';
   if (item.indent === 0) {
-    // priority change cycle: high → med → low → high
-    const move = document.createElement('button');
-    move.className = 'row-btn';
-    move.title = '우선순위 변경';
-    move.innerHTML = '↕';
-    move.addEventListener('click', (e) => { e.stopPropagation(); cyclePriority(item.lineIndex, key); });
-    actions.appendChild(move);
+    const handle = document.createElement('button');
+    handle.className = 'row-btn drag-handle';
+    handle.title = '드래그하여 이동';
+    handle.setAttribute('aria-label', '드래그하여 이동');
+    handle.innerHTML = '⋮⋮';
+    handle.addEventListener('pointerdown', (e) => onDragStart(e, item, key, t));
+    handle.addEventListener('click', (e) => e.stopPropagation());
+    actions.appendChild(handle);
 
     const del = document.createElement('button');
     del.className = 'row-btn danger';
@@ -1077,13 +1136,111 @@ function onDelete(item) {
   );
 }
 
-function cyclePriority(lineIndex, currentKey) {
-  const order = ['high', 'medium', 'low'];
-  const next = order[(order.indexOf(currentKey) + 1) % order.length];
-  return safeMutate(
-    () => moveLineToSection(lineIndex, next),
-    `move to ${next}`,
-    `${SECTION_KEYS[next]} 으로 이동`
+// ============ Drag & Drop ============
+const dragCtx = { active: false };
+
+function onDragStart(e, item, key, taskEl) {
+  if (e.button != null && e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const rect = taskEl.getBoundingClientRect();
+  const ghost = taskEl.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.classList.remove('dragging');
+  ghost.style.left = rect.left + 'px';
+  ghost.style.top = rect.top + 'px';
+  ghost.style.width = rect.width + 'px';
+  document.body.appendChild(ghost);
+
+  const indicator = document.createElement('div');
+  indicator.className = 'drop-indicator';
+
+  dragCtx.active = true;
+  dragCtx.srcLine = item.lineIndex;
+  dragCtx.srcKey = key;
+  dragCtx.srcEl = taskEl;
+  dragCtx.ghost = ghost;
+  dragCtx.indicator = indicator;
+  dragCtx.offsetX = e.clientX - rect.left;
+  dragCtx.offsetY = e.clientY - rect.top;
+  dragCtx.target = null;
+  dragCtx.lastSection = null;
+
+  taskEl.classList.add('dragging');
+  document.addEventListener('pointermove', onDragMove);
+  document.addEventListener('pointerup', onDragEnd);
+  document.addEventListener('pointercancel', onDragEnd);
+}
+
+function onDragMove(e) {
+  if (!dragCtx.active) return;
+  const { ghost, indicator, offsetX, offsetY } = dragCtx;
+  ghost.style.left = (e.clientX - offsetX) + 'px';
+  ghost.style.top = (e.clientY - offsetY) + 'px';
+
+  ghost.style.display = 'none';
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  ghost.style.display = '';
+  if (!el) return;
+
+  const section = el.closest('.section');
+  if (dragCtx.lastSection && dragCtx.lastSection !== section) {
+    dragCtx.lastSection.classList.remove('drop-active');
+  }
+  if (!section) {
+    indicator.remove();
+    dragCtx.target = null;
+    dragCtx.lastSection = null;
+    return;
+  }
+  section.classList.add('drop-active');
+  dragCtx.lastSection = section;
+
+  const sectionKey = section.classList.contains('pri-high') ? 'high'
+                   : section.classList.contains('pri-med') ? 'medium' : 'low';
+
+  const card = section.querySelector('.card');
+  const taskUnder = el.closest('.task');
+
+  if (taskUnder && card.contains(taskUnder) && taskUnder !== dragCtx.srcEl) {
+    const r = taskUnder.getBoundingClientRect();
+    const above = e.clientY < r.top + r.height / 2;
+    if (above) {
+      card.insertBefore(indicator, taskUnder);
+      dragCtx.target = { sectionKey, beforeLine: +taskUnder.dataset.line };
+    } else {
+      card.insertBefore(indicator, taskUnder.nextSibling);
+      let next = taskUnder.nextElementSibling;
+      while (next && !next.classList.contains('task')) next = next.nextElementSibling;
+      dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null };
+    }
+  } else {
+    card.appendChild(indicator);
+    dragCtx.target = { sectionKey, beforeLine: null };
+  }
+}
+
+function onDragEnd() {
+  if (!dragCtx.active) return;
+  document.removeEventListener('pointermove', onDragMove);
+  document.removeEventListener('pointerup', onDragEnd);
+  document.removeEventListener('pointercancel', onDragEnd);
+
+  const { srcLine, srcEl, ghost, indicator, target, lastSection } = dragCtx;
+  ghost?.remove();
+  indicator?.remove();
+  srcEl?.classList.remove('dragging');
+  lastSection?.classList.remove('drop-active');
+  dragCtx.active = false;
+
+  if (!target) return;
+  if (target.beforeLine === srcLine) return;
+
+  safeMutate(
+    () => moveLineToPosition(srcLine, target),
+    `move: ${SECTION_KEYS[target.sectionKey]}`,
+    '이동됨'
   );
 }
 
