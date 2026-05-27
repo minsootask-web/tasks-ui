@@ -1,8 +1,7 @@
-// 단순 서비스 워커: 정적 자원만 캐시-퍼스트, API는 항상 네트워크.
-const CACHE = "tasks-v5";
+// 정적 아이콘은 cache-first, HTML/스크립트는 network-first.
+// 새 배포는 일반 새로고침으로도 즉시 반영된다.
+const CACHE = "tasks-v6";
 const ASSETS = [
-  "./",
-  "./index.html",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
@@ -27,8 +26,33 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   // GitHub API는 절대 캐시 안 함
   if (url.host === "api.github.com") return;
-  // 같은 origin 정적 자원만 캐시-퍼스트
+  // 같은 origin 만 처리
   if (url.origin !== self.location.origin) return;
+
+  // HTML 문서 / 루트 / sw.js 자체 → network-first (옛 캐시 안 보여줌)
+  const isDocument =
+    e.request.mode === "navigate" ||
+    url.pathname === "/" ||
+    url.pathname.endsWith("/") ||
+    url.pathname.endsWith(".html") ||
+    url.pathname.endsWith("/sw.js");
+
+  if (isDocument) {
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // 정적 자원은 cache-first
   e.respondWith(
     caches.match(e.request).then((cached) => {
       return (
