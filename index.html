@@ -75,6 +75,7 @@
   }
   .icon-btn:hover { background: var(--surface-2); }
   .icon-btn:active { transform: scale(0.96); }
+  .icon-btn.sort-active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
   .section { margin-bottom: 22px; }
   .section-title {
@@ -553,6 +554,7 @@ let selectedInbox = new Set();
 let selectedArchive = new Set();
 let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
+let sortIncompleteFirst = false;
 
 // ============ Utilities ============
 const $ = (q) => document.querySelector(q);
@@ -1751,6 +1753,28 @@ function bindTabEvents() {
   $('#tab-archive')?.addEventListener('click', () => { currentTab = 'archive'; selectedInbox.clear(); updateInboxBar(); renderArchive(); });
 }
 
+// ============ Sort ============
+function sortItemsIncompleteFirst(items) {
+  // Group items into blocks: each top-level task + its indented descendants
+  const blocks = [];
+  let cur = null;
+  for (const item of items) {
+    if (item.indent === 0) {
+      cur = { root: item, children: [] };
+      blocks.push(cur);
+    } else if (cur) {
+      cur.children.push(item);
+    }
+  }
+  // Sort: incomplete (root not checked) first, complete last
+  blocks.sort((a, b) => {
+    const aD = a.root.type === 'task' && a.root.checked ? 1 : 0;
+    const bD = b.root.type === 'task' && b.root.checked ? 1 : 0;
+    return aD - bD;
+  });
+  return blocks.flatMap((b) => [b.root, ...b.children]);
+}
+
 // ============ Rendering ============
 function renderSync(isError) {
   const el = $('#sync-pill');
@@ -1782,6 +1806,7 @@ function renderApp() {
         </div>
       </div>
       <div>
+        <button class="icon-btn${sortIncompleteFirst ? ' sort-active' : ''}" id="sort-btn" aria-label="미완료 순 정렬" title="미완료 항목 먼저">⇅</button>
         <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
         <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
       </div>
@@ -1820,7 +1845,8 @@ function renderApp() {
       e.textContent = '비어 있음';
       card.appendChild(e);
     } else {
-      sec.items.forEach((item) => {
+      const displayItems = sortIncompleteFirst ? sortItemsIncompleteFirst(sec.items.filter((i) => i.text.trim())) : sec.items;
+      displayItems.forEach((item) => {
         if (item.type === 'task' && item.text.trim()) {
           card.appendChild(renderTask(item, key));
         } else if (item.type === 'bullet') {
@@ -2221,6 +2247,7 @@ function init() {
   });
 
   document.addEventListener('click', (e) => {
+    if (e.target.id === 'sort-btn') { sortIncompleteFirst = !sortIncompleteFirst; renderApp(); }
     if (e.target.id === 'refresh-btn') refresh();
     if (e.target.id === 'settings-btn') openSettings();
   });
