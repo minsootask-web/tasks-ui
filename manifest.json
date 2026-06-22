@@ -1,6 +1,6 @@
 {
-  "name": "Tasks",
-  "short_name": "Tasks",
+  "name": "Tako",
+  "short_name": "Tako",
   "description": "Personal task manager — markdown-backed via GitHub",
   "start_url": "./",
   "scope": "./",
