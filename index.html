@@ -554,6 +554,7 @@ let selectedInbox = new Set();
 let selectedArchive = new Set();
 let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
+let editingIsSub = false; // 편집 대상이 하위 할 일인지
 let sortIncompleteFirst = false;
 
 // ============ Utilities ============
@@ -933,10 +934,12 @@ function moveLineToSection(lineIndex, targetKey) {
 }
 
 // Move a task block.
-// target: { sectionKey, beforeLine?, intoLine? }
+// target: { sectionKey, beforeLine?, intoLine?, indent? }
 //   - beforeLine: insert before this line at the target line's indent (sibling)
 //   - intoLine: insert as the last child of this line (indent = target + 1)
 //   - neither: append at end of section as a main task (indent 0)
+//   - indent: optional explicit depth override (used for the depth-ambiguous gap below a
+//     last child, where the next line's indent alone can't express "stay as the last child")
 function moveLineToPosition(srcLineIndex, target) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, srcLineIndex);
@@ -964,6 +967,7 @@ function moveLineToPosition(srcLineIndex, target) {
   } else {
     targetIndent = 0;
   }
+  if (target.indent != null && target.intoLine == null) targetIndent = target.indent;
   block = adjustBlockIndent(block, targetIndent - srcBaseIndent);
 
   if (target.intoLine != null) {
@@ -1759,10 +1763,13 @@ function sortItemsIncompleteFirst(items) {
   const blocks = [];
   let cur = null;
   for (const item of items) {
-    if (item.indent === 0) {
+    // Start a new block on a top-level item, OR on any leading/orphaned indented
+    // item that has no parent block yet — otherwise it would be silently dropped
+    // (the cause of items vanishing when a section starts with an indented line).
+    if (item.indent === 0 || !cur) {
       cur = { root: item, children: [] };
       blocks.push(cur);
-    } else if (cur) {
+    } else {
       cur.children.push(item);
     }
   }
@@ -1866,6 +1873,7 @@ function renderTask(item, key) {
   const t = document.createElement('div');
   t.className = `task indent-${Math.min(item.indent, 3)}` + (item.checked ? ' done' : '');
   t.dataset.line = item.lineIndex;
+  t.dataset.indent = item.indent;
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
@@ -1878,7 +1886,7 @@ function renderTask(item, key) {
   span.title = '탭하여 편집';
   span.addEventListener('click', (e) => {
     if (e.target.tagName === 'INPUT') return;
-    if (item.indent === 0) openEditSheet(item);
+    openEditSheet(item);
   });
 
   const actions = document.createElement('div');
@@ -2114,6 +2122,7 @@ function onDragMove(e) {
       dragCtx.target = { sectionKey, intoLine: +taskUnder.dataset.line };
     } else if (y < zoneTop) {
       clearInto();
+      indicator.style.marginLeft = '';
       card.insertBefore(indicator, taskUnder);
       dragCtx.target = { sectionKey, beforeLine: +taskUnder.dataset.line };
     } else {
@@ -2121,10 +2130,26 @@ function onDragMove(e) {
       card.insertBefore(indicator, taskUnder.nextSibling);
       let next = taskUnder.nextElementSibling;
       while (next && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
-      dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null };
+      const underIndent = +taskUnder.dataset.indent || 0;
+      const nextIndent = next ? (+next.dataset.indent || 0) : 0;
+      if (nextIndent < underIndent) {
+        // taskUnder is the last item of its sub-list, so the gap below it is depth-ambiguous:
+        // it could attach to any ancestor between the next line's level and taskUnder's own.
+        // Let the horizontal cursor position pick the depth — drag left to pop out toward
+        // nextIndent, keep it under the row to stay as the last child (default).
+        const cardLeft = card.getBoundingClientRect().left;
+        const lvl = Math.round((e.clientX - cardLeft - 12) / 24);
+        const chosenIndent = Math.max(nextIndent, Math.min(underIndent, lvl));
+        indicator.style.marginLeft = (8 + chosenIndent * 24) + 'px';
+        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null, indent: chosenIndent };
+      } else {
+        indicator.style.marginLeft = '';
+        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null };
+      }
     }
   } else {
     clearInto();
+    indicator.style.marginLeft = '';
     card.appendChild(indicator);
     dragCtx.target = { sectionKey, beforeLine: null };
   }
@@ -2160,6 +2185,8 @@ function onDragEnd() {
 function openAddSheet() {
   sheetMode = 'add';
   editingLine = -1;
+  editingIsSub = false;
+  $('#pri-picker').closest('.field').hidden = false;
   $('#sheet-title').textContent = '새 할 일';
   $('#sheet-text').value = '';
   $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === 'medium'));
@@ -2169,12 +2196,20 @@ function openAddSheet() {
 function openEditSheet(item) {
   sheetMode = 'edit';
   editingLine = item.lineIndex;
-  $('#sheet-title').textContent = '편집';
+  editingIsSub = item.indent > 0;
+  $('#sheet-title').textContent = editingIsSub ? '하위 할 일 편집' : '편집';
   $('#sheet-text').value = item.text;
-  // current section
-  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
-  const cur = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
-  $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === cur));
+  // 하위 할 일은 우선순위(섹션) 개념이 없으므로 우선순위 선택을 숨긴다
+  const priField = $('#pri-picker').closest('.field');
+  if (editingIsSub) {
+    priField.hidden = true;
+  } else {
+    priField.hidden = false;
+    // current section
+    const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
+    const cur = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+    $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === cur));
+  }
   showSheet();
 }
 
@@ -2195,6 +2230,9 @@ function sheetSave() {
   hideSheet();
   if (sheetMode === 'add') {
     onAdd(pri, text);
+  } else if (editingIsSub) {
+    // 하위 할 일: 우선순위(섹션) 개념이 없으므로 텍스트만 수정
+    onEdit(editingLine, text);
   } else {
     // Edit: if priority changed, also move
     const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === editingLine));
