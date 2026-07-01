@@ -115,6 +115,21 @@
     border: solid var(--accent-fg); border-width: 0 2px 2px 0;
     transform: rotate(45deg);
   }
+  .task-toggle {
+    flex-shrink: 0; width: 18px; height: 22px; margin-top: 0; padding: 0;
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent;
+    color: var(--muted); cursor: pointer; font-size: 10px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 4px; transition: color 0.12s, background 0.12s;
+  }
+  .task-toggle:hover { color: var(--text); background: var(--surface-2); }
+  .task-toggle.leaf { visibility: hidden; cursor: default; }
+  .child-count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 5px; margin-left: 6px;
+    border-radius: 8px; background: var(--surface-2); color: var(--muted);
+    font-size: 11px; font-weight: 600; vertical-align: middle;
+  }
   .task-text {
     flex: 1; cursor: text; min-width: 0;
     word-break: break-word; padding: 1px 0;
@@ -556,6 +571,18 @@ let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
 let editingIsSub = false; // 편집 대상이 하위 할 일인지
 let sortIncompleteFirst = false;
+
+// 하위 항목 접기 상태 — 부모 할 일의 텍스트를 키로 저장(재정렬·재조회에도 유지)
+const COLLAPSE_KEY = 'tasks_collapsed';
+let collapsedSet = new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]'));
+function collapseKeyOf(item) { return item.text.trim(); }
+function isCollapsed(item) { return collapsedSet.has(collapseKeyOf(item)); }
+function toggleCollapse(item) {
+  const k = collapseKeyOf(item);
+  if (collapsedSet.has(k)) collapsedSet.delete(k); else collapsedSet.add(k);
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedSet]));
+  renderApp();
+}
 
 // ============ Utilities ============
 const $ = (q) => document.querySelector(q);
@@ -1852,16 +1879,29 @@ function renderApp() {
       e.textContent = '비어 있음';
       card.appendChild(e);
     } else {
-      const displayItems = sortIncompleteFirst ? sortItemsIncompleteFirst(sec.items.filter((i) => i.text.trim())) : sec.items;
-      displayItems.forEach((item) => {
-        if (item.type === 'task' && item.text.trim()) {
-          card.appendChild(renderTask(item, key));
-        } else if (item.type === 'bullet') {
+      const displayItemsRaw = sortIncompleteFirst ? sortItemsIncompleteFirst(sec.items.filter((i) => i.text.trim())) : sec.items;
+      const rows = displayItemsRaw.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim());
+      let collapseAtIndent = null; // 접힌 조상의 indent (그보다 깊은 항목은 숨김)
+      rows.forEach((item, idx) => {
+        // 접힘 범위를 벗어나면 해제
+        if (collapseAtIndent !== null && item.indent <= collapseAtIndent) collapseAtIndent = null;
+        if (collapseAtIndent !== null) return; // 접힌 조상 아래 → 렌더 생략
+        const next = rows[idx + 1];
+        const hasChildren = !!next && next.indent > item.indent;
+        const collapsedNow = hasChildren && isCollapsed(item);
+        if (item.type === 'task') {
+          let hiddenCount = 0;
+          if (collapsedNow) {
+            for (let j = idx + 1; j < rows.length && rows[j].indent > item.indent; j++) hiddenCount++;
+          }
+          card.appendChild(renderTask(item, key, { hasChildren, collapsed: collapsedNow, hiddenCount }));
+        } else {
           const b = document.createElement('div');
           b.className = `bullet indent-${Math.min(item.indent, 3)}`;
           b.textContent = '• ' + item.text;
           card.appendChild(b);
         }
+        if (collapsedNow) collapseAtIndent = item.indent;
       });
     }
     root.appendChild(div);
@@ -1869,11 +1909,25 @@ function renderApp() {
   $('#fab').hidden = false;
 }
 
-function renderTask(item, key) {
+function renderTask(item, key, opts = {}) {
+  const { hasChildren = false, collapsed = false, hiddenCount = 0 } = opts;
   const t = document.createElement('div');
   t.className = `task indent-${Math.min(item.indent, 3)}` + (item.checked ? ' done' : '');
   t.dataset.line = item.lineIndex;
   t.dataset.indent = item.indent;
+
+  // 접기/펼치기 토글 — 자식 있는 항목만 화살표, 나머지는 정렬용 빈 자리
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'task-toggle' + (hasChildren ? '' : ' leaf');
+  if (hasChildren) {
+    toggle.textContent = collapsed ? '▸' : '▾';
+    toggle.title = collapsed ? '펼치기' : '접기';
+    toggle.setAttribute('aria-label', toggle.title);
+    toggle.addEventListener('click', (e) => { e.stopPropagation(); toggleCollapse(item); });
+  } else {
+    toggle.tabIndex = -1;
+  }
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
@@ -1883,6 +1937,13 @@ function renderTask(item, key) {
   const span = document.createElement('div');
   span.className = 'task-text';
   span.innerHTML = highlightMeta(item.text);
+  if (collapsed && hiddenCount) {
+    const badge = document.createElement('span');
+    badge.className = 'child-count';
+    badge.textContent = hiddenCount;
+    badge.title = `숨겨진 하위 항목 ${hiddenCount}개`;
+    span.appendChild(badge);
+  }
   span.title = '탭하여 편집';
   span.addEventListener('click', (e) => {
     if (e.target.tagName === 'INPUT') return;
@@ -1908,6 +1969,7 @@ function renderTask(item, key) {
   del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
   actions.appendChild(del);
 
+  t.appendChild(toggle);
   t.appendChild(cb);
   t.appendChild(span);
   t.appendChild(actions);
