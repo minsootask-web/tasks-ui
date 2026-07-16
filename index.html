@@ -148,7 +148,7 @@
   .row-btn {
     appearance: none; -webkit-appearance: none;
     background: transparent; border: 0; color: var(--muted); cursor: pointer;
-    width: 28px; height: 28px; border-radius: 6px;
+    width: 32px; height: 32px; border-radius: 6px; position: relative;
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 14px; transition: all 0.12s;
   }
@@ -215,6 +215,7 @@
   }
   .pri-pill:hover { background: var(--hover); }
   .pri-pill.selected { border-color: var(--accent); background: var(--surface); }
+  .pri-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pri-pill .dot { width: 10px; height: 10px; }
 
   .actions { display: flex; gap: 8px; margin-top: 16px; }
@@ -331,14 +332,26 @@
   .pri-mini {
     appearance: none; -webkit-appearance: none;
     border: 1.5px solid var(--border); background: var(--surface-2); color: var(--muted);
-    font-size: 11px; font-weight: 700; width: 28px; height: 28px; border-radius: 6px;
-    cursor: pointer; transition: all 0.12s;
+    font-size: 11px; font-weight: 700; width: 32px; height: 32px; border-radius: 6px;
+    cursor: pointer; transition: all 0.12s; position: relative;
     display: inline-flex; align-items: center; justify-content: center;
   }
   .pri-mini:hover { border-color: var(--accent); color: var(--text); background: var(--surface); }
   .pri-mini.h:hover { border-color: var(--high); }
   .pri-mini.m:hover { border-color: var(--med); }
   .pri-mini.l:hover { border-color: var(--low); }
+
+  /* 터치 타깃 확대 — 시각 크기는 유지하고 히트 영역을 최소 44px 높이로 넓힌다.
+     행이 세로로 쌓이므로 세로 확장은 인접 버튼과 겹치지 않아 안전하다. */
+  @media (pointer: coarse) {
+    .task-toggle { position: relative; }
+    .row-btn::before, .pri-mini::before, .task-toggle::before,
+    .inbox-cb::before, .task input[type="checkbox"]::before {
+      content: ""; position: absolute; top: 50%; left: 50%;
+      width: 100%; min-width: 32px; height: 44px;
+      transform: translate(-50%, -50%);
+    }
+  }
 
   /* Bulk action bar */
   .inbox-bar {
@@ -489,14 +502,14 @@
 <div class="scrim" id="scrim"></div>
 
 <!-- Add/Edit sheet -->
-<div class="sheet" id="sheet" role="dialog" aria-modal="true">
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" inert>
   <h2 id="sheet-title">새 할 일</h2>
   <div class="field">
-    <label>우선순위</label>
-    <div class="pri-picker" id="pri-picker">
-      <div class="pri-pill pri-high" data-pri="high"><span class="dot"></span>High</div>
-      <div class="pri-pill pri-med selected" data-pri="medium"><span class="dot"></span>Medium</div>
-      <div class="pri-pill pri-low" data-pri="low"><span class="dot"></span>Low</div>
+    <label id="pri-label">우선순위</label>
+    <div class="pri-picker" id="pri-picker" role="radiogroup" aria-labelledby="pri-label">
+      <div class="pri-pill pri-high" data-pri="high" role="radio" aria-checked="false" tabindex="-1"><span class="dot"></span>High</div>
+      <div class="pri-pill pri-med selected" data-pri="medium" role="radio" aria-checked="true" tabindex="0"><span class="dot"></span>Medium</div>
+      <div class="pri-pill pri-low" data-pri="low" role="radio" aria-checked="false" tabindex="-1"><span class="dot"></span>Low</div>
     </div>
   </div>
   <div class="field">
@@ -1050,8 +1063,6 @@ function updateInboxBar() {
 }
 
 function renderInbox() {
-  selectedInbox.clear();
-  updateInboxBar();
   const app = $('#app');
   const count = state.inboxItems.length;
   app.innerHTML = `
@@ -1078,9 +1089,9 @@ function renderInbox() {
     </div>
   `;
   bindTabEvents();
-  bindBarEvents();
   const list = $('#inbox-list');
   state.inboxItems.forEach((item) => list.appendChild(renderInboxItem(item)));
+  updateInboxBar();
   $('#fab').hidden = true;
 }
 
@@ -1092,6 +1103,7 @@ function renderInboxItem(item) {
   cb.type = 'checkbox';
   cb.className = 'inbox-cb';
   cb.checked = selectedInbox.has(item.lineIdx);
+  cb.setAttribute('aria-label', `선택: ${item.text}`);
   cb.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleInboxSelect(item.lineIdx, div, cb);
@@ -1135,10 +1147,6 @@ function toggleInboxSelect(lineIdx, div, cb) {
 }
 
 function renderArchive() {
-  selectedInbox.clear();
-  updateInboxBar();
-  selectedArchive.clear();
-  updateArchiveBar();
   const app = $('#app');
   const items = [...state.archiveItems].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
   const inboxCount = state.inboxItems.length;
@@ -1168,6 +1176,7 @@ function renderArchive() {
   bindTabEvents();
   const list = $('#archive-list');
   items.forEach((entry) => list.appendChild(renderArchiveItem(entry)));
+  updateArchiveBar();
   $('#fab').hidden = true;
 }
 
@@ -1203,6 +1212,7 @@ function renderArchiveItem(entry) {
     : (entry.text || '');
   const extraCount = entry.source === 'active' && entry.block && entry.block.length > 1 ? entry.block.length - 1 : 0;
   text.innerHTML = esc(firstLine) + (extraCount ? ` <span class="meta-inline">+${extraCount}</span>` : '');
+  cb.setAttribute('aria-label', `선택: ${firstLine}`);
 
   const actions = document.createElement('div');
   actions.className = 'inbox-actions';
@@ -1722,6 +1732,7 @@ async function onMoveToActive(item, priority) {
     const newActive = appendToSection(priority, item.text);
     await ghSave(newActive, `inbox → active: ${item.text}`);
     await ghSaveInbox(removeInboxLine(item.lineIdx), `remove from inbox: ${item.text}`);
+    selectedInbox.clear();
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
     renderInbox();
   } catch (e) { toast(`실패: ${e.message}`); }
@@ -1768,6 +1779,7 @@ async function onDeleteFromInbox(item) {
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
   try {
     await archiveInboxItem(item);
+    selectedInbox.clear();
     toast('보관됨');
     renderInbox();
   } catch (e) { toast(`실패: ${e.message}`); }
@@ -1779,9 +1791,9 @@ function bindTabEvents() {
     selectedArchive.clear(); updateArchiveBar();
   };
   $('#tab-active')?.addEventListener('click', () => { currentTab = 'active'; clearAll(); renderApp(); });
-  $('#tab-inbox')?.addEventListener('click', () => { currentTab = 'inbox'; selectedArchive.clear(); updateArchiveBar(); renderInbox(); });
+  $('#tab-inbox')?.addEventListener('click', () => { currentTab = 'inbox'; clearAll(); renderInbox(); });
   $('#tab-memo')?.addEventListener('click', () => { currentTab = 'memo'; clearAll(); renderMemos(); });
-  $('#tab-archive')?.addEventListener('click', () => { currentTab = 'archive'; selectedInbox.clear(); updateInboxBar(); renderArchive(); });
+  $('#tab-archive')?.addEventListener('click', () => { currentTab = 'archive'; clearAll(); renderArchive(); });
 }
 
 // ============ Sort ============
@@ -1932,6 +1944,7 @@ function renderTask(item, key, opts = {}) {
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = item.checked;
+  cb.setAttribute('aria-label', `완료: ${item.text}`);
   cb.addEventListener('change', (e) => onToggle(item.lineIndex, e.target.checked, t, cb));
 
   const span = document.createElement('div');
@@ -2251,8 +2264,18 @@ function openAddSheet() {
   $('#pri-picker').closest('.field').hidden = false;
   $('#sheet-title').textContent = '새 할 일';
   $('#sheet-text').value = '';
-  $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === 'medium'));
+  selectPriority('medium');
   showSheet();
+}
+
+// 우선순위 라디오 선택 상태(class·aria-checked·roving tabindex)를 일괄 갱신
+function selectPriority(pri) {
+  $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => {
+    const on = p.dataset.pri === pri;
+    p.classList.toggle('selected', on);
+    p.setAttribute('aria-checked', on ? 'true' : 'false');
+    p.tabIndex = on ? 0 : -1;
+  });
 }
 
 function openEditSheet(item) {
@@ -2270,19 +2293,51 @@ function openEditSheet(item) {
     // current section
     const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
     const cur = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
-    $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.toggle('selected', p.dataset.pri === cur));
+    selectPriority(cur);
   }
   showSheet();
 }
 
+let sheetLastFocus = null;
+
 function showSheet() {
+  sheetLastFocus = document.activeElement;
+  const sheet = $('#sheet');
+  sheet.removeAttribute('inert');
   $('#scrim').classList.add('show');
-  $('#sheet').classList.add('show');
+  sheet.classList.add('show');
   setTimeout(() => $('#sheet-text').focus(), 100);
 }
 function hideSheet() {
+  const sheet = $('#sheet');
   $('#scrim').classList.remove('show');
-  $('#sheet').classList.remove('show');
+  sheet.classList.remove('show');
+  // 닫힌 시트를 탭 순서·접근성 트리에서 제외하고, 포커스를 열었던 요소로 되돌린다
+  sheet.setAttribute('inert', '');
+  if (sheetLastFocus && typeof sheetLastFocus.focus === 'function') {
+    sheetLastFocus.focus();
+  }
+  sheetLastFocus = null;
+}
+
+// 시트가 열려 있는 동안 Tab 포커스를 시트 내부에 가둔다
+function trapSheetFocus(e) {
+  const sheet = $('#sheet');
+  if (!sheet.classList.contains('show')) return;
+  if (e.key === 'Escape') { e.preventDefault(); hideSheet(); return; }
+  if (e.key !== 'Tab') return;
+  const focusable = sheet.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  );
+  const items = [...focusable].filter((el) => el.offsetParent !== null || el === document.activeElement);
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault(); first.focus();
+  }
 }
 
 function sheetSave() {
@@ -2324,6 +2379,7 @@ function init() {
     else openAddSheet();
   });
 
+  bindBarEvents();
   $('#archive-bar-select-all')?.addEventListener('click', () => {
     const all = state.archiveItems.length;
     if (selectedArchive.size === all) selectedArchive.clear();
@@ -2335,15 +2391,32 @@ function init() {
   $('#scrim').addEventListener('click', hideSheet);
   $('#sheet-cancel').addEventListener('click', hideSheet);
   $('#sheet-save').addEventListener('click', sheetSave);
+  $('#sheet').addEventListener('keydown', trapSheetFocus);
   $('#sheet-text').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sheetSave();
-    if (e.key === 'Escape') hideSheet();
   });
   $('#pri-picker').addEventListener('click', (e) => {
     const pill = e.target.closest('.pri-pill');
     if (!pill) return;
-    $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => p.classList.remove('selected'));
-    pill.classList.add('selected');
+    selectPriority(pill.dataset.pri);
+    pill.focus();
+  });
+  $('#pri-picker').addEventListener('keydown', (e) => {
+    const pills = [...$('#pri-picker').querySelectorAll('.pri-pill')];
+    if (e.key === ' ' || e.key === 'Enter') {
+      const pill = e.target.closest('.pri-pill');
+      if (pill) { e.preventDefault(); selectPriority(pill.dataset.pri); }
+      return;
+    }
+    const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+    const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+    if (!fwd && !back) return;
+    e.preventDefault();
+    const cur = $('#pri-picker .pri-pill.selected')?.dataset.pri;
+    const idx = pills.findIndex((p) => p.dataset.pri === cur);
+    const nextIdx = (idx + (fwd ? 1 : -1) + pills.length) % pills.length;
+    selectPriority(pills[nextIdx].dataset.pri);
+    pills[nextIdx].focus();
   });
 
   document.addEventListener('click', (e) => {
