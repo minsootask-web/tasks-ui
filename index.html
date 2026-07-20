@@ -77,6 +77,29 @@
   .icon-btn:active { transform: scale(0.96); }
   .icon-btn.sort-active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
+  .header-actions { display: inline-flex; gap: 8px; align-items: center; }
+  .menu-wrap { position: relative; display: inline-flex; }
+  .menu {
+    position: absolute; top: 46px; right: 0; z-index: 50;
+    min-width: 220px; padding: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow);
+    display: none; flex-direction: column; gap: 2px;
+  }
+  .menu.show { display: flex; }
+  .menu-item {
+    appearance: none; -webkit-appearance: none; background: none; border: none;
+    color: var(--text); text-align: left; width: 100%;
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; display: flex; align-items: center; gap: 10px; white-space: nowrap;
+  }
+  .menu-item:hover { background: var(--surface-2); }
+  .menu-item:disabled { opacity: 0.4; cursor: default; }
+  .menu-item:disabled:hover { background: none; }
+  .menu-item.danger { color: var(--danger); }
+  .menu-item .mi-ic { width: 18px; text-align: center; font-size: 15px; flex-shrink: 0; }
+  .menu-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
   .section { margin-bottom: 22px; }
   .section-title {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
@@ -1073,10 +1096,7 @@ function renderInbox() {
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
       </div>
-      <div>
-        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
-        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
-      </div>
+      <div class="header-actions">${headerActions()}</div>
     </header>
     <div class="tabs">
       <button class="tab" id="tab-active">Task</button>
@@ -1158,10 +1178,7 @@ function renderArchive() {
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
       </div>
-      <div>
-        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
-        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
-      </div>
+      <div class="header-actions">${headerActions()}</div>
     </header>
     <div class="tabs">
       <button class="tab" id="tab-active">Task</button>
@@ -1412,10 +1429,7 @@ function renderMemos() {
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
       </div>
-      <div>
-        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
-        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
-      </div>
+      <div class="header-actions">${headerActions()}</div>
     </header>
     <div class="tabs">
       <button class="tab" id="tab-active">Task</button>
@@ -1831,6 +1845,86 @@ function renderSync(isError) {
   else el.lastElementChild.textContent = '동기화됨';
 }
 
+// 헤더 우측 액션(정렬 + 더보기). sort=true인 Task 화면에만 정렬 버튼 노출.
+function headerActions({ sort = false } = {}) {
+  return `
+        ${sort ? `<button class="icon-btn${sortIncompleteFirst ? ' sort-active' : ''}" id="sort-btn" aria-label="미완료 순 정렬" title="미완료 항목 먼저">⇅</button>` : ''}
+        <div class="menu-wrap">
+          <button class="icon-btn" id="more-btn" aria-label="더보기" aria-haspopup="true" aria-expanded="false" title="더보기">⋯</button>
+          <div class="menu" id="more-menu" role="menu"></div>
+        </div>`;
+}
+
+// 완료(체크)된 최상위 할 일 개수
+function countDoneTopLevel() {
+  let n = 0;
+  state.sections.forEach((s) => s.items.forEach((i) => {
+    if (i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()) n++;
+  }));
+  return n;
+}
+
+function openMoreMenu(btn) {
+  const menu = $('#more-menu');
+  if (!menu) return;
+  const rows = [];
+  rows.push(`<button class="menu-item" role="menuitem" id="menu-refresh"><span class="mi-ic">↻</span>새로고침</button>`);
+  if (currentTab === 'active') {
+    const doneN = countDoneTopLevel();
+    rows.push(`<button class="menu-item" role="menuitem" id="menu-archive-done"${doneN ? '' : ' disabled'}><span class="mi-ic">📥</span>완료 항목 일괄 아카이브${doneN ? ` (${doneN})` : ''}</button>`);
+  }
+  rows.push(`<div class="menu-sep"></div>`);
+  rows.push(`<button class="menu-item" role="menuitem" id="menu-token"><span class="mi-ic">🔑</span>토큰 재입력</button>`);
+  menu.innerHTML = rows.join('');
+  menu.classList.add('show');
+  btn.setAttribute('aria-expanded', 'true');
+}
+
+function closeMoreMenu() {
+  const menu = $('#more-menu');
+  if (menu) menu.classList.remove('show');
+  const btn = $('#more-btn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// 완료된 최상위 할 일을 블록(하위 포함) 단위로 한 번에 보관함 이동
+async function onBulkArchiveDone() {
+  const targets = [];
+  state.sections.forEach((sec) => {
+    const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec.title) || 'medium';
+    sec.items.forEach((i) => {
+      if (i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()) {
+        targets.push({ lineIndex: i.lineIndex, priority });
+      }
+    });
+  });
+  if (!targets.length) { toast('완료된 항목이 없습니다'); return; }
+  if (!confirm(`완료된 ${targets.length}개 항목을 보관함으로 옮길까요?`)) return;
+  try {
+    const lines = state.content.split('\n');
+    const ranges = [];
+    const entries = targets.map((t) => {
+      const { start, end } = extractBlock(lines, t.lineIndex);
+      ranges.push({ start, end });
+      return {
+        id: genArchiveId(),
+        deletedAt: new Date().toISOString(),
+        source: 'active',
+        priority: t.priority,
+        block: lines.slice(start, end + 1),
+      };
+    });
+    // 인덱스 밀림 방지: 뒤(큰 인덱스)에서부터 삭제
+    ranges.sort((a, b) => b.start - a.start).forEach((r) => lines.splice(r.start, r.end - r.start + 1));
+    const newContent = lines.join('\n');
+    await ghLoadArchive();
+    await ghSaveArchive([...state.archiveItems, ...entries], `archive ${entries.length} done tasks`);
+    await ghSave(newContent, `archive ${entries.length} done tasks (from active)`);
+    toast(`${entries.length}개 보관됨`);
+    renderApp();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
 function renderApp() {
   if (!state.token) { renderSetup(); return; }
   const app = $('#app');
@@ -1851,11 +1945,7 @@ function renderApp() {
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
       </div>
-      <div>
-        <button class="icon-btn${sortIncompleteFirst ? ' sort-active' : ''}" id="sort-btn" aria-label="미완료 순 정렬" title="미완료 항목 먼저">⇅</button>
-        <button class="icon-btn" id="refresh-btn" aria-label="새로고침">↻</button>
-        <button class="icon-btn" id="settings-btn" aria-label="설정">⚙</button>
-      </div>
+      <div class="header-actions">${headerActions({ sort: true })}</div>
     </header>
     <div class="tabs">
       <button class="tab active" id="tab-active">Task</button>
@@ -2445,9 +2535,34 @@ function init() {
   });
 
   document.addEventListener('click', (e) => {
-    if (e.target.id === 'sort-btn') { sortIncompleteFirst = !sortIncompleteFirst; renderApp(); }
-    if (e.target.id === 'refresh-btn') refresh();
-    if (e.target.id === 'settings-btn') openSettings();
+    if (e.target.closest('#sort-btn')) { sortIncompleteFirst = !sortIncompleteFirst; renderApp(); return; }
+
+    const moreBtn = e.target.closest('#more-btn');
+    if (moreBtn) {
+      const menu = $('#more-menu');
+      if (menu && menu.classList.contains('show')) closeMoreMenu();
+      else openMoreMenu(moreBtn);
+      return;
+    }
+
+    const mi = e.target.closest('.menu-item');
+    if (mi) {
+      if (mi.disabled) return;
+      closeMoreMenu();
+      if (mi.id === 'menu-refresh') refresh();
+      else if (mi.id === 'menu-archive-done') onBulkArchiveDone();
+      else if (mi.id === 'menu-token') openSettings();
+      return;
+    }
+
+    // 메뉴 밖 클릭 시 닫기
+    const openMenu = $('#more-menu.show');
+    if (openMenu && !e.target.closest('.menu-wrap')) closeMoreMenu();
+  });
+
+  // Esc로 메뉴 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMoreMenu();
   });
 
   // PWA SW
