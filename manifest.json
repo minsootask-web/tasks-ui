@@ -1,12 +1,12 @@
 {
-  "name": "Tako",
-  "short_name": "Tako",
+  "name": "tako",
+  "short_name": "tako",
   "description": "Personal task manager — markdown-backed via GitHub",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0c0a09",
-  "theme_color": "#0ea5e9",
+  "theme_color": "#DF4438",
   "orientation": "portrait",
   "lang": "ko",
   "icons": [

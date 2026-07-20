@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0ea5e9">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#191919" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tako">
@@ -13,39 +14,85 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <style>
   :root {
-    --bg: #fafaf9;
+    /* Notion-inspired light palette */
+    --bg: #ffffff;
     --surface: #ffffff;
-    --surface-2: #f5f5f4;
-    --border: #e7e5e4;
-    --text: #1c1917;
-    --muted: #78716c;
-    --accent: #0ea5e9;
+    --surface-2: #f7f6f3;
+    --surface-3: #efeeec;
+    --border: rgba(55,53,47,0.09);
+    --border-strong: rgba(55,53,47,0.16);
+    --text: #37352f;
+    --muted: rgba(55,53,47,0.55);
+    --faint: rgba(55,53,47,0.4);
+    --accent: #DF4438;
     --accent-fg: #ffffff;
-    --high: #ef4444;
-    --med: #f59e0b;
-    --low: #10b981;
-    --danger: #ef4444;
-    --hover: rgba(0,0,0,0.04);
-    --shadow: 0 4px 20px rgba(0,0,0,0.08);
+    --accent-soft: rgba(223,68,56,0.11);
+    --high: #e03e3e;
+    --med: #d9730d;
+    --low: #448361;
+    --danger: #e03e3e;
+    --hover: rgba(55,53,47,0.055);
+    --shadow: 0 1px 3px rgba(15,15,15,0.06), 0 6px 18px rgba(15,15,15,0.07);
+    --shadow-menu: rgba(15,15,15,0.05) 0 0 0 1px, rgba(15,15,15,0.08) 0 3px 6px, rgba(15,15,15,0.14) 0 9px 24px;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --memo-bg: #fdea9c;
+    --memo-bg-edit: #fbdf74;
+    --memo-fg: #3a3016;
     --safe-top: env(safe-area-inset-top);
     --safe-bottom: env(safe-area-inset-bottom);
   }
+  /* Notion-inspired dark palette.
+     시스템 다크(수동 라이트로 덮어쓰지 않은 경우) + 수동 다크(data-theme="dark") 공통 */
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0c0a09;
-      --surface: #1c1917;
-      --surface-2: #292524;
-      --border: #292524;
-      --text: #fafaf9;
-      --muted: #a8a29e;
-      --accent: #38bdf8;
-      --accent-fg: #0c0a09;
-      --high: #f87171;
-      --med: #fbbf24;
-      --low: #34d399;
-      --hover: rgba(255,255,255,0.05);
-      --shadow: 0 4px 20px rgba(0,0,0,0.4);
+    :root:not([data-theme="light"]) {
+      --bg: #191919;
+      --surface: #202020;
+      --surface-2: #252525;
+      --surface-3: #2d2d2d;
+      --border: rgba(255,255,255,0.094);
+      --border-strong: rgba(255,255,255,0.14);
+      --text: rgba(255,255,255,0.82);
+      --muted: rgba(255,255,255,0.46);
+      --faint: rgba(255,255,255,0.34);
+      --accent: #DF4438;
+      --accent-fg: #ffffff;
+      --accent-soft: rgba(223,68,56,0.24);
+      --high: #ff7369;
+      --med: #ffa344;
+      --low: #4dab9a;
+      --danger: #ff7369;
+      --hover: rgba(255,255,255,0.055);
+      --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.45);
+      --shadow-menu: rgba(15,15,15,0.1) 0 0 0 1px, rgba(15,15,15,0.2) 0 3px 6px, rgba(15,15,15,0.4) 0 9px 24px;
+      --memo-bg: #f5d45e;
+      --memo-bg-edit: #f8e187;
+      --memo-fg: #3a3016;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #191919;
+    --surface: #202020;
+    --surface-2: #252525;
+    --surface-3: #2d2d2d;
+    --border: rgba(255,255,255,0.094);
+    --border-strong: rgba(255,255,255,0.14);
+    --text: rgba(255,255,255,0.82);
+    --muted: rgba(255,255,255,0.46);
+    --faint: rgba(255,255,255,0.34);
+    --accent: #DF4438;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(223,68,56,0.24);
+    --high: #ff7369;
+    --med: #ffa344;
+    --low: #4dab9a;
+    --danger: #ff7369;
+    --hover: rgba(255,255,255,0.055);
+    --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.45);
+    --shadow-menu: rgba(15,15,15,0.1) 0 0 0 1px, rgba(15,15,15,0.2) 0 3px 6px, rgba(15,15,15,0.4) 0 9px 24px;
+    --memo-bg: #f5d45e;
+    --memo-bg-edit: #f8e187;
+    --memo-fg: #3a3016;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { background: var(--bg); margin: 0; }
@@ -65,15 +112,18 @@
     gap: 12px; margin-bottom: 24px;
   }
   .title-row h1 { font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .title-row h1.brand { display: inline-flex; align-items: center; gap: 9px; }
+  .title-row h1.brand span { font-weight: 900; text-transform: lowercase; }
+  .brand-logo { width: 32px; height: 32px; flex-shrink: 0; display: block; }
   .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px; }
   .icon-btn {
     appearance: none; -webkit-appearance: none;
-    background: var(--surface); border: 1px solid var(--border); color: var(--text);
-    width: 40px; height: 40px; border-radius: 10px;
+    background: transparent; border: 1px solid transparent; color: var(--muted);
+    width: 38px; height: 38px; border-radius: var(--radius-sm);
     display: inline-flex; align-items: center; justify-content: center;
     cursor: pointer; font-size: 18px; transition: all 0.12s;
   }
-  .icon-btn:hover { background: var(--surface-2); }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
   .icon-btn:active { transform: scale(0.96); }
   .icon-btn.sort-active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
@@ -82,9 +132,9 @@
   .menu {
     position: absolute; top: 46px; right: 0; z-index: 50;
     min-width: 220px; padding: 6px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; box-shadow: var(--shadow);
-    display: none; flex-direction: column; gap: 2px;
+    background: var(--surface);
+    border-radius: var(--radius); box-shadow: var(--shadow-menu);
+    display: none; flex-direction: column; gap: 1px;
   }
   .menu.show { display: flex; }
   .menu-item {
@@ -98,45 +148,54 @@
   .menu-item:disabled:hover { background: none; }
   .menu-item.danger { color: var(--danger); }
   .menu-item .mi-ic { width: 18px; text-align: center; font-size: 15px; flex-shrink: 0; }
+  .menu-item .mi-count { margin-left: auto; color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
   .menu-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 
   .section { margin-bottom: 22px; }
   .section-title {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-    color: var(--muted); margin: 0 0 8px 0; text-transform: uppercase;
+    color: var(--text); margin: 0 0 8px 0; text-transform: uppercase;
     display: flex; align-items: center; gap: 8px; padding-left: 4px;
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .section-title .sec-ic { font-size: 14px; line-height: 1; }
   .pri-high .dot { background: var(--high); }
   .pri-med  .dot { background: var(--med); }
   .pri-low  .dot { background: var(--low); }
   .count { color: var(--muted); margin-left: auto; font-weight: 500; }
 
   .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
     padding: 4px; overflow: hidden;
   }
   .task {
     display: flex; align-items: flex-start; gap: 10px;
-    padding: 10px; border-radius: 8px; position: relative; min-height: 44px;
-    transition: background 0.12s;
+    padding: 10px; border-radius: var(--radius-sm); position: relative; min-height: 44px;
+    transition: background 0.1s;
   }
   .task:hover { background: var(--hover); }
   .task input[type="checkbox"] {
     appearance: none; -webkit-appearance: none;
     width: 20px; height: 20px; margin: 1px 0 0 0;
-    border: 1.5px solid var(--border); border-radius: 5px;
-    background: transparent; cursor: pointer;
-    flex-shrink: 0; transition: all 0.15s; position: relative;
+    border: 0; border-radius: 50%;
+    background: transparent no-repeat center / contain; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='12' cy='12' r='10.5' stroke='%23868686'/%3E%3C/svg%3E");
+    flex-shrink: 0; transition: opacity 0.12s; position: relative;
   }
+  .task input[type="checkbox"]:hover { opacity: 0.7; }
   .task input[type="checkbox"]:checked {
-    background: var(--accent); border-color: var(--accent);
+    background-image: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='12' cy='12' r='11' fill='%23DF4438'/%3E%3Cpath d='M8 11.5L10.9474 15L16 9' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
-  .task input[type="checkbox"]:checked::after {
-    content: ""; position: absolute; left: 5px; top: 1px;
-    width: 5px; height: 10px;
-    border: solid var(--accent-fg); border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
+  .task input[type="checkbox"]:checked:hover { opacity: 0.85; }
+  /* 체크 순간 뿅! 튀는 마이크로 인터랙션 — 렌더링된 완료 항목이 아닌,
+     사용자가 직접 클릭한 순간에만 .pop 클래스로 발동한다. */
+  .task input[type="checkbox"].pop {
+    animation: cb-pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  @keyframes cb-pop {
+    0% { transform: scale(0.7); }
+    55% { transform: scale(1.2); }
+    100% { transform: scale(1); }
   }
   .task-toggle {
     flex-shrink: 0; width: 18px; height: 22px; margin-top: 0; padding: 0;
@@ -225,8 +284,10 @@
     border: 1px solid var(--border); border-radius: 8px;
     font-family: inherit; resize: vertical;
   }
+  /* 포커스는 메인 컬러 대신 중립적인 진한 보더로 은은하게 표시 */
   .field input:focus, .field textarea:focus {
-    outline: none; border-color: var(--accent);
+    outline: none; border-color: var(--border-strong);
+    background: var(--surface);
   }
   .pri-picker { display: flex; gap: 8px; }
   .pri-pill {
@@ -242,13 +303,14 @@
   .pri-pill .dot { width: 10px; height: 10px; }
 
   .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .actions .btn { flex: 1; } /* 취소/저장 버튼 가로폭 동일 */
   .btn {
     appearance: none; -webkit-appearance: none;
     padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500;
     cursor: pointer; transition: all 0.12s; border: 1px solid transparent;
     font-family: inherit;
   }
-  .btn-primary { background: var(--accent); color: var(--accent-fg); flex: 1; }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); }
   .btn-primary:hover { filter: brightness(1.05); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
@@ -275,12 +337,20 @@
     position: fixed; bottom: calc(var(--safe-bottom) + 90px); left: 50%;
     transform: translateX(-50%) translateY(8px);
     background: var(--text); color: var(--bg);
-    padding: 9px 16px; border-radius: 999px; font-size: 13px;
+    padding: 9px 12px 9px 16px; border-radius: 999px; font-size: 13px;
     opacity: 0; transition: opacity 0.18s, transform 0.18s; pointer-events: none;
-    z-index: 50; white-space: nowrap; max-width: 90vw;
-    overflow: hidden; text-overflow: ellipsis;
+    z-index: 50; max-width: 90vw;
+    display: inline-flex; align-items: center; gap: 12px;
   }
   .toast.show { opacity: 0.94; transform: translateX(-50%) translateY(0); }
+  .toast .toast-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toast .toast-action {
+    pointer-events: auto; flex-shrink: 0; cursor: pointer;
+    appearance: none; -webkit-appearance: none; border: none;
+    background: var(--accent); color: var(--accent-fg);
+    font-size: 12px; font-weight: 700; padding: 3px 11px; border-radius: 999px;
+  }
+  .toast .toast-action:active { transform: scale(0.96); }
 
   /* Skeleton */
   .skeleton {
@@ -320,7 +390,8 @@
     padding: 7px 12px; border-radius: 8px; cursor: pointer;
     transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 6px;
   }
-  .tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .tab.active { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(15,15,15,0.06); }
+  .tab:not(.active):hover { color: var(--text); }
   .badge {
     background: var(--accent); color: var(--accent-fg);
     font-size: 11px; font-weight: 700; min-width: 18px; height: 18px;
@@ -335,13 +406,13 @@
     transition: background 0.12s; cursor: pointer;
   }
   .inbox-item:hover { background: var(--hover); }
-  .inbox-item.selected { background: rgba(14,165,233,0.08); }
+  .inbox-item.selected { background: var(--accent-soft); }
   .inbox-cb {
     appearance: none; -webkit-appearance: none;
     width: 20px; height: 20px; flex-shrink: 0; margin: 0;
-    border: 1.5px solid var(--border); border-radius: 5px;
+    border: 1.5px solid var(--border-strong); border-radius: 4px;
     background: transparent; cursor: pointer;
-    transition: all 0.15s; position: relative;
+    transition: all 0.12s; position: relative;
   }
   .inbox-cb:checked { background: var(--accent); border-color: var(--accent); }
   .inbox-cb:checked::after {
@@ -453,12 +524,12 @@
     min-height: 60px;
   }
   .memo {
-    background: #fef3c7;
-    color: #1c1917;
-    border-radius: 4px;
+    background: var(--memo-bg);
+    color: var(--memo-fg);
+    border-radius: var(--radius-sm);
     padding: 10px 12px;
     font-size: 13px; line-height: 1.5;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+    box-shadow: 0 1px 2px rgba(15,15,15,0.06), 0 2px 8px rgba(15,15,15,0.05);
     cursor: grab;
     word-break: break-word;
     white-space: pre-wrap;
@@ -473,7 +544,7 @@
   .memo.editing {
     cursor: text; user-select: text; -webkit-user-select: text;
     outline: 2px solid var(--accent); outline-offset: 1px;
-    background: #fffbeb;
+    background: var(--memo-bg-edit);
   }
   .memo .memo-text {
     min-height: 36px;
@@ -482,7 +553,7 @@
   .memo .memo-del {
     position: absolute; top: 2px; right: 2px;
     width: 20px; height: 20px; border-radius: 50%;
-    border: 0; background: rgba(0,0,0,0.08); color: #1c1917;
+    border: 0; background: color-mix(in srgb, var(--memo-fg) 12%, transparent); color: var(--memo-fg);
     font-size: 13px; line-height: 1; cursor: pointer;
     display: none; align-items: center; justify-content: center;
     padding: 0;
@@ -491,8 +562,8 @@
   @media (hover: none) { .memo .memo-del { display: inline-flex; } }
   .memo-ghost {
     position: fixed; pointer-events: none; z-index: 100;
-    background: #fef3c7; color: #1c1917;
-    border-radius: 4px; padding: 10px 12px;
+    background: var(--memo-bg); color: var(--memo-fg);
+    border-radius: var(--radius-sm); padding: 10px 12px;
     font-size: 13px; line-height: 1.5;
     box-shadow: 0 8px 24px rgba(0,0,0,0.2);
     opacity: 0.92;
@@ -509,12 +580,16 @@
   @media (max-width: 600px) {
     .memo-board { --cols: 2; }
   }
-  @media (prefers-color-scheme: dark) {
-    .memo { background: #facc15; color: #1c1917; }
-    .memo.editing { background: #fde047; }
-    .memo-ghost { background: #facc15; color: #1c1917; }
-  }
 </style>
+<script>
+  // 저장된 테마를 렌더 전에 적용(깜빡임 방지). 'light' | 'dark' | 없음(시스템)
+  (function () {
+    try {
+      var t = localStorage.getItem('tasks_theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 
@@ -620,8 +695,47 @@ function toggleCollapse(item) {
   renderApp();
 }
 
+// ============ Theme (light/dark toggle) ============
+const THEME_KEY = 'tasks_theme';
+// 현재 실제 적용 중인 테마('light'|'dark') — 수동 지정이 있으면 그 값, 없으면 시스템 설정
+function effectiveTheme() {
+  const t = document.documentElement.getAttribute('data-theme');
+  if (t === 'light' || t === 'dark') return t;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function applyTheme(mode) { // 'light' | 'dark' | 'system'
+  const root = document.documentElement;
+  if (mode === 'light' || mode === 'dark') {
+    root.setAttribute('data-theme', mode);
+    try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}
+  } else {
+    root.removeAttribute('data-theme');
+    try { localStorage.removeItem(THEME_KEY); } catch (e) {}
+  }
+  updateThemeColorMeta();
+}
+function toggleTheme() {
+  applyTheme(effectiveTheme() === 'dark' ? 'light' : 'dark');
+}
+// 수동 지정 시 모바일 브라우저 상단바 색을 실제 테마에 맞춘다(미지정이면 media 메타에 위임)
+function updateThemeColorMeta() {
+  const forced = document.documentElement.getAttribute('data-theme');
+  let m = document.querySelector('meta#theme-color-dynamic');
+  if (!forced) { if (m) m.remove(); return; }
+  if (!m) {
+    m = document.createElement('meta');
+    m.id = 'theme-color-dynamic';
+    m.setAttribute('name', 'theme-color');
+    document.head.appendChild(m);
+  }
+  m.setAttribute('content', forced === 'dark' ? '#191919' : '#ffffff');
+}
+
 // ============ Utilities ============
 const $ = (q) => document.querySelector(q);
+
+// 타코야키 3알 + 소스 물결 로고 (라인아트, currentColor로 테마 색 상속)
+const TAKO_LOGO = '<svg class="brand-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g clip-path="url(#clip0_2254_3379)"><path d="M24.8135 26.9466C24.6835 27.7187 24.2632 28.2251 23.5816 28.5374C22.3845 29.0858 21.3511 28.745 20.3824 27.9767C20.0364 27.7025 19.7253 27.4005 19.4408 27.0274C19.2151 27.3288 19.1317 27.6793 18.9855 27.9903C18.6382 28.7282 18.0931 29.1589 17.2899 29.1673C16.0198 29.1802 14.9514 28.7534 14.2944 27.5816C14.242 27.4885 14.2109 27.3837 14.1657 27.2867C14.1256 27.2001 14.1075 27.1005 14.0001 27.0222C13.7718 27.3947 13.5196 27.751 13.1808 28.0285C12.6337 28.4766 12.0626 28.8711 11.2937 28.7457C10.6936 28.6474 10.1814 28.3783 9.72288 27.9851C9.18547 27.5247 8.84725 26.944 8.62932 26.186C8.42367 26.5973 8.16951 26.8832 7.9186 27.1755C7.11669 28.1087 5.44757 27.9431 4.70969 27.1341C3.86317 26.2061 3.96728 25.1623 4.34107 24.0875C4.55966 23.4589 5.06537 23.0418 5.48702 22.5438C4.17358 21.5848 3.35874 20.2533 2.70429 18.8066C2.2322 17.7648 2.06923 16.6557 2.01879 15.5246C1.97481 14.5481 1.99745 13.5748 2.2018 12.6145C2.32015 12.0564 2.5245 11.5241 2.76443 11.0087C3.34775 9.75673 4.1102 8.62177 5.07313 7.63039C5.75346 6.93002 6.50169 6.31178 7.30165 5.7401C8.65842 4.77005 10.1465 4.12788 11.7412 3.69524C13.2137 3.29559 14.718 3.16625 16.237 3.14749C17.5007 3.13197 18.7643 3.1255 20.0112 3.35638C20.5466 3.45532 21.0756 3.60406 21.5872 3.80066C23.0028 4.34517 24.2296 5.20334 25.4538 6.07767C26.806 7.04319 27.8834 8.25251 28.7163 9.67007C29.4012 10.8354 29.8959 12.0913 29.9321 13.4668C29.958 14.4433 29.8435 15.4147 29.5849 16.3614C29.4691 16.7863 29.3643 17.2138 29.2253 17.6328C29.0209 18.2498 28.6711 18.7697 28.241 19.2418C27.6693 19.8685 27.1268 20.5249 26.4309 21.0261C26.4076 21.0429 26.3979 21.0778 26.3662 21.1295C26.978 21.2634 27.5523 21.4729 28.0528 21.8234C28.6323 22.2289 29.235 22.6396 29.5771 23.2791C30.1514 24.352 30.2671 25.9034 29.1147 26.8735C28.5915 27.3139 27.9222 27.429 27.2587 27.5331C26.4128 27.6657 25.6749 27.3779 24.9545 26.9951C24.917 26.975 24.8782 26.9569 24.8388 26.9407C24.831 26.9375 24.8181 26.9453 24.8129 26.9472L24.8135 26.9466ZM29.4575 13.9635C29.4859 13.0361 29.3132 12.1495 28.9783 11.2855C28.7636 10.7307 28.4842 10.2159 28.1841 9.7037C27.6887 8.85782 27.086 8.10118 26.385 7.42539C25.5954 6.66358 24.679 6.06474 23.7601 5.47042C22.984 4.96859 22.2048 4.47581 21.3265 4.1738C20.0429 3.73211 18.7081 3.59824 17.3604 3.59177C16.6846 3.58854 16.0081 3.63898 15.3323 3.64222C14.416 3.6461 13.5151 3.77349 12.6201 3.95328C11.5666 4.16475 10.5565 4.51137 9.57478 4.94919C8.17857 5.5726 6.93627 6.42107 5.84141 7.48036C4.8345 8.45428 4.02096 9.56789 3.36068 10.8141C2.67583 12.1055 2.45983 13.4888 2.43979 14.8999C2.42944 15.6436 2.52321 16.4073 2.6726 17.1523C2.83427 17.9581 3.14081 18.7115 3.49714 19.4423C3.85476 20.1744 4.36888 20.8081 4.89271 21.4276C5.21282 21.8066 5.55622 22.1649 6.09491 22.2244C6.19062 22.2354 6.27534 22.2916 6.30121 22.4029C6.3329 22.5374 6.24753 22.6046 6.15376 22.6603C5.85434 22.8368 5.6073 23.0741 5.36673 23.3205C4.63079 24.0746 4.41221 24.9955 4.58164 25.9979C4.70387 26.7202 5.37255 27.2518 6.05999 27.3333C7.07401 27.4542 7.73235 26.9343 8.05311 26.2455C8.23806 25.8472 8.45665 25.4624 8.56788 25.0317C8.60539 24.8875 8.70433 24.8092 8.85566 24.8357C9.01087 24.8629 9.05678 24.9825 9.05549 25.1242C9.05549 25.1888 9.04514 25.2529 9.04385 25.3175C9.01087 26.598 9.58901 27.5176 10.7117 28.099C10.9969 28.2464 11.3047 28.335 11.6449 28.2833C12.2806 28.1863 12.7345 27.8002 13.1433 27.3553C13.497 26.9705 13.7835 26.5411 13.68 25.9694C13.6541 25.8271 13.746 25.7366 13.8598 25.6984C14.0008 25.6519 14.0842 25.7696 14.1308 25.8743C14.1909 26.0095 14.2491 26.1459 14.2937 26.2908C14.5776 27.2117 14.932 28.0834 15.9422 28.4592C16.1743 28.5458 16.4071 28.6209 16.6483 28.6752C17.6443 28.8996 18.3905 28.4611 18.7217 27.4904C18.8491 27.1166 19.0204 26.7603 19.0735 26.3626C19.0896 26.2417 19.1627 26.1382 19.3004 26.1201C19.435 26.1026 19.5255 26.1744 19.5831 26.2908C19.8831 26.8981 20.3009 27.3941 20.8635 27.7853C21.5128 28.2367 22.2041 28.4566 22.9853 28.2891C23.923 28.088 24.3887 27.4135 24.2302 26.499C24.2031 26.3412 24.2503 26.2539 24.3686 26.1763C24.4992 26.0903 24.6208 26.08 24.7514 26.1854C24.9351 26.3335 25.056 26.5521 25.2701 26.6627C26.1147 27.0985 26.9897 27.2434 27.9151 26.9401C28.3665 26.792 28.8043 26.631 29.1044 26.23C29.7601 25.3544 29.6398 24.4031 29.1755 23.5533C28.5243 22.3615 27.3751 21.7872 26.0759 21.5111C25.9064 21.4749 25.7047 21.4833 25.651 21.2847C25.6012 21.1011 25.7784 21.006 25.8883 20.8928C25.9252 20.8547 25.9718 20.8256 26.0151 20.7939C26.8196 20.1944 27.4676 19.4365 28.113 18.6805C28.4906 18.2388 28.7183 17.7104 28.8935 17.1498C29.2195 16.1079 29.4329 15.0525 29.4562 13.9609L29.4575 13.9635Z" fill="#2D1514"/><path d="M29.4573 13.9636C29.4347 15.0552 29.2206 16.1106 28.8947 17.1524C28.7195 17.7125 28.4925 18.2408 28.1141 18.6832C27.4687 19.4385 26.8208 20.1971 26.0163 20.7966C25.9736 20.8289 25.9264 20.8574 25.8895 20.8955C25.7802 21.0087 25.603 21.1044 25.6522 21.2874C25.7059 21.4859 25.9076 21.4782 26.0771 21.5138C27.3769 21.7899 28.5261 22.3642 29.1767 23.556C29.6403 24.4058 29.7613 25.3571 29.1055 26.2327C28.8055 26.6337 28.3677 26.7947 27.9163 26.9428C26.9915 27.2461 26.1159 27.1012 25.2713 26.6653C25.0572 26.5548 24.9363 26.3362 24.7526 26.1881C24.622 26.0827 24.5004 26.093 24.3698 26.179C24.2514 26.2566 24.2036 26.3439 24.2314 26.5017C24.3898 27.4162 23.9242 28.0907 22.9865 28.2918C22.2053 28.4593 21.514 28.2394 20.8647 27.788C20.3021 27.3968 19.8843 26.9007 19.5842 26.2935C19.5267 26.1771 19.4361 26.1053 19.3016 26.1228C19.1645 26.1402 19.0908 26.2443 19.0746 26.3653C19.0216 26.763 18.8502 27.1193 18.7228 27.4931C18.3917 28.4638 17.6454 28.9029 16.6495 28.6779C16.4077 28.6235 16.1755 28.5479 15.9433 28.4619C14.9338 28.0861 14.5788 27.2144 14.2949 26.2935C14.2503 26.1486 14.1914 26.0122 14.1319 25.877C14.0854 25.7729 14.0019 25.6546 13.861 25.7011C13.7471 25.7393 13.6553 25.8298 13.6812 25.9721C13.7847 26.5438 13.4982 26.9732 13.1444 27.3579C12.7357 27.8022 12.2817 28.1883 11.646 28.286C11.3059 28.3377 10.998 28.2497 10.7129 28.1017C9.59019 27.5203 9.01139 26.6007 9.04502 25.3202C9.04696 25.2555 9.05666 25.1915 9.05666 25.1268C9.05731 24.9846 9.01204 24.8656 8.85683 24.8384C8.70551 24.8119 8.60656 24.8902 8.56905 25.0344C8.45782 25.4651 8.23924 25.8499 8.05428 26.2482C7.73352 26.9369 7.07519 27.4569 6.06117 27.336C5.37373 27.2538 4.70505 26.7229 4.58282 26.0005C4.41339 24.9982 4.63197 24.0766 5.36791 23.3232C5.60848 23.0768 5.85552 22.8395 6.15494 22.6629C6.24936 22.6073 6.33472 22.5394 6.30238 22.4056C6.27587 22.2943 6.1918 22.2381 6.09609 22.2271C5.55674 22.1669 5.214 21.8086 4.89388 21.4303C4.37006 20.8108 3.85529 20.177 3.49831 19.445C3.14198 18.7142 2.83545 17.9608 2.67377 17.155C2.52439 16.41 2.43062 15.6463 2.44096 14.9026C2.46101 13.4921 2.67701 12.1082 3.36186 10.8168C4.02278 9.57057 4.83568 8.45696 5.84258 7.48304C6.93744 6.42375 8.18039 5.57529 9.57596 4.95187C10.5576 4.51341 11.5671 4.16743 12.6213 3.95596C13.5156 3.77618 14.4165 3.64878 15.3335 3.6449C16.0093 3.64231 16.6857 3.59187 17.3615 3.59446C18.7099 3.60092 20.044 3.73479 21.3277 4.17648C22.2059 4.47849 22.9852 4.97127 23.7612 5.47311C24.6802 6.06742 25.5966 6.66626 26.3862 7.42807C27.0865 8.10387 27.6899 8.86115 28.1853 9.70638C28.4854 10.2186 28.7641 10.7333 28.9794 11.2882C29.3144 12.1522 29.4864 13.0388 29.4586 13.9662L29.4573 13.9636Z" fill="#DF4438"/><path d="M13.375 8.00176C13.2917 8.46691 13.1769 8.96981 12.4495 9.01663C11.8035 9.05892 11.611 8.58773 11.6258 8.20413C11.6424 7.78127 11.7591 7.26628 12.518 7.2693C13.0714 7.27081 13.3269 7.55322 13.3731 8.00327L13.375 8.00176Z" fill="#2D1514"/><path d="M20.2698 6.39433C20.9776 6.38941 21.2093 6.78363 21.246 7.24027C21.2846 7.71663 21.0438 8.10592 20.4297 8.14206C19.7091 8.18313 19.5675 7.64764 19.5068 7.21563C19.4406 6.75571 19.8672 6.50931 20.2698 6.39433Z" fill="#2D1514"/><path d="M13.3761 13.5196C13.3966 12.4506 14.0768 11.7704 14.9088 11.3355C16.342 10.5876 17.8398 10.5609 19.2924 11.3734C20.1737 11.8658 20.4158 12.6958 20.3696 13.615C20.3255 14.487 19.6689 14.9353 18.9816 15.3087C18.1055 15.7848 17.1309 15.9622 16.1655 16.1346C14.7252 16.3921 13.3628 15.0913 13.3751 13.5186L13.3761 13.5196ZM16.0701 15.3734C16.8313 15.318 17.7382 15.0584 18.601 14.6378C19.1919 14.3506 19.6217 13.9207 19.6135 13.2293C19.6053 12.5563 19.1796 12.1521 18.5928 11.8853C17.2868 11.2913 16.0814 11.5396 14.9293 12.2967C14.2984 12.7122 14.0204 13.3698 14.2122 14.0038C14.4861 14.9117 15.0555 15.3826 16.0701 15.3734Z" fill="#2D1514"/><path d="M16.0703 15.3734C15.0567 15.3816 14.4873 14.9108 14.2124 14.0039C14.0205 13.3699 14.2985 12.7123 14.9295 12.2968C16.0815 11.5397 17.288 11.2914 18.5929 11.8854C19.1797 12.1521 19.6055 12.5574 19.6137 13.2293C19.6219 13.9208 19.1921 14.3506 18.6011 14.6379C17.7384 15.0575 16.8315 15.318 16.0703 15.3734ZM15.9892 13.9321C16.495 13.8243 16.9925 13.7115 17.4932 13.613C17.7773 13.5576 18.0646 13.534 18.32 13.3699C18.4955 13.257 18.6237 13.1267 18.5457 12.9144C18.477 12.7266 18.2954 12.6856 18.119 12.7174C17.3649 12.8559 16.6109 12.9995 15.861 13.1554C15.6158 13.2067 15.4558 13.3863 15.5122 13.6397C15.5624 13.8643 15.7861 13.9095 15.9892 13.9321Z" fill="#F1BBBC"/><path d="M15.9892 13.9318C15.785 13.9093 15.5624 13.8641 15.5121 13.6395C15.4547 13.3861 15.6158 13.2065 15.8609 13.1552C16.6119 12.9993 17.3649 12.8567 18.1189 12.7172C18.2954 12.6843 18.477 12.7264 18.5457 12.9141C18.6237 13.1265 18.4954 13.2558 18.32 13.3696C18.0646 13.5338 17.7773 13.5574 17.4931 13.6128C16.9925 13.7113 16.4949 13.8231 15.9892 13.9318Z" fill="#2D1514"/></g><defs><clipPath id="clip0_2254_3379"><rect width="28" height="26.0263" fill="white" transform="translate(2 3.14099)"/></clipPath></defs></svg>';
 const fmtDate = (d) => {
   const days = ['일','월','화','수','목','금','토'];
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} (${days[d.getDay()]})`;
@@ -630,9 +744,28 @@ const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&g
 const highlightMeta = (s) => esc(s).replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>');
 
 let toastTimer;
-function toast(msg, ms = 1400) {
+function toast(msg, ms = 1400, action = null) {
   const t = $('#toast');
-  t.textContent = msg;
+  t.innerHTML = '';
+  const span = document.createElement('span');
+  span.className = 'toast-msg';
+  span.textContent = msg;
+  t.appendChild(span);
+  if (action && action.label && typeof action.onClick === 'function') {
+    const btn = document.createElement('button');
+    btn.className = 'toast-action';
+    btn.type = 'button';
+    btn.textContent = action.label;
+    let fired = false;
+    btn.addEventListener('click', () => {
+      if (fired) return;
+      fired = true;
+      clearTimeout(toastTimer);
+      t.classList.remove('show');
+      action.onClick();
+    });
+    t.appendChild(btn);
+  }
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), ms);
@@ -792,7 +925,7 @@ async function ghLoad() {
   state.sections = parseSections(state.content);
 }
 
-async function ghSave(newContent, message) {
+async function ghSave(newContent, message, opts = {}) {
   state.saving = true;
   renderSync();
   try {
@@ -811,8 +944,12 @@ async function ghSave(newContent, message) {
       if (res.ok) {
         const data = await res.json();
         state.sha = data.content.sha;
-        state.content = mutated;
-        state.sections = parseSections(state.content);
+        // keepLocalState: 낙관적 업데이트로 state.content가 이미 더 최신일 수 있으므로
+        // 저장한 스냅샷으로 되돌리지 않는다 (sha만 갱신).
+        if (!opts.keepLocalState) {
+          state.content = mutated;
+          state.sections = parseSections(state.content);
+        }
         state.saving = false;
         renderSync();
         return;
@@ -1091,7 +1228,7 @@ function renderInbox() {
   app.innerHTML = `
     <header>
       <div class="title-row">
-        <h1>🌮 Tako</h1>
+        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
         <div class="meta">
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
@@ -1173,7 +1310,7 @@ function renderArchive() {
   app.innerHTML = `
     <header>
       <div class="title-row">
-        <h1>🌮 Tako</h1>
+        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
         <div class="meta">
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
@@ -1214,7 +1351,7 @@ function renderArchiveItem(entry) {
   meta.className = 'archive-badge';
   if (entry.source === 'active') {
     meta.classList.add('pri-' + entry.priority);
-    const dot = entry.priority === 'high' ? '🔥' : entry.priority === 'medium' ? '🟡' : '🟢';
+    const dot = entry.priority === 'high' ? '🍅' : entry.priority === 'medium' ? '🍋' : '🥝';
     meta.textContent = dot;
     meta.title = `Task / ${entry.priority}`;
   } else {
@@ -1424,7 +1561,7 @@ function renderMemos() {
   app.innerHTML = `
     <header>
       <div class="title-row">
-        <h1>🌮 Tako</h1>
+        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
         <div class="meta">
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
         </div>
@@ -1871,9 +2008,11 @@ function openMoreMenu(btn) {
   rows.push(`<button class="menu-item" role="menuitem" id="menu-refresh"><span class="mi-ic">↻</span>새로고침</button>`);
   if (currentTab === 'active') {
     const doneN = countDoneTopLevel();
-    rows.push(`<button class="menu-item" role="menuitem" id="menu-archive-done"${doneN ? '' : ' disabled'}><span class="mi-ic">📥</span>완료 항목 일괄 아카이브${doneN ? ` (${doneN})` : ''}</button>`);
+    rows.push(`<button class="menu-item" role="menuitem" id="menu-archive-done"${doneN ? '' : ' disabled'}><span class="mi-ic">📥</span>완료 항목 보관${doneN ? `<span class="mi-count">${doneN}</span>` : ''}</button>`);
   }
   rows.push(`<div class="menu-sep"></div>`);
+  const isDark = effectiveTheme() === 'dark';
+  rows.push(`<button class="menu-item" role="menuitem" id="menu-theme"><span class="mi-ic">${isDark ? '☀️' : '🌙'}</span>${isDark ? '라이트 모드' : '다크 모드'}</button>`);
   rows.push(`<button class="menu-item" role="menuitem" id="menu-token"><span class="mi-ic">🔑</span>토큰 재입력</button>`);
   menu.innerHTML = rows.join('');
   menu.classList.add('show');
@@ -1920,8 +2059,39 @@ async function onBulkArchiveDone() {
     await ghLoadArchive();
     await ghSaveArchive([...state.archiveItems, ...entries], `archive ${entries.length} done tasks`);
     await ghSave(newContent, `archive ${entries.length} done tasks (from active)`);
-    toast(`${entries.length}개 보관됨`);
     renderApp();
+    toast(`${entries.length}개 보관됨`, 5000, { label: '실행취소', onClick: () => undoArchive(entries) });
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
+// 직전 일괄 보관을 취소 — 보관한 항목들을 Task 탭으로 되돌리고 보관함에서 제거
+async function undoArchive(entries) {
+  const ids = entries.map((e) => e.id);
+  try {
+    await ghLoad();
+    const lines = state.content.split('\n');
+    entries.forEach((entry) => {
+      const want = SECTION_KEYS[entry.priority];
+      const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+      if (headerIdx === -1) return;
+      let insertAfter = headerIdx;
+      for (let i = headerIdx + 1; i < lines.length; i++) {
+        if (lines[i].startsWith('## ')) break;
+        if (lines[i].trim() !== '') insertAfter = i;
+      }
+      const block = entry.block || [];
+      if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
+        lines.splice(insertAfter, 1, ...block);
+      } else {
+        lines.splice(insertAfter + 1, 0, ...block);
+      }
+    });
+    await ghSave(lines.join('\n'), `undo archive: restore ${entries.length}`);
+    await ghLoadArchive();
+    await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `undo archive: ${entries.length}`);
+    currentTab = 'active';
+    renderApp();
+    toast(`${entries.length}개 복원됨`);
   } catch (e) { toast(`실패: ${e.message}`); }
 }
 
@@ -1939,7 +2109,7 @@ function renderApp() {
   app.innerHTML = `
     <header>
       <div class="title-row">
-        <h1>🌮 Tako</h1>
+        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
         <div class="meta">
           ${fmtDate(new Date())} · ${totalLine ? `${doneLine}/${totalLine} 완료` : ''}
           <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
@@ -1967,9 +2137,10 @@ function renderApp() {
 
     const div = document.createElement('div');
     div.className = `section ${cls}`;
+    const secIcon = key === 'high' ? '🍅' : key === 'medium' ? '🍋' : '🥝';
     div.innerHTML = `
       <div class="section-title">
-        <span class="dot"></span>${esc(sec.title)}
+        <span class="sec-ic">${secIcon}</span>${esc(sec.title.replace(/[🔥🟡🟢]/g, '').trim())}
         ${taskCount ? `<span class="count">${taskCount}</span>` : ''}
       </div>
       <div class="card"></div>
@@ -2035,7 +2206,14 @@ function renderTask(item, key, opts = {}) {
   cb.type = 'checkbox';
   cb.checked = item.checked;
   cb.setAttribute('aria-label', `완료: ${item.text}`);
-  cb.addEventListener('change', (e) => onToggle(item.lineIndex, e.target.checked, t, cb));
+  cb.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      cb.classList.remove('pop');
+      void cb.offsetWidth; // reflow로 애니메이션 재시작
+      cb.classList.add('pop');
+    }
+    onToggle(item.lineIndex, e.target.checked, t, cb);
+  });
 
   const span = document.createElement('div');
   span.className = 'task-text';
@@ -2144,15 +2322,43 @@ async function safeMutate(producer, msg, label) {
   }
 }
 
-async function onToggle(lineIndex, checked, el, cb) {
+// 토글 저장 큐 — UI는 즉시 반영(낙관적 업데이트)하고, 저장은 디바운스해
+// 배경에서 한 번에 처리한다. 연속 체크/언체크 시 마지막 상태만 저장하므로
+// 매 클릭마다 네트워크를 기다리거나 sha 409 충돌이 나지 않는다.
+const toggleSync = { timer: null, saving: false, dirty: false };
+
+function onToggle(lineIndex, checked, el) {
   el.classList.toggle('done', checked);
+  // 로컬 상태 즉시 갱신 — 이후 토글은 이 최신 내용 위에 쌓인다.
+  state.content = toggleAt(lineIndex, checked);
+  state.sections = parseSections(state.content);
+  clearTimeout(toggleSync.timer);
+  toggleSync.timer = setTimeout(flushToggles, 400);
+}
+
+async function flushToggles() {
+  if (toggleSync.saving) { toggleSync.dirty = true; return; }
+  toggleSync.saving = true;
+  const snapshot = state.content;
   try {
-    await ghSave(toggleAt(lineIndex, checked), checked ? 'toggle: done' : 'toggle: undo');
-    renderApp();
+    await ghSave(snapshot, 'toggle tasks', { keepLocalState: true });
+    // 저장 중 새 토글이 없을 때만 재렌더 (있으면 다음 flush가 처리)
+    if (!toggleSync.dirty && state.content === snapshot) renderApp();
   } catch (e) {
-    cb.checked = !checked;
-    el.classList.toggle('done', !checked);
-    toast(`실패: ${e.message}`);
+    if (e.code === 409) {
+      // 충돌: ghSave가 원격 최신 상태로 갱신함 — 화면을 원격 기준으로 되돌린다.
+      renderApp();
+      toast('충돌 — 최신 데이터 가져옴, 다시 시도하세요');
+    } else {
+      // 저장 실패: 원격 상태로 되돌려 로컬/원격 불일치를 막는다.
+      await ghLoad().catch(() => {});
+      renderApp();
+      toast(`저장 실패: ${e.message}`);
+      console.error(e);
+    }
+  } finally {
+    toggleSync.saving = false;
+    if (toggleSync.dirty) { toggleSync.dirty = false; flushToggles(); }
   }
 }
 
@@ -2488,6 +2694,7 @@ async function onAddToInbox(text) {
 
 // ============ Init ============
 function init() {
+  updateThemeColorMeta();
   $('#fab').addEventListener('click', () => {
     if (currentTab === 'memo') onAddMemo();
     else if (currentTab === 'inbox' || currentTab === 'archive') openInboxSheet();
@@ -2551,6 +2758,7 @@ function init() {
       closeMoreMenu();
       if (mi.id === 'menu-refresh') refresh();
       else if (mi.id === 'menu-archive-done') onBulkArchiveDone();
+      else if (mi.id === 'menu-theme') toggleTheme();
       else if (mi.id === 'menu-token') openSettings();
       return;
     }
