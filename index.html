@@ -1092,7 +1092,7 @@ function renderInbox() {
   const list = $('#inbox-list');
   state.inboxItems.forEach((item) => list.appendChild(renderInboxItem(item)));
   updateInboxBar();
-  $('#fab').hidden = true;
+  $('#fab').hidden = false;
 }
 
 function renderInboxItem(item) {
@@ -1177,7 +1177,7 @@ function renderArchive() {
   const list = $('#archive-list');
   items.forEach((entry) => list.appendChild(renderArchiveItem(entry)));
   updateArchiveBar();
-  $('#fab').hidden = true;
+  $('#fab').hidden = false;
 }
 
 function renderArchiveItem(entry) {
@@ -2278,6 +2278,15 @@ function selectPriority(pri) {
   });
 }
 
+function openInboxSheet() {
+  sheetMode = 'inbox';
+  editingLine = -1;
+  $('#sheet-title').textContent = 'Inbox에 추가';
+  $('#sheet-text').value = '';
+  $('#pri-picker').closest('.field').hidden = true;
+  showSheet();
+}
+
 function openEditSheet(item) {
   sheetMode = 'edit';
   editingLine = item.lineIndex;
@@ -2312,6 +2321,7 @@ function hideSheet() {
   const sheet = $('#sheet');
   $('#scrim').classList.remove('show');
   sheet.classList.remove('show');
+  $('#pri-picker').closest('.field').hidden = false;
   // 닫힌 시트를 탭 순서·접근성 트리에서 제외하고, 포커스를 열었던 요소로 되돌린다
   sheet.setAttribute('inert', '');
   if (sheetLastFocus && typeof sheetLastFocus.focus === 'function') {
@@ -2345,7 +2355,9 @@ function sheetSave() {
   if (!text) return;
   const pri = $('#pri-picker .pri-pill.selected')?.dataset.pri || 'medium';
   hideSheet();
-  if (sheetMode === 'add') {
+  if (sheetMode === 'inbox') {
+    onAddToInbox(text);
+  } else if (sheetMode === 'add') {
     onAdd(pri, text);
   } else if (editingIsSub) {
     // 하위 할 일: 우선순위(섹션) 개념이 없으므로 텍스트만 수정
@@ -2372,10 +2384,23 @@ function sheetSave() {
   }
 }
 
+async function onAddToInbox(text) {
+  try {
+    await ghLoadInbox();
+    let c = state.inboxContent;
+    if (c && !c.endsWith('\n')) c += '\n';
+    c += `- ${text}\n`;
+    await ghSaveInbox(c, `inbox: add ${text}`);
+    toast('Inbox에 추가됨');
+    if (currentTab === 'inbox') renderInbox();
+  } catch (e) { toast(`실패: ${e.message}`); }
+}
+
 // ============ Init ============
 function init() {
   $('#fab').addEventListener('click', () => {
     if (currentTab === 'memo') onAddMemo();
+    else if (currentTab === 'inbox' || currentTab === 'archive') openInboxSheet();
     else openAddSheet();
   });
 
