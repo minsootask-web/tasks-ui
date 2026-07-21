@@ -1,6 +1,6 @@
 // 정적 아이콘은 cache-first, HTML/스크립트는 network-first.
 // 새 배포는 일반 새로고침으로도 즉시 반영된다.
-const CACHE = "tasks-v6";
+const CACHE = "tasks-v7";
 const ASSETS = [
   "./manifest.json",
   "./icon-192.png",
