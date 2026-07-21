@@ -107,7 +107,7 @@
     font-size: 15px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    padding: calc(var(--safe-top) + 16px) 16px calc(var(--safe-bottom) + 96px);
+    padding: calc(var(--safe-top) + 16px) 16px calc(var(--safe-bottom) + 108px);
     min-height: 100vh;
   }
   .wrap { max-width: 720px; margin: 0 auto; }
@@ -264,6 +264,51 @@
   }
   .fab[hidden] { display: none; }
   .fab:active { transform: scale(0.94); }
+
+  /* 플로팅 컴포저 (Task 탭) — 메신저/프롬프트 입력창 스타일 */
+  .composer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
+    padding: 12px 16px calc(var(--safe-bottom) + 14px);
+    /* 내용이 입력창 아래로 자연스럽게 페이드되며 스크롤되도록 */
+    background: linear-gradient(to top, var(--bg) 65%, transparent);
+    pointer-events: none;
+  }
+  .composer[hidden] { display: none; }
+  .composer-inner {
+    max-width: 720px; margin: 0 auto;
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: 26px;
+    padding: 5px 5px 5px 6px;
+    box-shadow: 0 6px 20px rgba(15,15,15,0.12);
+    pointer-events: auto;
+  }
+  .composer-inner:focus-within { border-color: var(--accent); }
+  .composer-pri {
+    flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+    border: 0; background: var(--surface-2); cursor: pointer;
+    font-size: 19px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.12s, transform 0.12s;
+  }
+  .composer-pri:hover { background: var(--hover); }
+  .composer-pri:active { transform: scale(0.9); }
+  .composer-input {
+    flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
+    font-size: 15px; color: var(--text); font-family: inherit;
+    padding: 9px 4px;
+  }
+  .composer-input::placeholder { color: var(--muted); }
+  .composer-send {
+    flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+    border: 0; background: var(--accent); color: var(--accent-fg);
+    cursor: pointer; font-size: 20px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: opacity 0.12s, transform 0.12s;
+  }
+  .composer-send:active { transform: scale(0.9); }
+  .composer-send:disabled { opacity: 0.35; cursor: default; }
 
   /* Modal / Bottom sheet */
   .scrim {
@@ -602,6 +647,15 @@
 
 <button class="fab" id="fab" aria-label="Add task" hidden>+</button>
 
+<!-- 플로팅 컴포저 (Task 탭 전용) -->
+<div class="composer" id="composer" hidden>
+  <div class="composer-inner">
+    <button class="composer-pri" id="composer-pri" type="button" aria-label="우선순위 선택">🍋</button>
+    <input class="composer-input" id="composer-input" type="text" placeholder="할 일 입력…" autocomplete="off" enterkeyhint="send" aria-label="할 일 입력">
+    <button class="composer-send" id="composer-send" type="button" aria-label="추가" disabled>↑</button>
+  </div>
+</div>
+
 <div class="scrim" id="scrim"></div>
 
 <!-- Add/Edit sheet -->
@@ -681,6 +735,7 @@ const state = {
 };
 
 let currentTab = 'active';
+let composerPriority = 'medium'; // 플로팅 컴포저 우선순위
 let selectedInbox = new Set();
 let selectedArchive = new Set();
 let sheetMode = 'add'; // 'add' | 'edit'
@@ -1255,6 +1310,7 @@ function renderInbox() {
   state.inboxItems.forEach((item) => list.appendChild(renderInboxItem(item)));
   updateInboxBar();
   $('#fab').hidden = false;
+  $('#composer').hidden = true;
 }
 
 function renderInboxItem(item) {
@@ -1337,6 +1393,7 @@ function renderArchive() {
   items.forEach((entry) => list.appendChild(renderArchiveItem(entry)));
   updateArchiveBar();
   $('#fab').hidden = false;
+  $('#composer').hidden = true;
 }
 
 function renderArchiveItem(entry) {
@@ -1584,6 +1641,7 @@ function renderMemos() {
   bindTabEvents();
   drawMemos();
   $('#fab').hidden = false;
+  $('#composer').hidden = true;
 }
 
 function memoCol(m) {
@@ -2184,7 +2242,10 @@ function renderApp() {
     }
     root.appendChild(div);
   });
-  $('#fab').hidden = false;
+  // Task 탭: FAB 대신 플로팅 컴포저 사용
+  $('#fab').hidden = true;
+  $('#composer').hidden = false;
+  updateComposerPriBtn();
 }
 
 function renderTask(item, key, opts = {}) {
@@ -2264,6 +2325,7 @@ function renderTask(item, key, opts = {}) {
 
 function renderSetup() {
   $('#fab').hidden = true;
+  $('#composer').hidden = true;
   $('#app').innerHTML = `
     <div class="setup">
       <h1>초기 설정</h1>
@@ -2697,6 +2759,65 @@ async function onAddToInbox(text) {
   } catch (e) { toast(`실패: ${e.message}`); }
 }
 
+// ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
+const COMPOSER_PRI_ICON = { high: '🍅', medium: '🍋', low: '🥝' };
+const COMPOSER_PRI_ORDER = ['high', 'medium', 'low'];
+
+function updateComposerPriBtn() {
+  const btn = $('#composer-pri');
+  if (!btn) return;
+  btn.textContent = COMPOSER_PRI_ICON[composerPriority];
+  btn.title = `우선순위: ${composerPriority} (눌러서 변경)`;
+}
+
+function cycleComposerPriority() {
+  const i = COMPOSER_PRI_ORDER.indexOf(composerPriority);
+  composerPriority = COMPOSER_PRI_ORDER[(i + 1) % COMPOSER_PRI_ORDER.length];
+  updateComposerPriBtn();
+}
+
+// 저장을 순차 처리(직렬화)해 연속 추가 시 sha 409 충돌을 방지한다.
+const composerQueue = [];
+let composerRunning = false;
+
+function quickAdd() {
+  const input = $('#composer-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  $('#composer-send').disabled = true;
+  composerQueue.push({ text, pri: composerPriority });
+  processComposerQueue();
+}
+
+async function processComposerQueue() {
+  if (composerRunning) return;
+  composerRunning = true;
+  try {
+    while (composerQueue.length) {
+      const { text, pri } = composerQueue.shift();
+      let ok = false;
+      try {
+        await ghSave(appendToSection(pri, text), `add: ${text}`);
+        ok = true;
+      } catch (e) {
+        if (e.code === 409) {
+          // 충돌: ghSave가 최신 content로 갱신됨 → 최신 기준으로 한 번 재시도
+          try { await ghSave(appendToSection(pri, text), `add: ${text}`); ok = true; }
+          catch (e2) { toast(`추가 실패: ${text}`); }
+        } else {
+          toast(`추가 실패: ${e.message}`);
+        }
+      }
+      if (ok) renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
+    }
+  } finally {
+    composerRunning = false;
+    const inp = $('#composer-input');
+    if (inp && currentTab === 'active') inp.focus();
+  }
+}
+
 // ============ Init ============
 function init() {
   updateThemeColorMeta();
@@ -2715,6 +2836,17 @@ function init() {
   });
   $('#archive-bar-restore')?.addEventListener('click', onBulkRestore);
   $('#archive-bar-purge')?.addEventListener('click', onBulkPurge);
+  // 플로팅 컴포저
+  updateComposerPriBtn();
+  $('#composer-pri').addEventListener('click', cycleComposerPriority);
+  $('#composer-send').addEventListener('click', quickAdd);
+  $('#composer-input').addEventListener('input', (e) => {
+    $('#composer-send').disabled = e.target.value.trim() === '';
+  });
+  $('#composer-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); quickAdd(); }
+  });
+
   $('#scrim').addEventListener('click', hideSheet);
   $('#sheet-cancel').addEventListener('click', hideSheet);
   $('#sheet-save').addEventListener('click', sheetSave);
