@@ -740,6 +740,7 @@ let selectedInbox = new Set();
 let selectedArchive = new Set();
 let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
+let editingItem = null; // 편집 대상 항목 — 저장 직전 줄 위치를 다시 찾는 데 쓴다
 let editingIsSub = false; // 편집 대상이 하위 할 일인지
 let sortIncompleteFirst = false;
 
@@ -1069,6 +1070,7 @@ function parseSections(text) {
         checked: cb[2].toLowerCase() === 'x',
         text: cb[3],
         lineIndex: idx,
+        raw: line, // 저장 직전 실제 줄 위치를 다시 확인하는 기준값
       });
       return;
     }
@@ -1079,6 +1081,7 @@ function parseSections(text) {
         indent: Math.floor(bl[1].length / 2),
         text: bl[2],
         lineIndex: idx,
+        raw: line,
       });
     }
   });
@@ -1090,8 +1093,85 @@ function findSectionByKey(key) {
   return state.sections.find((s) => s.title === want);
 }
 
+function sectionHeaderIndex(lines, key) {
+  const want = SECTION_KEYS[key];
+  return lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
+}
+
+// 섹션 헤더가 사라진 파일에서도 막히지 않도록, 없으면 정해진 순서에 맞춰 다시 만든다.
+// (헤더가 지워진 채로 두면 그 우선순위로는 추가·이동·복구가 전부 실패한다)
+function ensureSectionHeader(lines, key) {
+  const found = sectionHeaderIndex(lines, key);
+  if (found !== -1) return found;
+  const order = ['high', 'medium', 'low'];
+  const laterIdx = order
+    .slice(order.indexOf(key) + 1)
+    .map((k) => sectionHeaderIndex(lines, k))
+    .filter((i) => i !== -1);
+  const at = laterIdx.length ? Math.min(...laterIdx) : lines.length;
+  lines.splice(at, 0, `## ${SECTION_KEYS[key]}`);
+  return at;
+}
+
+// 섹션 안에서 새 줄을 넣을 기준 위치(마지막 비어있지 않은 줄)
+function sectionInsertAfter(lines, key) {
+  const headerIdx = ensureSectionHeader(lines, key);
+  let insertAfter = headerIdx;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    if (lines[i].trim() !== '') insertAfter = i;
+  }
+  return insertAfter;
+}
+
+// 섹션 끝에 블록을 넣는다. 마지막 줄이 "- " 자리표시자면 그 줄을 대체한다.
+function insertIntoSection(lines, key, block) {
+  const at = sectionInsertAfter(lines, key);
+  if (lines[at].trim() === '-' || lines[at].trim() === '- ') lines.splice(at, 1, ...block);
+  else lines.splice(at + 1, 0, ...block);
+}
+
+// 렌더 시점의 lineIndex는 그 뒤 다른 저장이 끝나면 어긋난다(줄이 늘거나 줄어듦).
+// 그 상태로 삭제·이동하면 엉뚱한 줄(섹션 헤더까지)이 지워지므로,
+// 저장 직전에 원본 줄 내용으로 실제 위치를 다시 찾는다.
+function normLine(l) {
+  return l == null ? null : l.replace(/- \[[xX]\]/, '- [ ]');
+}
+
+function resolveLineIndex(item, lines) {
+  const ls = lines || state.content.split('\n');
+  const want = normLine(item.raw);
+  if (want == null) return item.lineIndex;
+  if (normLine(ls[item.lineIndex]) === want) return item.lineIndex;
+  for (let d = 1; d < ls.length; d++) {
+    const before = item.lineIndex - d;
+    const after = item.lineIndex + d;
+    if (before >= 0 && normLine(ls[before]) === want) return before;
+    if (after < ls.length && normLine(ls[after]) === want) return after;
+  }
+  throw new Error('목록이 바뀌었어요 — 새로고침 후 다시 시도해주세요');
+}
+
+// 헤더·빈 줄은 항목 조작 대상이 될 수 없다. 마지막 안전장치.
+function assertItemLine(lines, idx) {
+  const l = lines[idx];
+  if (l == null || /^##\s/.test(l) || l.trim() === '') {
+    throw new Error('대상 줄을 찾지 못했어요 — 새로고침 후 다시 시도해주세요');
+  }
+}
+
+// active.md 변경을 한 줄로 세워 처리한다. 겹쳐 실행되면 앞 저장이 줄 번호를
+// 바꿔버려 뒤 작업이 다른 줄을 건드린다.
+let activeMutations = Promise.resolve();
+function serializeActive(fn) {
+  const run = activeMutations.then(fn, fn);
+  activeMutations = run.then(() => {}, () => {});
+  return run;
+}
+
 function toggleAt(lineIndex, checked) {
   const lines = state.content.split('\n');
+  assertItemLine(lines, lineIndex);
   const line = lines[lineIndex];
   lines[lineIndex] = checked
     ? line.replace('- [ ]', '- [x]')
@@ -1101,21 +1181,7 @@ function toggleAt(lineIndex, checked) {
 
 function appendToSection(key, text) {
   const lines = state.content.split('\n');
-  const want = SECTION_KEYS[key];
-  const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-  if (headerIdx === -1) throw new Error('section not found: ' + key);
-  // Find insertion point: after last non-empty line within this section
-  let insertAfter = headerIdx;
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('## ')) break;
-    if (lines[i].trim() !== '') insertAfter = i;
-  }
-  // If last line of section is just "- " placeholder, replace it
-  if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
-    lines[insertAfter] = `- [ ] ${text}`;
-  } else {
-    lines.splice(insertAfter + 1, 0, `- [ ] ${text}`);
-  }
+  insertIntoSection(lines, key, [`- [ ] ${text}`]);
   return lines.join('\n');
 }
 
@@ -1130,6 +1196,7 @@ function editLine(lineIndex, newText) {
 
 function deleteAt(lineIndex) {
   const lines = state.content.split('\n');
+  assertItemLine(lines, lineIndex);
   const base = lines[lineIndex];
   const baseIndent = (base.match(/^(\s*)/)?.[0] || '').length;
   let removeUntil = lineIndex;
@@ -1145,6 +1212,7 @@ function deleteAt(lineIndex) {
 }
 
 function extractBlock(lines, lineIndex) {
+  assertItemLine(lines, lineIndex);
   const baseIndent = (lines[lineIndex].match(/^(\s*)/)?.[0] || '').length;
   let endIdx = lineIndex;
   for (let i = lineIndex + 1; i < lines.length; i++) {
@@ -1177,19 +1245,7 @@ function moveLineToSection(lineIndex, targetKey) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, lineIndex);
   const block = lines.splice(start, end - start + 1);
-  const want = SECTION_KEYS[targetKey];
-  const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-  if (headerIdx === -1) throw new Error('target section not found');
-  let insertAfter = headerIdx;
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('## ')) break;
-    if (lines[i].trim() !== '') insertAfter = i;
-  }
-  if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
-    lines.splice(insertAfter, 1, ...block);
-  } else {
-    lines.splice(insertAfter + 1, 0, ...block);
-  }
+  insertIntoSection(lines, targetKey, block);
   return lines.join('\n');
 }
 
@@ -1253,19 +1309,7 @@ function moveLineToPosition(srcLineIndex, target) {
     return lines.join('\n');
   }
 
-  const want = SECTION_KEYS[target.sectionKey];
-  const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-  if (headerIdx === -1) throw new Error('target section not found');
-  let insertAfter = headerIdx;
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('## ')) break;
-    if (lines[i].trim() !== '') insertAfter = i;
-  }
-  if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
-    lines.splice(insertAfter, 1, ...block);
-  } else {
-    lines.splice(insertAfter + 1, 0, ...block);
-  }
+  insertIntoSection(lines, target.sectionKey, block);
   return lines.join('\n');
 }
 
@@ -1488,20 +1532,8 @@ async function onBulkRestore() {
       await ghLoad();
       const lines = state.content.split('\n');
       activeEntries.forEach((entry) => {
-        const want = SECTION_KEYS[entry.priority];
-        const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-        if (headerIdx === -1) return;
-        let insertAfter = headerIdx;
-        for (let i = headerIdx + 1; i < lines.length; i++) {
-          if (lines[i].startsWith('## ')) break;
-          if (lines[i].trim() !== '') insertAfter = i;
-        }
         const block = entry.block || [];
-        if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
-          lines.splice(insertAfter, 1, ...block);
-        } else {
-          lines.splice(insertAfter + 1, 0, ...block);
-        }
+        if (block.length) insertIntoSection(lines, entry.priority, block);
       });
       await ghSave(lines.join('\n'), `restore ${activeEntries.length} from archive`);
     }
@@ -1541,10 +1573,11 @@ function genArchiveId() {
 }
 
 async function archiveActiveTask(item) {
+  const lineIndex = resolveLineIndex(item);
   const lines = state.content.split('\n');
-  const { start, end } = extractBlock(lines, item.lineIndex);
+  const { start, end } = extractBlock(lines, lineIndex);
   const block = lines.slice(start, end + 1);
-  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
+  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === lineIndex));
   const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
   const entry = {
     id: genArchiveId(),
@@ -1555,7 +1588,9 @@ async function archiveActiveTask(item) {
   };
   await ghLoadArchive();
   await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
-  await ghSave(deleteAt(item.lineIndex), `archive (from active): ${item.text}`);
+  // archive.json을 저장하는 사이 active.md가 바뀌었을 수 있으니 위치를 다시 확인한다
+  const delIndex = resolveLineIndex({ lineIndex, raw: block[0] });
+  await ghSave(deleteAt(delIndex), `archive (from active): ${item.text}`);
 }
 
 async function archiveInboxItem(item) {
@@ -1575,20 +1610,8 @@ async function onRestore(entry) {
     if (entry.source === 'active') {
       await ghLoad();
       const lines = state.content.split('\n');
-      const want = SECTION_KEYS[entry.priority];
-      const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-      if (headerIdx === -1) throw new Error('section not found');
-      let insertAfter = headerIdx;
-      for (let i = headerIdx + 1; i < lines.length; i++) {
-        if (lines[i].startsWith('## ')) break;
-        if (lines[i].trim() !== '') insertAfter = i;
-      }
       const block = entry.block;
-      if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
-        lines.splice(insertAfter, 1, ...block);
-      } else {
-        lines.splice(insertAfter + 1, 0, ...block);
-      }
+      insertIntoSection(lines, entry.priority, block);
       await ghSave(lines.join('\n'), `restore: ${block[0]}`);
     } else if (entry.source === 'inbox') {
       await ghLoadInbox();
@@ -2134,20 +2157,8 @@ async function undoArchive(entries) {
     await ghLoad();
     const lines = state.content.split('\n');
     entries.forEach((entry) => {
-      const want = SECTION_KEYS[entry.priority];
-      const headerIdx = lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-      if (headerIdx === -1) return;
-      let insertAfter = headerIdx;
-      for (let i = headerIdx + 1; i < lines.length; i++) {
-        if (lines[i].startsWith('## ')) break;
-        if (lines[i].trim() !== '') insertAfter = i;
-      }
       const block = entry.block || [];
-      if (lines[insertAfter].trim() === '-' || lines[insertAfter].trim() === '- ') {
-        lines.splice(insertAfter, 1, ...block);
-      } else {
-        lines.splice(insertAfter + 1, 0, ...block);
-      }
+      if (block.length) insertIntoSection(lines, entry.priority, block);
     });
     await ghSave(lines.join('\n'), `undo archive: restore ${entries.length}`);
     await ghLoadArchive();
@@ -2278,7 +2289,7 @@ function renderTask(item, key, opts = {}) {
       void cb.offsetWidth; // reflow로 애니메이션 재시작
       cb.classList.add('pop');
     }
-    onToggle(item.lineIndex, e.target.checked, t, cb);
+    onToggle(item, e.target.checked, t, cb);
   });
 
   const span = document.createElement('div');
@@ -2394,7 +2405,17 @@ async function safeMutate(producer, msg, label) {
 // 매 클릭마다 네트워크를 기다리거나 sha 409 충돌이 나지 않는다.
 const toggleSync = { timer: null, saving: false, dirty: false };
 
-function onToggle(lineIndex, checked, el) {
+function onToggle(item, checked, el, cb) {
+  let lineIndex;
+  try {
+    lineIndex = resolveLineIndex(item);
+  } catch (e) {
+    // 그 사이 항목이 사라졌다 — 체크 상태를 되돌리고 최신 목록으로 다시 그린다
+    if (cb) cb.checked = !checked;
+    toast(e.message);
+    renderApp();
+    return;
+  }
   el.classList.toggle('done', checked);
   // 로컬 상태 즉시 갱신 — 이후 토글은 이 최신 내용 위에 쌓인다.
   state.content = toggleAt(lineIndex, checked);
@@ -2448,22 +2469,26 @@ function onEdit(lineIndex, text) {
 async function onDelete(item) {
   if (item.indent > 0) {
     if (!confirm(`삭제할까요?\n\n"${item.text}"`)) return;
-    try {
-      await ghSave(deleteAt(item.lineIndex), `delete sub: ${item.text}`);
-      renderApp();
-      toast('삭제됨');
-    } catch (e) { toast(`실패: ${e.message}`); }
-    return;
+    // 앞선 변경이 끝난 뒤 실제 줄 위치를 다시 찾아 지운다
+    return serializeActive(async () => {
+      try {
+        await ghSave(deleteAt(resolveLineIndex(item)), `delete sub: ${item.text}`);
+        renderApp();
+        toast('삭제됨');
+      } catch (e) { toast(`실패: ${e.message}`); }
+    });
   }
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
-  try {
-    await archiveActiveTask(item);
-    renderApp();
-    toast('보관됨');
-  } catch (e) {
-    toast(`실패: ${e.message}`);
-    console.error(e);
-  }
+  return serializeActive(async () => {
+    try {
+      await archiveActiveTask(item);
+      renderApp();
+      toast('보관됨');
+    } catch (e) {
+      toast(`실패: ${e.message}`);
+      console.error(e);
+    }
+  });
 }
 
 // ============ Drag & Drop ============
@@ -2471,6 +2496,14 @@ const dragCtx = { active: false };
 
 function onDragStart(e, item, key, taskEl) {
   if (e.button != null && e.button !== 0) return;
+  // 화면의 줄 번호가 최신 내용과 어긋났으면(그 사이 다른 저장이 끝남) 드래그하지 않고 다시 그린다
+  try {
+    if (resolveLineIndex(item) !== item.lineIndex) throw new Error('목록이 바뀌었어요 — 다시 시도해주세요');
+  } catch (err) {
+    renderApp();
+    toast(err.message);
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
 
@@ -2489,6 +2522,7 @@ function onDragStart(e, item, key, taskEl) {
   const blockRange = extractBlock(state.content.split('\n'), item.lineIndex);
 
   dragCtx.active = true;
+  dragCtx.srcItem = item;
   dragCtx.srcLine = item.lineIndex;
   dragCtx.srcStart = blockRange.start;
   dragCtx.srcEnd = blockRange.end;
@@ -2599,7 +2633,7 @@ function onDragEnd() {
   document.removeEventListener('pointerup', onDragEnd);
   document.removeEventListener('pointercancel', onDragEnd);
 
-  const { srcLine, srcEl, ghost, indicator, target, lastSection, intoEl } = dragCtx;
+  const { srcLine, srcItem, srcEl, ghost, indicator, target, lastSection, intoEl } = dragCtx;
   ghost?.remove();
   indicator?.remove();
   srcEl?.classList.remove('dragging');
@@ -2612,17 +2646,31 @@ function onDragEnd() {
   if (target.beforeLine === srcLine) return;
   if (target.intoLine === srcLine) return;
 
-  safeMutate(
-    () => moveLineToPosition(srcLine, target),
-    `move: ${SECTION_KEYS[target.sectionKey]}`,
-    '이동됨'
-  );
+  return serializeActive(() => {
+    // 드래그 중 다른 저장이 끝나 줄 번호가 밀렸다면 목표 위치도 함께 어긋난다.
+    // 이 경우 잘못된 줄을 옮기지 않고 최신 목록으로 다시 그린다.
+    let stillValid = true;
+    try {
+      if (srcItem && resolveLineIndex(srcItem) !== srcLine) stillValid = false;
+    } catch (e) { stillValid = false; }
+    if (!stillValid) {
+      renderApp();
+      toast('목록이 바뀌었어요 — 다시 시도해주세요');
+      return;
+    }
+    return safeMutate(
+      () => moveLineToPosition(srcLine, target),
+      `move: ${SECTION_KEYS[target.sectionKey]}`,
+      '이동됨'
+    );
+  });
 }
 
 // ============ Sheet (add/edit) ============
 function openAddSheet() {
   sheetMode = 'add';
   editingLine = -1;
+  editingItem = null;
   editingIsSub = false;
   $('#pri-picker').closest('.field').hidden = false;
   $('#sheet-title').textContent = '새 할 일';
@@ -2644,6 +2692,7 @@ function selectPriority(pri) {
 function openInboxSheet() {
   sheetMode = 'inbox';
   editingLine = -1;
+  editingItem = null;
   $('#sheet-title').textContent = 'Inbox에 추가';
   $('#sheet-text').value = '';
   $('#pri-picker').closest('.field').hidden = true;
@@ -2653,6 +2702,7 @@ function openInboxSheet() {
 function openEditSheet(item) {
   sheetMode = 'edit';
   editingLine = item.lineIndex;
+  editingItem = item;
   editingIsSub = item.indent > 0;
   $('#sheet-title').textContent = editingIsSub ? '하위 할 일 편집' : '편집';
   $('#sheet-text').value = item.text;
@@ -2720,30 +2770,43 @@ function sheetSave() {
   hideSheet();
   if (sheetMode === 'inbox') {
     onAddToInbox(text);
-  } else if (sheetMode === 'add') {
+    return;
+  }
+  if (sheetMode === 'add') {
     onAdd(pri, text);
-  } else if (editingIsSub) {
+    return;
+  }
+  // 편집: 시트를 열어둔 사이 다른 저장이 끝났을 수 있으니 줄 위치를 다시 찾는다
+  let line;
+  try {
+    line = editingItem ? resolveLineIndex(editingItem) : editingLine;
+  } catch (e) {
+    toast(e.message);
+    renderApp();
+    return;
+  }
+  if (editingIsSub) {
     // 하위 할 일: 우선순위(섹션) 개념이 없으므로 텍스트만 수정
-    onEdit(editingLine, text);
+    onEdit(line, text);
+    return;
+  }
+  // Edit: if priority changed, also move
+  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === line));
+  const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+  if (curKey !== pri) {
+    // Edit then move — do as two saves to keep mutations simple
+    safeMutate(
+      () => {
+        const c1 = editLine(line, text);
+        state.content = c1;
+        state.sections = parseSections(c1);
+        return moveLineToSection(line, pri);
+      },
+      `edit+move: ${text}`,
+      '수정됨'
+    );
   } else {
-    // Edit: if priority changed, also move
-    const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === editingLine));
-    const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
-    if (curKey !== pri) {
-      // Edit then move — do as two saves to keep mutations simple
-      safeMutate(
-        () => {
-          const c1 = editLine(editingLine, text);
-          state.content = c1;
-          state.sections = parseSections(c1);
-          return moveLineToSection(editingLine, pri);
-        },
-        `edit+move: ${text}`,
-        '수정됨'
-      );
-    } else {
-      onEdit(editingLine, text);
-    }
+    onEdit(line, text);
   }
 }
 
@@ -2780,11 +2843,16 @@ function cycleComposerPriority() {
 const composerQueue = [];
 let composerRunning = false;
 
+// IME 조합 상태 — 한글 조합 중 Enter로 추가하면 확정된 마지막 글자가
+// 비운 입력창으로 되돌아와 '기'처럼 한 글자짜리 항목이 하나 더 생긴다.
+const composerIme = { composing: false, sentWhileComposing: false };
+
 function quickAdd() {
   const input = $('#composer-input');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
+  composerIme.sentWhileComposing = true; // 전송 뒤 되돌아오는 조합 잔여 문자 제거용
   $('#composer-send').disabled = true;
   composerQueue.push({ text, pri: composerPriority });
   processComposerQueue();
@@ -2798,13 +2866,16 @@ async function processComposerQueue() {
       const { text, pri } = composerQueue.shift();
       let ok = false;
       try {
-        await ghSave(appendToSection(pri, text), `add: ${text}`);
+        // 보관·이동 등 다른 변경과 겹치지 않게 순서를 지켜 저장한다
+        await serializeActive(() => ghSave(appendToSection(pri, text), `add: ${text}`));
         ok = true;
       } catch (e) {
         if (e.code === 409) {
           // 충돌: ghSave가 최신 content로 갱신됨 → 최신 기준으로 한 번 재시도
-          try { await ghSave(appendToSection(pri, text), `add: ${text}`); ok = true; }
-          catch (e2) { toast(`추가 실패: ${text}`); }
+          try {
+            await serializeActive(() => ghSave(appendToSection(pri, text), `add: ${text}`));
+            ok = true;
+          } catch (e2) { toast(`추가 실패: ${text}`); }
         } else {
           toast(`추가 실패: ${e.message}`);
         }
@@ -2840,11 +2911,29 @@ function init() {
   updateComposerPriBtn();
   $('#composer-pri').addEventListener('click', cycleComposerPriority);
   $('#composer-send').addEventListener('click', quickAdd);
-  $('#composer-input').addEventListener('input', (e) => {
+  const composerInput = $('#composer-input');
+  composerInput.addEventListener('input', (e) => {
     $('#composer-send').disabled = e.target.value.trim() === '';
   });
-  $('#composer-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); quickAdd(); }
+  composerInput.addEventListener('compositionstart', () => {
+    composerIme.composing = true;
+    composerIme.sentWhileComposing = false;
+  });
+  composerInput.addEventListener('compositionend', () => {
+    composerIme.composing = false;
+    // 전송 직후 IME가 확정 문자를 빈 입력창에 되돌려 넣은 경우 → 비운다
+    if (composerIme.sentWhileComposing) {
+      composerIme.sentWhileComposing = false;
+      composerInput.value = '';
+    }
+    $('#composer-send').disabled = composerInput.value.trim() === '';
+  });
+  composerInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    // 조합 중 Enter는 한글 확정용이므로 추가하지 않는다 (keyCode 229 = IME 처리 중)
+    if (composerIme.composing || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    quickAdd();
   });
 
   $('#scrim').addEventListener('click', hideSheet);
@@ -2852,7 +2941,11 @@ function init() {
   $('#sheet-save').addEventListener('click', sheetSave);
   $('#sheet').addEventListener('keydown', trapSheetFocus);
   $('#sheet-text').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sheetSave();
+    if (e.key !== 'Enter') return;
+    // 조합 중 Enter는 한글 확정용 — 저장하면 마지막 글자만 남은 항목이 더 생긴다
+    if (e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    sheetSave();
   });
   $('#pri-picker').addEventListener('click', (e) => {
     const pill = e.target.closest('.pri-pill');
