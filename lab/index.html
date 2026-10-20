@@ -1092,6 +1092,7 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
   const s = {
     file, base: null, sha: '', pending: [], view: null, loaded: false,
     queue: Promise.resolve(), timer: null, flushing: false,
+    gen: 0, // 저장이 성공할 때마다 +1 — 그 전에 보낸 GET 응답은 낡은 것이라 버린다(Q3)
   };
   // pending 연산을 차례로 적용. 대상을 못 찾는 연산은 bad로 모은다.
   const applyAll = (base, ops) => {
@@ -1164,6 +1165,7 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
         try {
           const text = serialize(next);
           s.sha = await ghPut(url, text, s.sha, msg, { keepalive });
+          s.gen++;
           s.base = next;
           s.pending = s.pending.filter((p) => !batch.includes(p));
           recompute();
@@ -1202,25 +1204,32 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
       s.flushing = false;
     }
   };
+  // 반환: 새 내용을 받았으면 true, 그 사이 저장이 끝나 낡은 응답이면 false(버림)
   s.reloadBase = async () => {
+    const gen = s.gen;
     let r;
     try {
       r = await ghGet(url);
     } catch (e) {
       if (e.code !== 404 || missing == null) throw e;
       // 파일이 아직 없으면 빈 파일로 만든다(archive.json·memos.json 첫 사용)
-      if (missing === false) { s.sha = undefined; s.base = parse(''); s.loaded = true; return; }
+      if (gen !== s.gen) return false;
+      if (missing === false) { s.sha = undefined; s.base = parse(''); s.loaded = true; return true; }
       await ghPut(url, missing, undefined, `init: ${file}`);
       r = await ghGet(url);
     }
+    if (gen !== s.gen) return false; // 이 GET을 보낸 뒤 저장이 성공함 → 응답이 저장 전 내용일 수 있음
     s.sha = r.sha;
     s.base = parse(r.content);
     s.loaded = true;
+    return true;
   };
-  // 원격본을 다시 받아 오되, 아직 저장 안 된 연산은 그 위에 다시 적용한다
-  s.reload = async () => {
-    await s.reloadBase();
-    recompute();
+  // 원격본을 다시 받아 오되, 아직 저장 안 된 연산은 그 위에 다시 적용한다.
+  // 저장(PUT)과 같은 큐에서 차례로 실행 — 늦게 온 GET 응답이 방금 저장한 내용을 되돌리지 않게(Q3)
+  s.reload = () => {
+    const run = s.queue.then(async () => { await s.reloadBase(); recompute(); });
+    s.queue = run.catch(() => {});
+    return run;
   };
   s.hasPending = () => s.pending.length > 0;
   s.hasReady = () => s.pending.some((p) => p.ready);
