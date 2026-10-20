@@ -2990,9 +2990,12 @@ function quickAdd() {
 async function processComposerQueue() {
   if (composerRunning) return;
   composerRunning = true;
+  const failed = [];
+  let lastError = null;
   try {
     while (composerQueue.length) {
-      const { text, pri } = composerQueue.shift();
+      const job = composerQueue.shift();
+      const { text, pri } = job;
       let ok = false;
       try {
         // 보관·이동 등 다른 변경과 겹치지 않게 순서를 지켜 저장한다
@@ -3004,18 +3007,50 @@ async function processComposerQueue() {
           try {
             await serializeActive(() => ghSave(appendToSection(pri, text), `add: ${text}`));
             ok = true;
-          } catch (e2) { notifyError(e2); }
+          } catch (e2) { lastError = e2; }
         } else {
-          notifyError(e);
+          lastError = e;
         }
       }
       if (ok) renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
+      else failed.push(job);
     }
   } finally {
     composerRunning = false;
     const inp = $('#composer-input');
     if (inp && currentTab === 'active') inp.focus();
+    if (failed.length) onComposerFailed(failed, lastError);
   }
+}
+
+// 입력창 추가 실패(A1): 쓴 글을 입력창에 되돌리고 "다시 시도"를 준다. 글은 절대 버리지 않는다.
+function onComposerFailed(failed, err) {
+  if (err) console.error(err);
+  const input = $('#composer-input');
+  const first = failed[0];
+  let restored = null;
+  // 그 사이 새 글을 쓰고 있으면 덮어쓰지 않는다
+  if (input.value.trim() === '') {
+    input.value = first.text;
+    composerPriority = first.pri;
+    updateComposerPriBtn();
+    $('#composer-send').disabled = false;
+    try { input.setSelectionRange(first.text.length, first.text.length); } catch (e) {}
+    restored = first.text;
+  }
+  const msg = failed.length > 1 ? `${failed.length}개를 저장하지 못했어요` : friendlyError(err, '저장하지 못했어요');
+  notify.error(msg, {
+    retry: () => {
+      let jobs = failed;
+      if (restored != null) {
+        // 되돌려 놓은 글을 그대로 두었으면 입력창을 비우고 다시 보낸다. 고쳤다면 그 글은 사용자가 직접 보낸다.
+        if (input.value === restored) { input.value = ''; $('#composer-send').disabled = true; }
+        else jobs = failed.slice(1);
+      }
+      composerQueue.push(...jobs);
+      processComposerQueue();
+    },
+  });
 }
 
 // ============ Init ============
