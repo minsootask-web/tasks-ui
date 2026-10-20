@@ -1157,6 +1157,8 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
     syncStatus.start(file);
     let rebased = false;
     try {
+      // 아직 한 번도 불러오지 못했으면(첫 로딩 중·실패 뒤) 먼저 불러온 다음 그 위에 적용한다(Q4)
+      if (s.base == null) await s.reloadBase();
       for (let attempt = 0; ; attempt++) {
         const { c: next, bad } = applyAll(s.base, batch);
         bad.forEach(({ p, e }) => { batch.splice(batch.indexOf(p), 1); dropOp(p, e); });
@@ -3434,6 +3436,8 @@ async function onSetupSave() {
     await ghLoad();
     localStorage.setItem('gh_pat', tok);
     renderApp();
+    // 토큰 확인이 끝나면 나머지 세 파일도 불러온다(Q4 — 이전엔 active.md만 읽어 Inbox가 비어 보이고 저장이 실패)
+    initialLoad();
   } catch (e) {
     state.token = null;
     if (e.code === 401) errEl.textContent = '토큰이 맞지 않아요. 다시 확인해 주세요.';
