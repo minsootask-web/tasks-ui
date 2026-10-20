@@ -3,8 +3,6 @@
 // 본 서비스(index.html)에는 포함하지 않는다.
 (function () {
   'use strict';
-  // lab이 "가짜 API가 켜져 있다"는 것을 확인하는 표시(C2 fail closed). 이 표시가 없으면 lab은 시작하지 않는다
-  window.__TAKO_LAB_MOCK = true;
   var NS = 'tako_lab_mock_';
   var LATENCY = 350; // 실제 API 왕복과 비슷한 지연 — 낙관적 업데이트·저장 표시 검증용
 
@@ -171,6 +169,11 @@
     }
     return respond(405, { message: 'mock: method' });
   };
+  // lab이 "가짜 API가 켜져 있다"는 것을 확인하는 표시(C2 fail closed). 이 표시가 없으면 lab은 시작하지 않는다.
+  // fetch 가로채기를 마친 "뒤"에 단다(S18 — 그 사이 예외가 나면 표시만 켜지고 fetch는 진짜인 상태가 되지 않게).
+  // 가로채기 함수 자체에도 표시를 달아, lab은 두 표시가 모두 있을 때만 시작한다
+  window.fetch.__takoMock = true;
+  window.__TAKO_LAB_MOCK = true;
 
   // 실험실은 토큰 없이 바로 열린다(실제 토큰은 쓰지도 보내지도 않는다).
   // 토큰 키도 lab 전용 접두사 — 같은 origin 본 서비스의 gh_pat을 덮거나 읽지 않는다(C2)

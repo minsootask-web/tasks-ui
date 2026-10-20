@@ -5007,7 +5007,7 @@ function isTextEntry(el) {
 }
 
 function labMockGuard() {
-  if (window.__TAKO_LAB_MOCK === true) return true;
+  if (window.__TAKO_LAB_MOCK === true && typeof window.fetch === 'function' && window.fetch.__takoMock === true) return true;
   document.getElementById('app').innerHTML =
     '<div class="setup"><h1>실험실을 열 수 없어요</h1><p>가짜 저장소(mock-github.js)를 불러오지 못했어요. 실제 데이터에 쓰지 않도록 실행을 멈췄어요. 새로고침해 주세요.</p></div>';
   ['composer', 'inbox-bar', 'archive-bar'].forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
