@@ -230,9 +230,11 @@
     display: flex; gap: 2px; opacity: 0;
     transition: opacity 0.15s;
   }
-  .task:hover .task-actions, .task.menu-open .task-actions { opacity: 1; }
+  .task:hover .task-actions, .task.menu-open .task-actions, .task:focus-within .task-actions { opacity: 1; }
+  /* 모바일(hover 없음): 행에는 체크·글·펼침만. ⋮⋮·×는 없음 — 보관은 편집 시트, 순서는 길게 눌러 옮기기(B2) */
   @media (hover: none) {
-    .task-actions { opacity: 1; }
+    .task-actions { display: none; }
+    .task { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; transition: background 0.1s, transform 400ms ease-out; }
   }
   .row-btn {
     appearance: none; -webkit-appearance: none;
@@ -380,6 +382,8 @@
   }
   .sheet-err[hidden] { display: none; }
   .actions .btn { flex: 1; } /* 취소/저장 버튼 가로폭 동일 */
+  .actions .sheet-archive { flex: 0 0 auto; margin-right: 4px; }
+  .actions .sheet-archive[hidden] { display: none; }
   .btn {
     appearance: none; -webkit-appearance: none;
     padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500;
@@ -462,9 +466,7 @@
   @media (prefers-reduced-motion: reduce) { .sync-pill.saving .dot { animation: none; } }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-  /* Hover-action UX on mobile: tap to reveal */
   @media (max-width: 600px) {
-    .task-actions { opacity: 1; }
     .icon-btn { width: 44px; height: 44px; }
   }
 
@@ -656,8 +658,10 @@
     display: none; align-items: center; justify-content: center;
     padding: 0;
   }
-  .memo:hover .memo-del { display: inline-flex; }
-  @media (hover: none) { .memo .memo-del { display: inline-flex; } }
+  /* 메모 ×는 편집 중일 때만(B13). 글과 겹치지 않게 오른쪽 여백 28px, 누르는 영역 44px */
+  .memo.editing { padding-right: 28px; }
+  .memo.editing .memo-del { display: inline-flex; top: 4px; right: 4px; }
+  .memo .memo-del::before { content: ""; position: absolute; inset: -12px; }
   .memo-ghost {
     position: fixed; pointer-events: none; z-index: 100;
     background: var(--memo-bg); color: var(--memo-fg);
@@ -729,6 +733,7 @@
   </div>
   <div class="sheet-err" id="sheet-err" role="alert" hidden></div>
   <div class="actions">
+    <button type="button" class="text-btn sheet-archive" id="sheet-archive">보관함으로</button>
     <button class="btn btn-ghost" id="sheet-cancel">취소</button>
     <button class="btn btn-primary" id="sheet-save">저장</button>
   </div>
@@ -2075,8 +2080,14 @@ function renderMemoEl(m) {
   del.innerHTML = '×';
   del.title = '메모 지우기';
   del.setAttribute('aria-label', '메모 지우기');
-  del.addEventListener('pointerdown', (e) => e.stopPropagation());
-  del.addEventListener('click', (e) => { e.stopPropagation(); onDeleteMemo(m.id); });
+  // 편집 중에만 보이므로, 누를 때 글자 편집의 포커스가 빠져(=편집 끝) 버튼이 사라지지 않게 막는다
+  del.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); });
+  del.addEventListener('mousedown', (e) => e.preventDefault());
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    div.dataset.deleting = '1'; // 편집 종료(blur)가 지운 메모를 다시 저장하지 않게
+    onDeleteMemo(m.id);
+  });
   div.appendChild(del);
 
   div.addEventListener('pointerdown', (e) => onMemoPointerDown(e, m, div));
@@ -2350,6 +2361,11 @@ function startEditMemo(div, m) {
   const finish = async (commit) => {
     if (committing) return;
     committing = true;
+    if (div.dataset.deleting) { // 지우는 중 — 저장하지 않고 정리만
+      textEl.removeEventListener('blur', onBlur);
+      textEl.removeEventListener('keydown', onKey);
+      return;
+    }
     textEl.removeEventListener('blur', onBlur);
     textEl.removeEventListener('keydown', onKey);
     textEl.removeAttribute('contenteditable');
@@ -2981,6 +2997,18 @@ function renderApp() {
     root.appendChild(div);
   });
   setComposerMode('active');
+  maybeShowLongPressHint();
+}
+
+// 터치 기기에서 Task 목록을 처음 볼 때 한 번만: 길게 눌러 옮기기 안내(이후 기기에 기억)
+function maybeShowLongPressHint() {
+  if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
+  if (!document.querySelector('#sections .task')) return;
+  try {
+    if (localStorage.getItem('tako_hint_longpress')) return;
+    localStorage.setItem('tako_hint_longpress', '1');
+  } catch (e) { return; }
+  setTimeout(() => { if (!$('#toast').classList.contains('show')) notify.info('길게 눌러 순서를 바꿀 수 있어요'); }, 600);
 }
 
 // 상위 항목 + 그 하위들을 한 블록으로 묶는다(섹션이 들여쓴 줄로 시작해도 버리지 않음)
@@ -3059,6 +3087,8 @@ function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 
+let suppressTaskClickUntil = 0;
+
 function renderTask(item, key, opts = {}) {
   const { hasChildren = false, collapsed = false, hiddenCount = 0 } = opts;
   const t = document.createElement('div');
@@ -3104,7 +3134,19 @@ function renderTask(item, key, opts = {}) {
     span.appendChild(badge);
   }
   span.title = '눌러서 고치기';
+  // 터치: 행을 길게 눌러 옮기기(B2). 체크박스·펼침 화살표는 제외
+  t.addEventListener('pointerdown', (e) => {
+    if (!e.pointerType || e.pointerType === 'mouse') return;
+    if (e.target.closest('input, .task-toggle, a, .task-actions')) return;
+    longPress(e, t, {
+      onStart: (ev) => {
+        suppressTaskClickUntil = Date.now() + 600; // 놓은 뒤 따라오는 클릭이 편집 시트를 열지 않게
+        onDragStart(ev, item, key, t);
+      },
+    });
+  });
   span.addEventListener('click', (e) => {
+    if (Date.now() < suppressTaskClickUntil) return;
     if (e.target.tagName === 'INPUT') return;
     openEditSheet(item);
   });
@@ -3327,7 +3369,7 @@ async function onDelete(item) {
 const dragCtx = { active: false };
 
 function onDragStart(e, item, key, taskEl) {
-  if (e.button != null && e.button !== 0) return;
+  if (e.type === 'pointerdown' && e.button != null && e.button !== 0) return;
   // 화면의 줄 번호가 최신 내용과 어긋났으면(그 사이 다른 저장이 끝남) 드래그하지 않고 다시 그린다
   try {
     if (resolveLineIndex(item) !== item.lineIndex) throw new Error('목록이 바뀌었어요. 다시 해 주세요');
@@ -3475,6 +3517,7 @@ function sectionEndLine(section, taskUnder) {
 function onDragEnd() {
   if (!dragCtx.active) return;
   endTouchDrag();
+  suppressTaskClickUntil = Math.max(suppressTaskClickUntil, Date.now() + 400);
   document.removeEventListener('pointermove', onDragMove);
   document.removeEventListener('pointerup', onDragEnd);
   document.removeEventListener('pointercancel', onDragEnd);
@@ -3595,6 +3638,7 @@ function openEditSheet(item) {
   $('#sheet-text').value = item.text;
   // 상위 항목만 "+ 하위 할 일 추가"(하위는 1단계까지)
   $('#sub-field').hidden = editingIsSub;
+  $('#sheet-archive').hidden = false;
   closeSubInput();
   if (!editingIsSub) renderSubList(item);
   // 하위 할 일은 우선순위(섹션) 개념이 없으므로 우선순위 선택을 숨긴다
@@ -3950,6 +3994,13 @@ function init() {
   $('#scrim').addEventListener('click', hideSheet);
   $('#sheet-cancel').addEventListener('click', hideSheet);
   $('#sub-add').addEventListener('click', openSubInput);
+  // 편집 시트의 "보관함으로"(B2) — 상위·하위 동일. 시트를 닫고 되돌리기 토스트
+  $('#sheet-archive').addEventListener('click', () => {
+    if (sheetSaving || !editingItem) return;
+    const item = editingItem;
+    hideSheet();
+    onDelete(item);
+  });
   $('#sub-input').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     if (e.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter는 확정용
