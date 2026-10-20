@@ -4287,16 +4287,29 @@ function addInboxFromComposer(job) {
 }
 
 // 새 메모는 보드 맨 앞(1열 맨 위)에 200ms 페이드인
+// 맨 위에 새 메모 넣기 — 봇 cmd_memo_add와 같은 규칙(Q13): 새 메모 order 0, 같은 열 나머지 +1.
+// (앱이 음수 order를 쓰면 봇 메모와 동률·뒤섞임이 생겼다.) 저장 직전 최신 목록 위에서 계산
+const opMemoAddTop = (memo) => (list) => {
+  if (list.some((x) => x.id === memo.id)) return list;
+  const col = memo.col;
+  const shifted = list.map((m) => {
+    const c = Math.min(MEMO_MAX_COLS - 1, Math.max(0, memoCol(m)));
+    if (c !== col) return m;
+    const u = { ...m, col: c, order: memoOrder(m) + 1 };
+    delete u.x; delete u.y;
+    return u;
+  });
+  return [{ ...memo, order: 0 }, ...shifted];
+};
+
 function addMemoFromComposer(job) {
-  const inCol0 = state.memos.filter((m) => Math.min(MEMO_MAX_COLS - 1, Math.max(0, memoCol(m))) === 0);
-  const minOrder = inCol0.length ? Math.min(...inCol0.map(memoOrder)) : 1;
   const memo = {
     id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
     text: job.text,
     col: 0,
-    order: minOrder - 1,
+    order: 0,
   };
-  const pr = memosStore.apply(opMemoAdd(memo), { msg: 'memo: add' });
+  const pr = memosStore.apply(opMemoAddTop(memo), { msg: 'memo: add' });
   if (currentTab === 'memo') {
     drawMemos();
     document.querySelector(`.memo[data-id="${memo.id}"]`)?.classList.add('fade-in');
