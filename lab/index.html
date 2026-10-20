@@ -4212,6 +4212,7 @@ function addSubFromSheet() {
   collapsedSet.delete(collapseKeyOf(parent));
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedSet])); } catch (e) {}
   inp.value = '';
+  $('#sheet-cancel').textContent = '닫기';
   const pr = activeStore.apply(opAddChild(parent, text), { msg: `add sub: ${text}` });
   renderApp();
   renderSubList(parent);
@@ -4237,6 +4238,8 @@ function openEditSheet(item) {
   // 상위 항목만 "+ 하위 할 일 추가"(하위는 1단계까지)
   $('#sub-field').hidden = editingIsSub;
   $('#sheet-archive').hidden = false;
+  // 이 시트에서 하위를 추가하면(바로 저장됨) "취소" → "닫기"(B-7: 취소가 하위 추가를 무르는 것으로 읽혔다)
+  $('#sheet-cancel').textContent = '취소';
   closeSubInput();
   if (!editingIsSub) renderSubList(item);
   // 하위 할 일은 우선순위(섹션) 개념이 없으므로 우선순위 선택을 숨긴다
