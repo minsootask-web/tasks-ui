@@ -3599,30 +3599,37 @@ function setDoneOpen(key, v) {
 const lastDoneCount = {};
 // 체크 후 800ms 머무름: 그동안 다시 누르면 아무 일도 없던 것처럼(취소)
 const DONE_LINGER_MS = 800;
-const doneLinger = new Map(); // key → timer
+// 머무는 항목들(key 집합). 접기 타이머는 하나뿐 — 체크가 들어올 때마다 "마지막 체크 + 800ms"로 미뤄
+// 한꺼번에 접는다(R9: 따로 접히면 연속 체크 중에 아래 행이 올라와 엉뚱한 행이 체크됐다)
+const doneLinger = new Set();
+let lingerTimer = null;
 const lingerKey = (item) => item.text.trim();
+function scheduleFold() {
+  clearTimeout(lingerTimer);
+  if (!doneLinger.size) return;
+  lingerTimer = setTimeout(() => {
+    const keys = [...doneLinger];
+    const rows = [...document.querySelectorAll('#sections .task')].filter((r) => keys.includes(r.dataset.key));
+    const finish = () => { keys.forEach((k) => doneLinger.delete(k)); if (currentTab === 'active' && !dragCtx.active) renderApp(); };
+    if (rows.length && !prefersReducedMotion()) {
+      // 200ms에 접히며 들어감 → 다시 그림
+      rows.forEach((row) => { row.style.maxHeight = row.offsetHeight + 'px'; });
+      void document.body.offsetHeight;
+      rows.forEach((row) => row.classList.add('leaving'));
+      setTimeout(finish, 200);
+    } else finish();
+  }, DONE_LINGER_MS);
+}
 function startLinger(item) {
-  const k = lingerKey(item);
-  clearTimeout(doneLinger.get(k));
-  doneLinger.set(k, setTimeout(() => {
-    // 200ms에 접히며 들어감 → 다시 그림
-    const row = [...document.querySelectorAll('#sections .task')].find((r) => r.dataset.key === k);
-    if (row && !prefersReducedMotion()) {
-      row.style.maxHeight = row.offsetHeight + 'px';
-      void row.offsetHeight;
-      row.classList.add('leaving');
-      setTimeout(() => { doneLinger.delete(k); if (currentTab === 'active' && !dragCtx.active) renderApp(); }, 200);
-    } else {
-      doneLinger.delete(k);
-      if (currentTab === 'active' && !dragCtx.active) renderApp();
-    }
-  }, DONE_LINGER_MS));
+  doneLinger.add(lingerKey(item));
+  scheduleFold();
 }
 function cancelLinger(item) {
-  const k = lingerKey(item);
-  clearTimeout(doneLinger.get(k));
-  doneLinger.delete(k);
+  doneLinger.delete(lingerKey(item));
+  scheduleFold();
 }
+// 다른 체크(하위·해제 포함)가 들어와도 접기를 미룬다
+function postponeFold() { if (doneLinger.size) scheduleFold(); }
 function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
@@ -3865,6 +3872,7 @@ function onToggle(item, checked, el, cb) {
     if (checked) startLinger(item);
     else cancelLinger(item);
   }
+  postponeFold(); // 연속 체크 중에는 접지 않고 마지막 체크 뒤 한꺼번에(R9)
   // 부모 완료 = 미완료 하위도 완료(B11). 체크 해제는 부모만
   const kids = checked ? incompleteDescendants(item) : [];
   const op = kids.length
