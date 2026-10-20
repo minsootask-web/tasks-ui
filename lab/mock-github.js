@@ -85,11 +85,17 @@
   }
   function write(file, content) { try { localStorage.setItem(NS + file, content); } catch (e) {} }
 
-  function respond(status, body) {
+  // 메서드별 지연 바꾸기: __takoMockLatency = { GET: 900 } → 늦게 도착하는 GET(Q3 재현)
+  function latencyFor(method) {
+    var l = window.__takoMockLatency;
+    if (l && typeof l[method] === 'number') return l[method];
+    return LATENCY;
+  }
+  function respond(status, body, method) {
     return new Promise(function (res) {
       setTimeout(function () {
         res(new Response(JSON.stringify(body), { status: status, headers: { 'Content-Type': 'application/json' } }));
-      }, LATENCY);
+      }, latencyFor(method || 'GET'));
     });
   }
 
@@ -136,17 +142,23 @@
       }
       return respond(rule.status || 500, { message: 'mock: forced failure' });
     }
-    var cur = read(file);
+    // keepalive 요청은 브라우저가 본문 합계 64KB까지만 허용 — 넘으면 바로 네트워크 오류(Q9 재현)
+    if (init && init.keepalive && (init.body || '').length > 65536) {
+      return Promise.reject(new TypeError('Failed to fetch (keepalive body > 64KB)'));
+    }
+    var cur = read(file); // 응답 내용은 요청 시점 기준 → 늦게 도착하면 낡은 내용(실제와 같음)
     if (method === 'GET') {
-      if (cur == null) return respond(404, { message: 'Not Found' });
-      return respond(200, { sha: sha(cur), content: utf8ToBase64(cur) });
+      if (cur == null) return respond(404, { message: 'Not Found' }, 'GET');
+      return respond(200, { sha: sha(cur), content: utf8ToBase64(cur) }, 'GET');
     }
     if (method === 'PUT') {
       var body = JSON.parse(init.body || '{}');
-      if (cur != null && body.sha !== sha(cur)) return respond(409, { message: 'sha mismatch' });
+      // 실제 GitHub: 파일이 있는데 sha 없이 PUT → 422, sha가 다르면 409
+      if (cur != null && !body.sha) return respond(422, { message: 'Invalid request. "sha" wasn\'t supplied.' }, 'PUT');
+      if (cur != null && body.sha !== sha(cur)) return respond(409, { message: 'sha mismatch' }, 'PUT');
       var next = base64ToUtf8(body.content);
       write(file, next);
-      return respond(200, { content: { sha: sha(next) } });
+      return respond(200, { content: { sha: sha(next) } }, 'PUT');
     }
     return respond(405, { message: 'mock: method' });
   };
