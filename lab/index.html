@@ -1737,34 +1737,75 @@ const lineOf = (item, content) => resolveLineIndex(item, content.split('\n'));
 const opToggle = (item, checked) => (c) => toggleAt(lineOf(item, c), checked, c);
 const opAppend = (key, text) => withApplied((c) => appendToSection(key, text, c),
   (now, before) => countExactLines(now, `- [ ] ${text}`) > countExactLines(before, `- [ ] ${text}`));
-const opEdit = (item, text) => (c) => editLine(lineOf(item, c), text, c);
-// 글 고치기 되돌리기: 지금 글로 줄을 찾아 원래 글로
-const opEditByText = (nowText, backText) => (c) => {
-  const lines = c.split('\n');
-  const idx = lines.findIndex((l) => { const m = l.match(/^\s*- \[[ xX]\] (.*)$/); return m && m[1] === nowText; });
-  if (idx === -1) throw undoGone();
+// ---- 되돌리기 기록(S1·S13) ----
+// 되돌리기는 글로 다시 찾지 않는다. 연산이 실행될 때 "그 연산이 만든 줄"의 지문(locate용)과
+// 원래 자리(바로 위 기준 줄의 지문)를 rec에 남기고, 되돌릴 때 그 지문으로만 찾는다(못 고르면 gone).
+// rec는 연산이 다시 적용될 때마다(409 재적용·다시 그리기) 마지막 결과로 갱신된다.
+// 블록을 뺀 줄 배열 mid에서, 블록이 있던 자리(at) 바로 위 기준 줄
+function anchorAt(mid, at) {
+  let a = at - 1, gap = 0;
+  while (a >= 0 && mid[a].trim() === '') { a--; gap++; }
+  if (a < 0) return { top: true, gap };
+  if (/^##\s/.test(mid[a])) return { header: mid[a], gap };
+  return { fp: lineFp(mid, a), gap };
+}
+// 기준 줄 다음 = 다시 넣을 자리. 기준 줄을 정확히 하나로 못 찾으면 gone
+function anchorIndex(lines, anchor) {
+  let a;
+  if (!anchor) throw undoGone();
+  if (anchor.top) a = -1;
+  else if (anchor.header != null) {
+    const hs = [];
+    lines.forEach((l, i) => { if (l === anchor.header) hs.push(i); });
+    if (hs.length !== 1) throw undoGone();
+    a = hs[0];
+  } else {
+    try { a = locate(lines, anchor.fp); } catch (e) { throw undoGone(); }
+  }
+  let at = a + 1;
+  for (let k = 0; k < (anchor.gap || 0) && lines[at] != null && lines[at].trim() === ''; k++) at++;
+  return at;
+}
+const recordMove = (rec, info, out) => {
+  if (!rec || info.at == null) return;
+  rec.fp = lineFp(out.split('\n'), info.at);
+  rec.indent = info.from.indent;
+  rec.anchor = anchorAt(info.from.mid, info.from.start);
+};
+const opEdit = (item, text, rec = null) => (c) => {
+  const idx = lineOf(item, c);
+  const out = editLine(idx, text, c);
+  if (rec) rec.fp = lineFp(out.split('\n'), idx);
+  return out;
+};
+// 글 고치기 되돌리기: 고친 그 줄(기록한 지문)을 원래 글로
+const opEditBack = (rec, backText) => (c) => {
+  if (!rec || !rec.fp) throw undoGone();
+  let idx;
+  try { idx = locate(c.split('\n'), rec.fp); } catch (e) { throw undoGone(); }
   return editLine(idx, backText, c);
 };
-const opEditMove = (item, text, key) => (c) => {
+const opEditMove = (item, text, key, rec = null) => (c) => {
   const idx = lineOf(item, c);
-  return moveLineToSection(idx, key, editLine(idx, text, c));
+  const info = {};
+  const out = moveLineToSection(idx, key, editLine(idx, text, c), info);
+  recordMove(rec, info, out);
+  return out;
 };
 const opDeleteBlock = (item) => (c) => deleteAt(lineOf(item, c), c);
-// 옮기기·우선순위 변경 되돌리기(D2): 지금 자리의 블록(글로 찾음)을 빼고, 원래 블록을 원래 바로 위 줄 다음에 다시 넣는다
-const opUndoMove = (text, origBlock, after) => (c) => {
+// 옮기기·우선순위 변경 되돌리기(D2·S1): 옮긴 그 블록(기록한 지문)을 "지금 모습 그대로"(그 사이 체크·하위 변경 유지)
+// 빼서 원래 기준 줄 다음, 원래 들여쓰기로 다시 넣는다. backText: 글도 함께 고쳤으면 원래 글로
+const opUndoMove = (rec, { backText = null } = {}) => (c) => {
+  if (!rec || !rec.fp) throw undoGone();
   const lines = c.split('\n');
-  const want = normLine(`- [ ] ${text}`);
-  const idx = lines.findIndex((l) => normLine(l.trim()) === want);
-  if (idx === -1) throw undoGone();
+  let idx;
+  try { idx = locate(lines, rec.fp); } catch (e) { throw undoGone(); }
   const r = extractBlock(lines, idx);
-  lines.splice(r.start, r.end - r.start + 1);
-  let at = -1;
-  if (after && after.raw != null) {
-    if (/^##\s/.test(after.raw)) at = lines.findIndex((l) => l === after.raw) + 1;
-    else { try { at = resolveLineIndex(after, lines) + 1; } catch (e) { at = -1; } }
-  }
-  if (at <= 0) at = Math.min(after ? after.lineIndex + 1 : lines.length, lines.length);
-  lines.splice(at, 0, ...origBlock);
+  let block = lines.splice(r.start, r.end - r.start + 1);
+  block = adjustBlockIndent(block, rec.indent - getLineIndent(block[0]));
+  if (backText != null) block[0] = editLine(0, backText, block[0]);
+  const at = anchorIndex(lines, rec.anchor);
+  lines.splice(at, 0, ...block);
   return lines.join('\n');
 };
 // 보관함 항목들을 되돌려 넣기
@@ -1797,12 +1838,15 @@ const opDeleteBlocks = (items) => (c) => {
   return lines.join('\n');
 };
 // 드래그 이동: 목표 줄도 원문으로 다시 찾는다
-const opMove = (srcItem, target) => (c) => {
+const opMove = (srcItem, target, rec = null) => (c) => {
   const lines = c.split('\n');
   const t = { ...target };
   if (target.beforeItem) t.beforeLine = resolveLineIndex(target.beforeItem, lines);
   if (target.intoItem) t.intoLine = resolveLineIndex(target.intoItem, lines);
-  return moveLineToPosition(resolveLineIndex(srcItem, lines), t, c);
+  const info = {};
+  const out = moveLineToPosition(resolveLineIndex(srcItem, lines), t, c, info);
+  recordMove(rec, info, out);
+  return out;
 };
 
 // ============ Parsing / Mutation ============
@@ -1948,10 +1992,12 @@ function sectionInsertAfter(lines, key) {
 }
 
 // 섹션 끝에 블록을 넣는다. 마지막 줄이 "- " 자리표시자면 그 줄을 대체한다.
+// 반환: 넣은 블록 첫 줄의 번호(되돌리기 기록용)
 function insertIntoSection(lines, key, block) {
   const at = sectionInsertAfter(lines, key);
-  if (lines[at].trim() === '-' || lines[at].trim() === '- ') lines.splice(at, 1, ...block);
-  else lines.splice(at + 1, 0, ...block);
+  if (lines[at].trim() === '-' || lines[at].trim() === '- ') { lines.splice(at, 1, ...block); return at; }
+  lines.splice(at + 1, 0, ...block);
+  return at + 1;
 }
 
 // 렌더 시점의 lineIndex는 그 뒤 다른 저장이 끝나면 어긋난다(줄이 늘거나 줄어듦).
@@ -2182,11 +2228,14 @@ function restoreBlockInto(lines, entry) {
   insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));
 }
 
-function moveLineToSection(lineIndex, targetKey, content = state.content) {
+// info(선택): { at } = 옮긴 블록 첫 줄의 새 번호, { from } = 블록을 뺀 직후 줄 배열·원래 시작 번호(되돌리기 기록용)
+function moveLineToSection(lineIndex, targetKey, content = state.content, info = null) {
   const lines = content.split('\n');
   const { start, end } = extractBlock(lines, lineIndex);
   const block = lines.splice(start, end - start + 1);
-  insertIntoSection(lines, targetKey, block);
+  if (info) info.from = { mid: [...lines], start, indent: getLineIndent(block[0]) };
+  const at = insertIntoSection(lines, targetKey, block);
+  if (info) info.at = at;
   return lines.join('\n');
 }
 
@@ -2197,7 +2246,7 @@ function moveLineToSection(lineIndex, targetKey, content = state.content) {
 //   - neither: append at end of section as a main task (indent 0)
 //   - indent: optional explicit depth override (used for the depth-ambiguous gap below a
 //     last child, where the next line's indent alone can't express "stay as the last child")
-function moveLineToPosition(srcLineIndex, target, content = state.content) {
+function moveLineToPosition(srcLineIndex, target, content = state.content, info = null) {
   const lines = content.split('\n');
   const { start, end } = extractBlock(lines, srcLineIndex);
   const blockLen = end - start + 1;
@@ -2211,6 +2260,7 @@ function moveLineToPosition(srcLineIndex, target, content = state.content) {
 
   const srcBaseIndent = getLineIndent(lines[start]);
   let block = lines.splice(start, blockLen);
+  if (info) info.from = { mid: [...lines], start, indent: srcBaseIndent };
 
   let targetIndent;
   if (target.intoLine != null) {
@@ -2230,7 +2280,9 @@ function moveLineToPosition(srcLineIndex, target, content = state.content) {
   if (target.intoLine != null) {
     let parentIdx = target.intoLine;
     if (parentIdx > start) parentIdx -= blockLen;
-    lines.splice(childInsertIndex(lines, parentIdx), 0, ...block);
+    const at = childInsertIndex(lines, parentIdx);
+    lines.splice(at, 0, ...block);
+    if (info) info.at = at;
     return lines.join('\n');
   }
 
@@ -2238,10 +2290,12 @@ function moveLineToPosition(srcLineIndex, target, content = state.content) {
     let insertAt = target.beforeLine;
     if (insertAt > start) insertAt -= blockLen;
     lines.splice(insertAt, 0, ...block);
+    if (info) info.at = insertAt;
     return lines.join('\n');
   }
 
-  insertIntoSection(lines, target.sectionKey, block);
+  const at = insertIntoSection(lines, target.sectionKey, block);
+  if (info) info.at = at;
   return lines.join('\n');
 }
 
@@ -4009,8 +4063,8 @@ function onToggle(item, checked, el, cb) {
 }
 
 
-function onEdit(item, text, opts) {
-  return safeMutate(opEdit(item, text), `edit: ${text}`, '수정됨', opts);
+function onEdit(item, text, opts, rec = null) {
+  return safeMutate(opEdit(item, text, rec), `edit: ${text}`, '수정됨', opts);
 }
 
 async function onDelete(item) {
@@ -4230,15 +4284,13 @@ function onDragEnd(e) {
   try {
     if (opMove(srcItem || ref(srcLine), t)(state.content) === state.content) { renderApp(); return; }
   } catch (e) { /* 아래 safeMutate가 알림 */ }
-  // 되돌리기(D2): 원래 블록과 그 바로 위 줄을 기억
+  // 되돌리기(D2·S1): 옮긴 블록의 새 자리와 원래 기준 줄을 연산이 rec에 기록
+  const rec = {};
   if (srcItem) {
-    const r0 = extractBlock(lines, srcLine);
-    const origBlock = lines.slice(r0.start, r0.end + 1);
-    const after = { lineIndex: r0.start - 1, raw: lines[r0.start - 1] };
-    setLastUndo(() => { safeMutate(opUndoMove(srcItem.text, origBlock, after), 'undo move', null, { failMsg: '되돌리지 못했어요' }); }, srcItem.text);
+    setLastUndo(() => { safeMutate(opUndoMove(rec), 'undo move', null, { failMsg: '되돌리지 못했어요' }); }, srcItem.text);
   }
   return safeMutate(
-    opMove(srcItem || ref(srcLine), t),
+    opMove(srcItem || ref(srcLine), t, rec),
     `move: ${SECTION_KEYS[target.sectionKey]}`,
     null,
     { flash: srcItem ? srcItem.text : null, failMsg: '옮기지 못했어요' }
@@ -4465,21 +4517,21 @@ async function runSheetSave(text, pri) {
   // Edit: if priority changed, also move
   const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === line));
   const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
-  // 되돌리기(D2): 원래 블록·위치
-  const lines0 = state.content.split('\n');
-  const r0 = extractBlock(lines0, line);
-  const origBlock = lines0.slice(r0.start, r0.end + 1);
-  const after = { lineIndex: r0.start - 1, raw: lines0[r0.start - 1] };
+  // 되돌리기(D2·S1·S13): 연산이 고친·옮긴 줄의 지문과 원래 자리를 rec에 기록
   const oldText = editingItem.text;
+  const rec = {};
   if (curKey !== pri) {
     // 글 수정 + 섹션 이동을 한 번에 저장. 실패해도 로컬 상태를 바꿔 두지 않는다.
-    const ok = await safeMutate(opEditMove(editingItem, text, pri), `edit+move: ${text}`, '수정됨', quiet);
-    if (ok) setLastUndo(() => { safeMutate(opUndoMove(text, origBlock, after), 'undo edit+move', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+    const ok = await safeMutate(opEditMove(editingItem, text, pri, rec), `edit+move: ${text}`, '수정됨', quiet);
+    if (ok) {
+      const back = text !== oldText ? oldText : null;
+      setLastUndo(() => { safeMutate(opUndoMove(rec, { backText: back }), 'undo edit+move', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+    }
     return ok;
   }
-  const ok = await onEdit(editingItem, text, quiet);
+  const ok = await onEdit(editingItem, text, quiet, rec);
   if (ok && text !== oldText) {
-    setLastUndo(() => { safeMutate(opEditByText(text, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+    setLastUndo(() => { safeMutate(opEditBack(rec, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
   }
   return ok;
 }

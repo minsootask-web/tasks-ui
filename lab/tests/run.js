@@ -83,6 +83,7 @@ const NAMES = [
   'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
   'childInsertIndex', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
+  'undoGone', 'anchorAt', 'anchorIndex', 'recordMove', 'opEdit', 'opEditBack', 'opEditMove', 'opUndoMove',
   'parseInbox', 'inboxTarget', 'resolveInboxLine', 'removeInboxLines',
   'memoCol', 'memoOrder', 'memosAfterMove',
   'splitPastedLines',
@@ -218,6 +219,45 @@ test('R14: 링크 — & 문자 참조가 온전, 태그 이스케이프, 끝 마
   if (d.includes('<a ')) throw new Error(d);
   const e = T.highlightMeta('치과 (10/23) https://n.com');
   if (!e.includes('<span class="meta-inline">(10/23)</span>') || !e.includes('>n.com</a>')) throw new Error(e);
+});
+
+test('S1: Low "운동"을 Medium으로 옮긴 뒤 되돌리기 — High "운동"+스트레칭은 그대로, 러닝 5km는 Low에만', () => {
+  const c = md('## 🔥 High', '- [ ] 운동', '  - [ ] 스트레칭', '', '## 🟡 Medium', '- [ ] 기타', '', '## 🟢 Low', '- [ ] 운동', '  - [ ] 러닝 5km', '- [ ] 사진', '');
+  const low = items(c, '🟢 Low').find((i) => i.text === '운동');
+  const rec = {};
+  const moved = T.opMove(low, { sectionKey: 'medium', beforeItem: null, intoItem: null }, rec)(c);
+  eq(sectionLines(moved, 'medium'), ['- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km']);
+  eq(T.opUndoMove(rec)(moved), c);
+  // 옮긴 뒤 하위를 체크했어도 되돌리면 지금 모습 그대로 원래 자리로(옛 사본으로 덮지 않음)
+  const checked = moved.replace('  - [ ] 러닝 5km', '  - [x] 러닝 5km');
+  eq(sectionLines(T.opUndoMove(rec)(checked), 'low'), ['- [ ] 운동', '  - [x] 러닝 5km', '- [ ] 사진']);
+});
+
+test('S1: Medium 두 "운동" 중 둘째를 High로 → 되돌리기는 그 블록만 원래 자리(기타 다음)로', () => {
+  const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [ ] 운동', '  - [ ] 스트레칭', '- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km', '', '## 🟢 Low', '');
+  const second = items(c, '🟡 Medium').filter((i) => i.text === '운동')[1];
+  const rec = {};
+  const moved = T.opMove(second, { sectionKey: 'high', beforeItem: null, intoItem: null }, rec)(c);
+  eq(T.opUndoMove(rec)(moved), c);
+});
+
+test('S1: 우선순위+글 고치기 되돌리기 — 같은 글이 다른 섹션에 있어도 옮긴 줄만 원래 자리·원래 글로', () => {
+  const c = md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '- [ ] a', '- [ ] 기타', '- [ ] b', '', '## 🟢 Low', '');
+  const it = items(c, '🟡 Medium').find((i) => i.text === '기타');
+  const rec = {};
+  const out = T.opEditMove(it, '운동', 'high', rec)(c);
+  eq(sectionLines(out, 'high'), ['- [ ] 운동', '- [ ] 운동']);
+  eq(T.opUndoMove(rec, { backText: '기타' })(out), c);
+});
+
+test('S13: "기타"를 "운동"으로 고친 뒤 되돌리기 — High "운동"은 그대로, Medium 줄만 "기타"로', () => {
+  const c = md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '- [ ] 기타', '');
+  const it = items(c, '🟡 Medium')[0];
+  const rec = {};
+  const e1 = T.opEdit(it, '운동', rec)(c);
+  eq(T.opEditBack(rec, '기타')(e1), c);
+  // 고친 줄이 그새 사라졌으면 다른 같은 글 줄을 고치지 않고 gone
+  throwsGone(() => T.opEditBack(rec, '기타')(md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '')));
 });
 
 // ---------- 핵심 연산 ----------
