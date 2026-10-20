@@ -1400,38 +1400,46 @@ function notifyTransferError(e, retry) {
   }
 }
 
-// 되돌리기용 연산: 방금 섹션 끝에 넣은 줄(들)을 그 섹션 안에서 뒤에서부터 찾아 지운다
+// 되돌리기 대상을 못 찾으면 조용히 성공하지 않고 gone(Q7) → runTransfer가 "일부만 저장됐어요"로 알림
+const undoGone = () => {
+  const msg = '되돌릴 항목이 그새 바뀌었어요';
+  return Object.assign(new Error(msg), { userMessage: msg, gone: true });
+};
+const sectionRange = (lines, key) => {
+  const header = sectionHeaderIndex(lines, key);
+  if (header === -1) return null;
+  let end = lines.length;
+  for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
+  return { header, end };
+};
+// 방금 섹션 끝에 넣은 줄(들)을 그 섹션 안에서 뒤에서부터 찾아 블록째 지운다.
+// 저장되는 사이 사용자가 체크하거나 하위를 붙였어도 찾는다(체크 상태 무시, 하위 포함)(Q7)
 const opActiveRemoveAppended = (key, texts) => (c) => {
   const lines = c.split('\n');
   texts.forEach((t) => {
-    const header = sectionHeaderIndex(lines, key);
-    if (header === -1) return;
-    let end = lines.length;
-    for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
-    for (let i = end - 1; i > header; i--) {
-      if (lines[i] === `- [ ] ${t}`) { lines.splice(i, 1); break; }
-    }
+    const rg = sectionRange(lines, key);
+    const want = normLine(`- [ ] ${t}`);
+    let found = -1;
+    if (rg) for (let i = rg.end - 1; i > rg.header; i--) { if (normLine(lines[i]) === want) { found = i; break; } }
+    if (found === -1) throw undoGone();
+    const r = extractBlock(lines, found);
+    lines.splice(r.start, r.end - r.start + 1);
   });
   return lines.join('\n');
 };
-// 되돌리기용: 복구해 넣은 블록을 첫 줄 글로 찾아(섹션 안 뒤에서부터) 지운다
+// 복구해 넣은 블록을 첫 줄 글로 찾아(섹션 안 뒤에서부터, 체크 상태·들여쓰기 무시) 지운다
 const opActiveRemoveRestored = (entries) => (c) => {
   const lines = c.split('\n');
   entries.forEach((entry) => {
     const first = (entry.block || [])[0];
     if (!first) return;
     const want = normLine(first.trim());
-    const header = sectionHeaderIndex(lines, entry.priority);
-    if (header === -1) return;
-    let end = lines.length;
-    for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
-    for (let i = end - 1; i > header; i--) {
-      if (normLine(lines[i].trim()) === want) {
-        const r = extractBlock(lines, i);
-        lines.splice(r.start, r.end - r.start + 1);
-        break;
-      }
-    }
+    const rg = sectionRange(lines, entry.priority);
+    let found = -1;
+    if (rg) for (let i = rg.end - 1; i > rg.header; i--) { if (normLine(lines[i].trim()) === want) { found = i; break; } }
+    if (found === -1) throw undoGone();
+    const r = extractBlock(lines, found);
+    lines.splice(r.start, r.end - r.start + 1);
   });
   return lines.join('\n');
 };
@@ -1439,9 +1447,12 @@ const opActiveRemoveRestored = (entries) => (c) => {
 const opInboxRemoveLast = (texts) => (c) => {
   const lines = c.split('\n');
   texts.forEach((t) => {
+    let found = -1;
     for (let i = lines.length - 1; i >= 0; i--) {
-      if (/^-\s+\S/.test(lines[i]) && lines[i].replace(/^-\s+/, '').trim() === t) { lines.splice(i, 1); break; }
+      if (/^-\s+\S/.test(lines[i]) && lines[i].replace(/^-\s+/, '').trim() === t) { found = i; break; }
     }
+    if (found === -1) throw undoGone();
+    lines.splice(found, 1);
   });
   return lines.join('\n');
 };
