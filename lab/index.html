@@ -4371,20 +4371,22 @@ async function runSheetSave(text, pri) {
 
 
 // ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
-const COMPOSER_PRI_ORDER = PRI_ORDER;
+// 순환 순서(D1): 기본 🍋에서 한 번 누르면 🍅 High, 두 번이면 🥝 Low — 가장 자주 고르는 High가 1탭
+const COMPOSER_PRI_ORDER = ['medium', 'high', 'low'];
+const nextComposerPriority = (p) => COMPOSER_PRI_ORDER[(COMPOSER_PRI_ORDER.indexOf(p) + 1) % COMPOSER_PRI_ORDER.length];
 
 function updateComposerPriBtn() {
   const btn = $('#composer-pri');
   if (!btn) return;
   const p = PRI[composerPriority];
+  const n = PRI[nextComposerPriority(composerPriority)];
   btn.textContent = p.icon;
-  btn.title = `우선순위: ${p.icon} ${p.label} (누르면 바뀜)`;
+  btn.title = `우선순위: ${p.icon} ${p.label} · 누르면 ${n.icon} ${n.label}`;
   btn.setAttribute('aria-label', btn.title);
 }
 
 function cycleComposerPriority() {
-  const i = COMPOSER_PRI_ORDER.indexOf(composerPriority);
-  composerPriority = COMPOSER_PRI_ORDER[(i + 1) % COMPOSER_PRI_ORDER.length];
+  composerPriority = nextComposerPriority(composerPriority);
   updateComposerPriBtn();
 }
 
