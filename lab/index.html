@@ -354,6 +354,7 @@
   }
   .sheet.show { transform: translateY(0); }
   .sheet h2 { font-size: 17px; margin: 0 0 14px 0; font-weight: 600; }
+  .sheet h2:focus { outline: none; }
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
   .field input[type="text"], .field input[type="password"], .field textarea {
@@ -766,7 +767,7 @@
 
 <!-- Add/Edit sheet -->
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" inert>
-  <h2 id="sheet-title">새 할 일</h2>
+  <h2 id="sheet-title" tabindex="-1">새 할 일</h2>
   <div class="field">
     <label id="pri-label">우선순위</label>
     <div class="pri-picker" id="pri-picker" role="radiogroup" aria-labelledby="pri-label">
@@ -4258,13 +4259,19 @@ function openEditSheet(item) {
 
 let sheetLastFocus = null;
 
+let sheetReturnTo = null; // 시트를 연 할 일 행(key·체크/글) — 저장으로 행이 다시 그려져도 같은 줄로 포커스 복원(R12)
 function showSheet() {
   sheetLastFocus = document.activeElement;
+  const row = sheetLastFocus && sheetLastFocus.closest && sheetLastFocus.closest('#sections .task');
+  sheetReturnTo = row ? { key: row.dataset.key, kind: sheetLastFocus.matches('input[type="checkbox"]') ? 'cb' : 'text', section: row.closest('.section')?.classList[1] } : null;
   const sheet = $('#sheet');
   sheet.removeAttribute('inert');
   $('#scrim').classList.add('show');
   sheet.classList.add('show');
-  setTimeout(() => $('#sheet-text').focus(), 100);
+  // 터치 기기에서는 키보드를 자동으로 올리지 않는다(D10③ — 우선순위만 바꿀 때 키보드가 시트를 가렸다).
+  // 포커스는 시트 제목에(스크린리더·포커스 가두기용). PC는 바로 글 고치기
+  const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  setTimeout(() => (touch ? $('#sheet-title') : $('#sheet-text')).focus({ preventScroll: true }), 100);
 }
 function hideSheet() {
   if (sheetSaving) return; // 저장 중에는 닫지 않는다(글 보호)
@@ -4275,10 +4282,15 @@ function hideSheet() {
   $('#pri-picker').closest('.field').hidden = false;
   // 닫힌 시트를 탭 순서·접근성 트리에서 제외하고, 포커스를 열었던 요소로 되돌린다
   sheet.setAttribute('inert', '');
-  if (sheetLastFocus && typeof sheetLastFocus.focus === 'function') {
+  if (sheetLastFocus && sheetLastFocus.isConnected && typeof sheetLastFocus.focus === 'function') {
     sheetLastFocus.focus();
+  } else if (sheetReturnTo) {
+    // 연 요소가 다시 그려져 사라졌으면 같은 행(접혔으면 그 섹션의 접기 행)으로(R12·B-4)
+    const back = sheetReturnTo;
+    setTimeout(() => restoreTaskFocus({ key: back.key, kind: back.kind }, back.section), 0);
   }
   sheetLastFocus = null;
+  sheetReturnTo = null;
   setTimeout(runDeferredRender, 0);
 }
 
@@ -4327,7 +4339,11 @@ async function sheetSave() {
     btn.disabled = false;
     btn.textContent = '저장';
   }
-  if (ok) { hideSheet(); return; }
+  if (ok) {
+    if (sheetReturnTo && sheetMode === 'edit') sheetReturnTo.key = text.trim(); // 글을 고쳤으면 새 글로 찾는다
+    hideSheet();
+    return;
+  }
   const e = lastMutateError;
   if (e && e.code === 409) setSheetError('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 눌러 주세요.');
   else if (e && e.userMessage) setSheetError(e.userMessage);
