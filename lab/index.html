@@ -2824,6 +2824,12 @@ function sameMemos(a, b) {
 }
 
 function startEditMemo(div, m) {
+  // 누르는 도중 보드가 다시 그려져(앞 편집 저장·재적용 등) 눌렀던 카드가 떨어져 나갔으면 같은 id의 지금 카드로(B-8)
+  if (!div.isConnected) {
+    div = document.querySelector(`.memo[data-id="${m.id}"]`);
+    m = state.memos.find((x) => x.id === m.id) || m;
+    if (!div) return;
+  }
   if (div.classList.contains('editing')) return;
   const textEl = div.querySelector('.memo-text');
   if (!textEl) return;
