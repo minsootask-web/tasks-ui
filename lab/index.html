@@ -3241,7 +3241,10 @@ function moveInboxToActive(items, priority) {
 // 사라지는 행: 내용 120ms 페이드 → 빈 자리 300ms 유지 → 200ms 접힘, 그 뒤 다시 그린다.
 // 그 행이 있던 자리의 탭만 650ms 무시(전역 잠금 없음 — 다른 행은 바로 누를 수 있음)
 const tapGuards = [];
-let swallowClickUntil = 0;
+// 막은 누름 뒤에 오는 click 하나만 먹는다(S16): 같은 자리(10px 안)·짧은 시간 안의 click만, 그 손가락이 취소되면(스크롤 시작) 해제
+let swallowClick = null;
+// 떠 있는 요소(토스트·입력창·선택 바·시트·헤더·탭)는 막지 않는다 — 되돌리기 버튼 등. pointerdown·click이 같은 목록을 씀
+const TAP_GUARD_EXEMPT = '#toast, #composer, .inbox-bar, #archive-bar, #sheet, #scrim, header, .tabs';
 function guardTapsAt(el, ms = 650) {
   const r = el.getBoundingClientRect();
   tapGuards.push({ left: r.left, right: r.right, top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, until: Date.now() + ms });
@@ -3250,21 +3253,25 @@ document.addEventListener('pointerdown', (e) => {
   const now = Date.now();
   for (let i = tapGuards.length - 1; i >= 0; i--) if (tapGuards[i].until < now) tapGuards.splice(i, 1);
   if (!tapGuards.length) return;
-  // 떠 있는 요소(토스트·입력창·선택 바·시트)는 막지 않는다 — 되돌리기 버튼 등
-  if (e.target.closest && e.target.closest('#toast, #composer, .inbox-bar, #sheet, #scrim, header, .tabs')) return;
+  if (e.target.closest && e.target.closest(TAP_GUARD_EXEMPT)) return;
   const y = e.clientY + window.scrollY;
   if (tapGuards.some((g) => e.clientX >= g.left && e.clientX <= g.right && y >= g.top && y <= g.bottom)) {
     e.preventDefault();
     e.stopPropagation();
-    swallowClickUntil = now + 800;
+    swallowClick = { id: e.pointerId, x: e.clientX, y: e.clientY, until: now + 700 };
   }
 }, true);
+document.addEventListener('pointercancel', (e) => { if (swallowClick && swallowClick.id === e.pointerId) swallowClick = null; }, true);
 document.addEventListener('click', (e) => {
-  if (Date.now() < swallowClickUntil && !(e.target.closest && e.target.closest('#toast, #composer, .inbox-bar, #sheet'))) {
-    swallowClickUntil = 0;
-    e.preventDefault();
-    e.stopPropagation();
-  }
+  const g = swallowClick;
+  if (!g) return;
+  swallowClick = null; // 다음 click 하나만 판단
+  if (Date.now() > g.until) return;
+  if (e.target.closest && e.target.closest(TAP_GUARD_EXEMPT)) return;
+  // 키보드 click(좌표 0)이나 다른 자리 click은 막지 않는다
+  if (!(e.clientX || e.clientY) || Math.abs(e.clientX - g.x) > 10 || Math.abs(e.clientY - g.y) > 10) return;
+  e.preventDefault();
+  e.stopPropagation();
 }, true);
 
 function vanishRows(rows, render) {
