@@ -3287,16 +3287,21 @@ const inboxRowsFor = (items) => {
   return [...document.querySelectorAll('#inbox-list .inbox-item')].filter((r) => keys.has(r.dataset.key));
 };
 const archiveRowsFor = (ids) => [...document.querySelectorAll('#archive-list .archive-item')].filter((r) => ids.includes(r.dataset.id));
-const taskRowsFor = (texts) => {
-  const set = new Set(texts.map((t) => t.trim()));
-  return [...document.querySelectorAll('#sections .task')].filter((r) => set.has(r.dataset.key));
-};
+// 항목(지문) 하나의 지금 행 — 글이 아니라 locate로 찾은 줄 번호로(S15: 같은 글의 다른 행까지 사라지던 문제)
+function taskRowFor(item) {
+  let idx;
+  try { idx = resolveLineIndex(item); } catch (e) { return null; }
+  return document.querySelector(`#sections .task[data-line="${idx}"]`);
+}
 
 // 실패 후 원래 자리로 돌아온 Task 행을 600ms 깜빡여 알려 준다(B9)
-// 행 찾기는 화면 글자(링크는 "도메인/…"으로 줄어 보임)가 아니라 원문 key로(R21)
-function flashTaskRows(texts) {
-  const set = new Set(texts.map((t) => String(t).trim()));
-  document.querySelectorAll('#sections .task').forEach((row) => { if (set.has(row.dataset.key)) flashEl(row); });
+// 지문(항목·기록)이면 그 행만, 글이면 같은 글 행 모두(R21: 화면 글자가 아니라 원문 key)
+function flashTaskRows(keys) {
+  keys.forEach((k) => {
+    if (k && typeof k === 'object') { const row = taskRowFor(k); if (row) flashEl(row); return; }
+    const t = String(k).trim();
+    document.querySelectorAll('#sections .task').forEach((row) => { if (row.dataset.key === t) flashEl(row); });
+  });
 }
 function flashArchiveRows(ids) {
   document.querySelectorAll('#archive-list .archive-item').forEach((row) => {
@@ -4004,7 +4009,7 @@ function renderTask(item, key, opts = {}) {
   del.title = '보관함으로 옮기기';
   del.setAttribute('aria-label', `보관함으로 옮기기: ${item.text}`);
   del.innerHTML = '📥';
-  del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
+  del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item, t); });
   actions.appendChild(del);
 
   const hit = document.createElement('label');
@@ -4196,11 +4201,12 @@ function onEdit(item, text, opts, rec = null) {
   return safeMutate(opEdit(item, text, rec), `edit: ${text}`, '수정됨', opts);
 }
 
-async function onDelete(item) {
+async function onDelete(item, rowEl = null) {
   // 상위·하위 모두 보관함으로(하위만 영구 삭제되던 문제 A6)
   const run = async () => {
     let r;
-    const rows = taskRowsFor([item.text]);
+    const row = rowEl && rowEl.isConnected ? rowEl : taskRowFor(item); // 누른 그 행만(S15)
+    const rows = row ? [row] : [];
     try { r = archiveActiveTask(item); } catch (e) { renderApp(); notifyError(e); return; }
     const { work, entry, pos } = r;
     vanishRows(rows, renderApp);
@@ -4209,7 +4215,7 @@ async function onDelete(item) {
       await work;
     } catch (e) {
       renderApp();
-      flashTaskRows([item.text]);
+      flashTaskRows([item]);
       notifyTransferError(e, run);
     }
   };
