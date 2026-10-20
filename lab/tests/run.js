@@ -83,6 +83,7 @@ const NAMES = [
   'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
   'childInsertIndex', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
+  'deferred', 'createStore', 'removedVerdict', 'countKeyLines', 'opInboxRemove', 'opArchiveRemove',
   'countExactLines', 'withApplied', 'opAppend', 'opAppendMany', 'removeByFps', 'opActiveRemoveRec', 'opInboxRemoveRec',
   'opInboxAppend', 'opInboxInsert', 'recFps', 'opRestore', 'opActiveReinsert',
   'undoGone', 'anchorAt', 'anchorIndex', 'recordMove', 'opEdit', 'opEditBack', 'opEditMove', 'opUndoMove',
@@ -94,10 +95,16 @@ const found = NAMES.map((n) => [n, grab(n)]).filter(([, src]) => src);
 const missing = NAMES.filter((n) => !found.some(([f]) => f === n));
 const sources = found.map(([, src]) => src).join('\n\n');
 const sandbox = {
-  console,
+  console: { log: console.log, warn() {}, error() {} },
   SECTION_KEYS: { high: '🔥 High', medium: '🟡 Medium', low: '🟢 Low' },
   MEMO_MAX_COLS: 3,
   state: { content: '', inboxContent: '' },
+  // createStore가 쓰는 화면·네트워크 자리(테스트마다 ghGet·ghPut을 바꿔 끼움)
+  syncStatus: { errors: {}, retry: {}, start() {}, ok() {}, end() {}, fail() {} },
+  renderSync() {}, handleUnauthorized() {},
+  notify: { error() {}, info() {}, undo() {} },
+  friendlyError: (e, f) => (e && e.userMessage) || f || '저장하지 못했어요',
+  setTimeout, clearTimeout, Promise,
 };
 vm.createContext(sandbox);
 vm.runInContext(sources + '\n' + found.map(([n]) => `globalThis.${n} = ${n};`).join('\n'), sandbox, { filename: 'extracted-from-index.html' });
@@ -105,12 +112,16 @@ const T = sandbox;
 
 // ---- 아주 작은 테스트 도구 ----
 let pass = 0, fail = 0, skip = 0;
-function test(name, fn) {
-  try { fn(); pass++; console.log(`  ok  ${name}`); }
-  catch (e) {
-    const miss = missing.find((n) => e instanceof TypeError && new RegExp(`T\\.${n}\\b|${n} is not a function`).test(e.message));
-    if (miss) { skip++; console.log(`  --  ${name} (건너뜀: ${miss} 없음)`); return; }
-    fail++; console.log(`  FAIL ${name}\n       ${e.message}`);
+const queue = [];
+function test(name, fn) { queue.push([name, fn]); }
+async function runAll() {
+  for (const [name, fn] of queue) {
+    try { await fn(); pass++; console.log(`  ok  ${name}`); }
+    catch (e) {
+      const miss = missing.find((n) => e instanceof TypeError && new RegExp(`T\\.${n}\\b|${n} is not a function`).test(e.message));
+      if (miss) { skip++; console.log(`  --  ${name} (건너뜀: ${miss} 없음)`); continue; }
+      fail++; console.log(`  FAIL ${name}\n       ${e.message}`);
+    }
   }
 }
 function eq(a, b, msg) {
@@ -295,6 +306,73 @@ test('보관 되돌리기: 원래 기준 줄 아래로, 기준 줄이 애매하�
   eq(sectionLines(T.opActiveReinsert(entry, pos)(dup), 'high'), ['- [ ] a', '- [ ] a', '- [ ] b', '- [x] 끝냄']);
 });
 
+// 가짜 원격(파일 하나). lost: PUT을 반영한 뒤 응답 대신 연결 끊김, offline: 요청이 닿지 않음
+function fakeRemote(content) {
+  const r = { content, sha: 's0', n: 0, lost: 0, offline: 0, getOffline: 0 };
+  const netErr = () => Object.assign(new Error('Failed to fetch'), { network: true });
+  T.ghGet = async () => { if (r.getOffline > 0) { r.getOffline--; throw netErr(); } return { sha: r.sha, content: r.content }; };
+  T.ghPut = async (url, text, sha) => {
+    if (r.offline > 0) { r.offline--; throw netErr(); }
+    if (sha !== r.sha) throw Object.assign(new Error('409'), { code: 409 });
+    r.content = text; r.sha = 's' + (++r.n);
+    if (r.lost > 0) { r.lost--; throw netErr(); }
+    return r.sha;
+  };
+  return r;
+}
+async function inboxStoreWith(content) {
+  const st = T.createStore({ file: 'inbox', url: 'x', parse: (c) => c, serialize: (c) => c, missing: false });
+  await st.reload();
+  return st;
+}
+
+test('S3: Inbox 우유·빵·우유 — 첫째 우유 제거가 반영된 뒤 응답만 유실 → 반영으로 판정(둘째 우유 유지)', async () => {
+  const ib = md('# Inbox', '', '- 우유', '- 빵', '- 우유', '');
+  const r = fakeRemote(ib);
+  const st = await inboxStoreWith(ib);
+  const [m1] = T.parseInbox(ib);
+  r.lost = 1;
+  await st.commit(T.opInboxRemove([m1]));
+  eq(T.parseInbox(r.content).map((i) => i.text), ['빵', '우유']);
+  eq(st.view, r.content);
+});
+
+test('S3: 응답 유실 사이 다른 기기도 같은 글을 지움(개수가 기대와 다름) → 결과 모름(uncertain), 되돌리지 않음', async () => {
+  const ib = md('# Inbox', '', '- 우유', '- 빵', '- 우유', '');
+  const r = fakeRemote(ib);
+  const st = await inboxStoreWith(ib);
+  const [m1] = T.parseInbox(ib);
+  const origPut = T.ghPut;
+  T.ghPut = async (...a) => { const out = origPut(...a); await out.catch(() => {}); r.content = md('# Inbox', '', '- 빵', ''); r.sha = 'other'; return out; };
+  r.lost = 1;
+  let err = null;
+  try { await st.commit(T.opInboxRemove([m1])); } catch (e) { err = e; }
+  if (!err || !err.uncertain) throw new Error('uncertain 기대: ' + (err && err.message));
+  if (!err.baseSha) throw new Error('baseSha 기록 기대');
+});
+
+test('R5: 연결이 끊겨 요청이 닿지 않았고 다시 받기도 실패 → uncertain', async () => {
+  const ib = md('# Inbox', '', '- 우유', '');
+  const r = fakeRemote(ib);
+  const st = await inboxStoreWith(ib);
+  r.offline = 1; r.getOffline = 1;
+  let err = null;
+  try { await st.commit(T.opInboxRemove(T.parseInbox(ib))); } catch (e) { err = e; }
+  if (!err || !err.uncertain) throw new Error('uncertain 기대');
+  eq(r.content, ib);
+});
+
+test('R5: 요청이 닿지 않았고 다시 받아 보니 그대로 → 미반영(일반 실패, 되돌림 가능)', async () => {
+  const ib = md('# Inbox', '', '- 우유', '- 우유', '');
+  const r = fakeRemote(ib);
+  const st = await inboxStoreWith(ib);
+  r.offline = 1;
+  let err = null;
+  try { await st.commit(T.opInboxRemove([T.parseInbox(ib)[0]])); } catch (e) { err = e; }
+  if (!err || err.uncertain) throw new Error('uncertain이 아닌 실패 기대');
+  eq(T.opDeleteBlock({ raw: '- [ ] a', lineIndex: 1 }).isApplied('## H\n', '## H\n- [ ] a\n'), true);
+});
+
 // ---------- 핵심 연산 ----------
 test('토글: 체크/해제가 그 줄만 바꿈, 하위·형식 유지', () => {
   const c = md('## 🔥 High', '- [ ] a', '  - [ ] b', '');
@@ -351,6 +429,8 @@ test('메모 열(A5): 모바일 2열에서 옮겨도 PC 3번째 열(col 2) 메�
   eq(pc.filter((m) => m.col === 2).map((m) => m.id), ['m3', 'm1']);
 });
 
-if (missing.length) console.log(`\n(이 파일에 없는 함수: ${missing.join(', ')})`);
-console.log(`\n${pass} 통과, ${fail} 실패${skip ? `, ${skip} 건너뜀` : ''}`);
-process.exit(fail ? 1 : 0);
+runAll().then(() => {
+  if (missing.length) console.log(`\n(이 파일에 없는 함수: ${missing.join(', ')})`);
+  console.log(`\n${pass} 통과, ${fail} 실패${skip ? `, ${skip} 건너뜀` : ''}`);
+  process.exit(fail ? 1 : 0);
+});
