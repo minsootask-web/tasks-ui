@@ -3,6 +3,10 @@
 //
 //   node lab/tests/run.js                 # lab/index.html 검사
 //   node lab/tests/run.js index.html      # 본 서비스(이식 후)에도 같은 테스트
+//   node lab/tests/run.js index.html --allow-skip   # 일부 묶음만 옮긴 경우(PORTING 방법 ②): 없는 함수의 테스트는 건너뜀
+//
+// 관문(S19): 기본은 엄격 — 떼어 올 함수가 하나라도 없거나(이름·선언 방식이 바뀜) 건너뛴 테스트가 있으면 실패.
+// "전부 건너뜀이어도 통과"하지 않게. 상수(SECTION_KEYS·MEMO_MAX_COLS)도 하드코딩하지 않고 index.html에서 떼어 온다.
 //
 // index.html 안의 함수 정의를 "이름으로" 그대로 떼어 와 실행한다(복사본을 따로 두지 않음 → 코드가 바뀌면
 // 테스트도 바로 그 코드를 검사). DOM·네트워크를 쓰지 않는 줄 계산·연산 함수만 대상.
@@ -11,7 +15,9 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const target = path.resolve(process.argv[2] || path.join(__dirname, '..', 'index.html'));
+const args = process.argv.slice(2);
+const allowSkip = args.includes('--allow-skip');
+const target = path.resolve(args.find((a) => !a.startsWith('--')) || path.join(__dirname, '..', 'index.html'));
 const html = fs.readFileSync(target, 'utf8');
 
 // ---- 정의 떼어 오기: function 이름(...) {...} 또는 const 이름 = ...; ----
@@ -76,6 +82,7 @@ function grab(name) {
 }
 
 const NAMES = [
+  'SECTION_KEYS', 'MEMO_MAX_COLS',
   'esc', 'escAttr', 'linkHTML', 'linkify', 'highlightMeta',
   'normLine', 'getLineIndent', 'assertItemLine', 'extractBlock', 'adjustBlockIndent', 'lineContext',
   'locateGone', 'inboxKey', 'INBOX_LOC', 'blockEndAt', 'lineSig', 'lineFp', 'locate', 'resolveLineIndex',
@@ -100,8 +107,6 @@ const missing = NAMES.filter((n) => !found.some(([f]) => f === n));
 const sources = found.map(([, src]) => src).join('\n\n');
 const sandbox = {
   console: { log: console.log, warn() {}, error() {} },
-  SECTION_KEYS: { high: '🔥 High', medium: '🟡 Medium', low: '🟢 Low' },
-  MEMO_MAX_COLS: 3,
   state: { content: '', inboxContent: '' },
   // createStore가 쓰는 화면·네트워크 자리(테스트마다 ghGet·ghPut을 바꿔 끼움)
   syncStatus: { errors: {}, retry: {}, start() {}, ok() {}, end() {}, fail() {} },
@@ -534,5 +539,7 @@ test('메모 열(A5): 모바일 2열에서 옮겨도 PC 3번째 열(col 2) 메�
 runAll().then(() => {
   if (missing.length) console.log(`\n(이 파일에 없는 함수: ${missing.join(', ')})`);
   console.log(`\n${pass} 통과, ${fail} 실패${skip ? `, ${skip} 건너뜀` : ''}`);
-  process.exit(fail ? 1 : 0);
+  const gateFail = fail > 0 || (!allowSkip && (skip > 0 || missing.length > 0));
+  if (!allowSkip && (skip || missing.length)) console.log('관문 실패: 건너뜀·없는 함수가 있으면 통과가 아님(--allow-skip은 방법 ② 일부 이식 때만)');
+  process.exit(gateFail ? 1 : 0);
 });
