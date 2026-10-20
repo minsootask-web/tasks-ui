@@ -1108,16 +1108,44 @@ function parseInbox(text) {
     .map(({ line, idx }) => ({ text: line.replace(/^-\s+/, '').trim(), lineIdx: idx }));
 }
 
-function removeInboxLine(lineIdx) {
-  const lines = state.inboxContent.split('\n');
-  lines.splice(lineIdx, 1);
+// Inbox 줄 위치는 렌더 이후 바뀔 수 있다(앞선 처리·봇 추가). 줄 번호만 믿고 지우면 엉뚱한 줄이
+// 지워지므로, 원래 글(`- text`)로 가장 가까운 줄을 다시 찾는다. 없으면 -1(이미 지워짐).
+function resolveInboxLine(item, lines) {
+  const same = (l) => l != null && /^-\s+\S/.test(l) && l.replace(/^-\s+/, '').trim() === item.text;
+  if (same(lines[item.lineIdx])) return item.lineIdx;
+  for (let d = 1; d < lines.length; d++) {
+    if (same(lines[item.lineIdx - d])) return item.lineIdx - d;
+    if (same(lines[item.lineIdx + d])) return item.lineIdx + d;
+  }
+  return -1;
+}
+
+function removeInboxLine(item, content = state.inboxContent) {
+  return removeInboxLines([item], content);
+}
+
+function removeInboxLines(items, content = state.inboxContent) {
+  const lines = content.split('\n');
+  const idxs = [];
+  items.forEach((it) => {
+    const i = resolveInboxLine(it, lines.map((l, k) => (idxs.includes(k) ? null : l)));
+    if (i !== -1) idxs.push(i);
+  });
+  idxs.sort((a, b) => b - a).forEach((idx) => lines.splice(idx, 1));
   return lines.join('\n');
 }
 
-function removeInboxLines(lineIdxs) {
-  const lines = state.inboxContent.split('\n');
-  [...lineIdxs].sort((a, b) => b - a).forEach((idx) => lines.splice(idx, 1));
-  return lines.join('\n');
+// Inbox 처리 잠금(A8): 같은 항목을 처리하는 중에 또 누르면 무시하고, 서로 다른 항목 처리는
+// 차례대로 실행한다(겹치면 sha 충돌·엉뚱한 줄 삭제).
+const inboxBusy = new Set();
+let inboxQueue = Promise.resolve();
+function withInboxLock(items, fn) {
+  const keys = items.map((i) => i.text);
+  if (keys.some((k) => inboxBusy.has(k))) return Promise.resolve();
+  keys.forEach((k) => inboxBusy.add(k));
+  const run = inboxQueue.then(fn, fn).finally(() => keys.forEach((k) => inboxBusy.delete(k)));
+  inboxQueue = run.then(() => {}, () => {});
+  return run;
 }
 
 function parseSections(text) {
@@ -1676,7 +1704,7 @@ async function archiveInboxItem(item) {
   };
   await ghLoadArchive();
   await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
-  await ghSaveInbox(removeInboxLine(item.lineIdx), `archive (from inbox): ${item.text}`);
+  await ghSaveInbox(removeInboxLine(item), `archive (from inbox): ${item.text}`);
 }
 
 async function onRestore(entry) {
@@ -2090,21 +2118,24 @@ function bindBarEvents() {
   $('#bar-delete')?.addEventListener('click', onBulkDelete);
 }
 
-async function onMoveToActive(item, priority) {
+function onMoveToActive(item, priority) {
+  return withInboxLock([item], async () => {
   try {
     await ghLoad();
     const newActive = appendToSection(priority, item.text);
     await ghSave(newActive, `inbox → active: ${item.text}`);
-    await ghSaveInbox(removeInboxLine(item.lineIdx), `remove from inbox: ${item.text}`);
+    await ghSaveInbox(removeInboxLine(item), `remove from inbox: ${item.text}`);
     selectedInbox.clear();
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
     renderInbox();
   } catch (e) { notifyError(e); }
+  });
 }
 
-async function onBulkMove(priority) {
+function onBulkMove(priority) {
   const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
   if (!items.length) return;
+  return withInboxLock(items, async () => {
   try {
     await ghLoad();
     for (const item of items) {
@@ -2112,17 +2143,20 @@ async function onBulkMove(priority) {
       state.sections = parseSections(state.content);
     }
     await ghSave(state.content, `inbox → active (${items.length}개)`);
-    await ghSaveInbox(removeInboxLines(items.map((i) => i.lineIdx)), `remove ${items.length} from inbox`);
+    await ghSaveInbox(removeInboxLines(items), `remove ${items.length} from inbox`);
     selectedInbox.clear();
     toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
     renderInbox();
   } catch (e) { notifyError(e); }
+  });
 }
 
 async function onBulkDelete() {
   const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
   if (!items.length) return;
+  if (items.some((i) => inboxBusy.has(i.text))) return;
   if (!confirm(`${items.length}개를 보관함으로 옮길까요?`)) return;
+  return withInboxLock(items, async () => {
   try {
     await ghLoadArchive();
     const entries = items.map((i) => ({
@@ -2132,21 +2166,25 @@ async function onBulkDelete() {
       text: i.text,
     }));
     await ghSaveArchive([...state.archiveItems, ...entries], `archive ${items.length} from inbox`);
-    await ghSaveInbox(removeInboxLines(items.map((i) => i.lineIdx)), `archive ${items.length} from inbox`);
+    await ghSaveInbox(removeInboxLines(items), `archive ${items.length} from inbox`);
     selectedInbox.clear();
     toast(`${items.length}개 보관됨`);
     renderInbox();
   } catch (e) { notifyError(e); }
+  });
 }
 
 async function onDeleteFromInbox(item) {
+  if (inboxBusy.has(item.text)) return;
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
+  return withInboxLock([item], async () => {
   try {
     await archiveInboxItem(item);
     selectedInbox.clear();
     toast('보관됨');
     renderInbox();
   } catch (e) { notifyError(e); }
+  });
 }
 
 function bindTabEvents() {
