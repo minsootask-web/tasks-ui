@@ -4402,6 +4402,8 @@ function setComposerMode(mode) {
   if (changed) {
     input.value = composerDrafts[mode] || '';
     input.placeholder = COMPOSER_PLACEHOLDER[mode];
+    // 키보드 키 표시: Memo는 Enter가 줄바꿈이라 "줄바꿈"(R19·D10⑤), Task·Inbox는 "보내기"
+    input.setAttribute('enterkeyhint', mode === 'memo' ? 'enter' : 'send');
     input.setAttribute('aria-label', COMPOSER_PLACEHOLDER[mode].replace('…', ''));
     autoGrowComposer();
     fillComposerFromQueue(); // 이 탭에서 저장 못 한 글이 있으면 입력창에(R1)
