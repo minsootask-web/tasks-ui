@@ -1423,7 +1423,7 @@ const withApplied = (fn, isApplied) => Object.assign(fn, { isApplied });
 const opInboxAppend = (texts) => withApplied((c) => {
   let out = c || '';
   if (out && !out.endsWith('\n')) out += '\n';
-  texts.forEach((t) => { out += `- ${t}\n`; });
+  texts.forEach((t) => { out += `- ${String(t).replace(/\s*[\r\n]+\s*/g, ' ').trim()}\n`; });
   return out;
 }, (now, before) => texts.every((t) => countExactLines(now, `- ${t}`) > countExactLines(before, `- ${t}`)));
 const opInboxRemove = (items) => (c) => removeInboxLines(items, c, { strict: true });
@@ -1990,6 +1990,7 @@ function toggleAt(lineIndex, checked, content = state.content) {
 }
 
 function appendToSection(key, text, content = state.content) {
+  text = String(text).replace(/\s*[\r\n]+\s*/g, ' ').trim(); // 한 줄 보장(R4 방어 — md 형식이 깨지지 않게)
   const lines = content.split('\n');
   insertIntoSection(lines, key, [`- [ ] ${text}`]);
   return lines.join('\n');
@@ -4409,7 +4410,12 @@ function quickAdd() {
   autoGrowComposer();
   composerIme.sentWhileComposing = true; // 전송 뒤 되돌아오는 조합 잔여 문자 제거용
   $('#composer-send').disabled = true;
-  submitComposerJob({ mode: composerMode, text, pri: composerPriority });
+  if (composerMode !== 'memo' && /\n/.test(text)) {
+    // 붙여넣은 여러 줄(R4): 한 줄 = 한 항목. 앞의 목록 표시(-, •, *, 1., [ ])는 떼고 빈 줄은 무시, 최대 20개
+    splitPastedLines(text).forEach((t) => submitComposerJob({ mode: composerMode, text: t, pri: composerPriority }));
+  } else {
+    submitComposerJob({ mode: composerMode, text, pri: composerPriority });
+  }
   // 저장 못 한 글이 남아 있으면 비워진 입력창에 다음 글을 돌려놓는다(R1). 한글 조합 잔여 처리 뒤에
   setTimeout(fillComposerFromQueue, 150);
 }
@@ -4440,6 +4446,13 @@ function smoothScrollBy(dy, ms) {
     if (t < 1) setTimeout(step, 16);
   };
   step();
+}
+
+function splitPastedLines(text) {
+  return text.split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s+)?/, '').trim())
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 function submitComposerJob(job) {
@@ -4626,6 +4639,14 @@ function init() {
     quickAdd();
   });
   composerInput.addEventListener('input', autoGrowComposer);
+  // Task·Inbox는 한 줄 입력(R4): 줄바꿈 입력(Android IME Enter 포함, keydown이 229로 오는 경우)은 막고 "보내기"로
+  composerInput.addEventListener('beforeinput', (e) => {
+    if (composerMode === 'memo') return;
+    if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+      e.preventDefault();
+      if (!composerIme.composing && !e.isComposing) quickAdd();
+    }
+  });
 
   // 토스트: 올라가 있는 동안 시간 멈춤, Cmd/Ctrl+Z = 되돌리기
   const toastEl = $('#toast');
