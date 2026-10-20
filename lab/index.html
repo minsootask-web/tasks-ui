@@ -870,7 +870,7 @@ let currentTab = 'active';
 let composerPriority = 'medium'; // 플로팅 컴포저 우선순위
 let selectedInbox = new Set();
 let selectedArchive = new Set();
-let sheetMode = 'add'; // 'add' | 'edit'
+let sheetMode = 'edit'; // 시트는 이제 편집 전용(추가는 하단 입력창, R18)
 let editingLine = -1;
 let editingItem = null; // 편집 대상 항목 — 저장 직전 줄 위치를 다시 찾는 데 쓴다
 let editingIsSub = false; // 편집 대상이 하위 할 일인지
@@ -1397,8 +1397,8 @@ const archiveStore = createStore({
   onRebase: rebaseNotice,
 });
 
-// ---- memos.json 스토어 (봇이 메모를 넣을 수 있음). 초안 메모는 스토어 밖(memoDrafts)에만 둔다 ----
-let memoDrafts = [];
+// ---- memos.json 스토어 (봇이 메모를 넣을 수 있음) ----
+// (FAB 시절의 초안 메모 경로는 B5 입력창으로 대체돼 지웠다 — R18. 옛 데이터의 _draft 필드는 저장 때 걸러 둠)
 const memosStore = createStore({
   file: 'memos',
   url: MEMOS_API,
@@ -1406,7 +1406,7 @@ const memosStore = createStore({
   serialize: (list) => JSON.stringify(list.filter((x) => !x._draft), null, 2) + '\n',
   missing: '[]\n',
   onChange: (view) => {
-    state.memos = [...memoDrafts, ...view.filter((x) => !memoDrafts.some((d) => d.id === x.id))];
+    state.memos = view;
   },
   onRebase: () => {
     notifyRebased();
@@ -1414,9 +1414,6 @@ const memosStore = createStore({
     else if (currentTab === 'memo') drawMemos();
   },
 });
-function syncMemoView() {
-  state.memos = [...memoDrafts, ...(memosStore.view || []).filter((x) => !memoDrafts.some((d) => d.id === x.id))];
-}
 
 const ALL_STORES = () => [activeStore, inboxStore, archiveStore, memosStore];
 function ghLoadInbox() { return inboxStore.reload(); }
@@ -1689,7 +1686,8 @@ const opInboxRemoveLast = (texts) => (c) => {
   return lines.join('\n');
 };
 
-const opMemoAdd = (memo) => (list) => (list.some((x) => x.id === memo.id) ? list : [memo, ...list]);
+// 지운 메모를 원래 col/order 그대로 되살리기(메모 삭제 되돌리기 전용). 새 메모 추가는 opMemoAddTop(봇과 같은 규칙)
+const opMemoRestore = (memo) => (list) => (list.some((x) => x.id === memo.id) ? list : [memo, ...list]);
 const opMemoDelete = (id) => (list) => list.filter((x) => x.id !== id);
 const opMemoMove = (m, targetCol, targetIdx, cols, { aboveId, belowId } = {}) => (list) => {
   if (!list.some((x) => x.id === m.id)) throw memoGone();
@@ -2851,20 +2849,14 @@ function startEditMemo(div, m) {
     div.classList.remove('editing');
     const newText = textEl.textContent.trim();
     const cur = state.memos.find((x) => x.id === m.id) || m;
-    // 아직 저장 안 된 새 메모(초안): 비었거나 Esc면 저장 없이 조용히 사라진다(A10)
-    if (cur._draft && (!commit || !newText)) {
-      removeDraftMemo(div, m.id);
-      runDeferredRender();
-      return;
-    }
     if (!commit) { textEl.textContent = cur.text || ''; runDeferredRender(); return; }
-    if (!cur._draft && newText === (cur.text || '')) { runDeferredRender(); return; }
-    // 기존 메모를 비우면 지운다(되돌리기 제공)
-    if (!cur._draft && !newText) {
+    if (newText === (cur.text || '')) { runDeferredRender(); return; }
+    // 메모를 비우면 지운다(되돌리기 제공, A10)
+    if (!newText) {
       runDeferredRender();
       return deleteMemoWithUndo(cur);
     }
-    await saveMemoText(m.id, newText, cur._draft);
+    await saveMemoText(m.id, newText);
     runDeferredRender();
   };
   const onBlur = () => finish(true);
@@ -2876,38 +2868,8 @@ function startEditMemo(div, m) {
   textEl.addEventListener('keydown', onKey);
 }
 
-// 초안 메모 제거 — 150ms 동안 흐려지며 사라짐(저장은 하지 않음)
-function removeDraftMemo(div, id) {
-  memoDrafts = memoDrafts.filter((x) => x.id !== id);
-  syncMemoView();
-  if (div) {
-    div.style.transition = 'opacity 150ms ease-out';
-    div.style.opacity = '0';
-    setTimeout(() => drawMemos(), 150);
-  } else drawMemos();
-}
-
-// 메모 글 저장(새 메모 추가 포함). 실패해도 쓴 글은 화면에 남기고 "다시 시도"를 준다.
-async function saveMemoText(id, text, isNew) {
-  if (isNew) {
-    const draft = memoDrafts.find((x) => x.id === id) || { id, col: 0, order: 0 };
-    const memo = { ...draft, text };
-    delete memo._draft;
-    memoDrafts = memoDrafts.filter((x) => x.id !== id);
-    try {
-      const pr = memosStore.commit(opMemoAdd(memo), { msg: 'memo: add' });
-      drawMemos();
-      await pr;
-    } catch (e) {
-      // 저장 못 한 새 메모는 초안으로 되돌려 글을 지킨다
-      memoDrafts = [{ ...memo, _draft: true }, ...memoDrafts];
-      syncMemoView();
-      drawMemos();
-      notifyError(e, { retry: () => saveMemoText(id, text, true) });
-    }
-    return;
-  }
-  // 기존 메모 수정은 실패해도 화면의 글을 유지(저장 안 됨 · 다시 시도)
+// 메모 글 저장. 실패해도 화면의 글을 유지(저장 안 됨 · 다시 시도는 헤더 알약)
+async function saveMemoText(id, text) {
   try {
     await memosStore.apply(opMemoEdit(id, text), { msg: 'memo: edit', onFail: 'keep' });
   } catch (e) {
@@ -2924,7 +2886,7 @@ async function deleteMemoWithUndo(memo) {
     await pr;
     notify.undo('메모를 지웠어요', async () => {
       try {
-        const pr2 = memosStore.commit(opMemoAdd(memo), { msg: 'memo: undo delete' });
+        const pr2 = memosStore.commit(opMemoRestore(memo), { msg: 'memo: undo delete' });
         drawMemos();
         await pr2;
       } catch (e) { drawMemos(); notifyError(e); }
@@ -2936,7 +2898,6 @@ async function deleteMemoWithUndo(memo) {
 async function onDeleteMemo(id) {
   const m = state.memos.find((x) => x.id === id);
   if (!m) return;
-  if (m._draft) { removeDraftMemo(null, id); return; }
   return deleteMemoWithUndo(m);
 }
 
@@ -3947,9 +3908,6 @@ function onToggle(item, checked, el, cb) {
     });
 }
 
-function onAdd(priority, text, opts) {
-  return safeMutate(opAppend(priority, text), `add: ${text}`, '추가됨', opts);
-}
 
 function onEdit(item, text, opts) {
   return safeMutate(opEdit(item, text), `edit: ${text}`, '수정됨', opts);
@@ -4379,8 +4337,6 @@ async function sheetSave() {
 async function runSheetSave(text, pri) {
   lastMutateError = null;
   const quiet = { quiet: true };
-  if (sheetMode === 'inbox') return onAddToInbox(text, quiet);
-  if (sheetMode === 'add') return onAdd(pri, text, quiet);
   // 편집: 시트를 열어둔 사이 다른 저장이 끝났을 수 있으니 줄 위치를 다시 찾는다
   let line;
   try {
@@ -4404,18 +4360,6 @@ async function runSheetSave(text, pri) {
   return onEdit(editingItem, text, quiet);
 }
 
-async function onAddToInbox(text, { quiet = false } = {}) {
-  try {
-    await inboxStore.commit(opInboxAppend([text]), { msg: `inbox: add ${text}` });
-    // 어느 탭에서 추가했든 탭 줄의 Inbox 배지까지 다시 그린다(A9)
-    renderCurrent();
-    return true;
-  } catch (e) {
-    lastMutateError = e;
-    if (quiet) console.error(e); else notifyError(e);
-    return false;
-  }
-}
 
 // ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
 const COMPOSER_PRI_ORDER = PRI_ORDER;
@@ -4860,7 +4804,7 @@ function init() {
   window.addEventListener('pagehide', flushOnLeave);
   // 저장 안 된 변경이 있으면 창을 닫을 때 브라우저 기본 경고(B8)
   window.addEventListener('beforeunload', (e) => {
-    if (ALL_STORES().some((st) => st.hasPending()) || memoDrafts.some((d) => d.text)) {
+    if (ALL_STORES().some((st) => st.hasPending())) {
       flushOnLeave();
       e.preventDefault();
       e.returnValue = '';
