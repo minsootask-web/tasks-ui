@@ -1134,8 +1134,9 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
 
   // gate: 이 연산을 저장해도 되는 시점(예: 다른 파일의 "추가"가 저장된 뒤). 화면에는 바로 반영되고,
   // gate가 풀리면 저장, gate가 실패하면 연산을 버리고 화면을 되돌린다(B9·A4 순서 보장).
-  s.apply = (op, { msg = 'update', debounce = 0, onFail = 'drop', gate = null } = {}) => {
-    const p = { op, msg, onFail, done: deferred(), ready: !gate };
+  // idem: 두 번 적용해도 결과가 같은 연산(체크 상태 지정 등) — 앱을 벗어날 때 앞 저장을 기다리지 않고 보내도 안전(Q17)
+  s.apply = (op, { msg = 'update', debounce = 0, onFail = 'drop', gate = null, idem = false } = {}) => {
+    const p = { op, msg, onFail, idem, done: deferred(), ready: !gate };
     s.pending.push(p);
     recompute();
     if (gate) {
@@ -1268,6 +1269,18 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
     const run = s.queue.then(async () => { await s.reloadBase(); recompute(); });
     s.queue = run.catch(() => {});
     return run;
+  };
+  // 앱을 벗어날 때(Q17): 앞 저장이 아직 날아가는 중이면 큐에서 기다리다 페이지가 멈춰 못 보낼 수 있다.
+  // 남은 연산이 모두 idem(체크)이면 기다리지 않고 지금 내용 전체를 keepalive로 바로 보낸다.
+  // (앞 저장이 먼저 도착하면 이 요청은 409로 무시되고, 이 요청이 먼저면 앞 저장이 409 → 재적용해도 결과 같음)
+  s.leaveFlush = () => {
+    if (!s.hasReady()) return;
+    if (s.flushing && s.base != null && s.pending.every((p) => p.idem)) {
+      const { c } = applyAll(s.base, s.pending);
+      ghPut(url, serialize(c), s.sha, 'save on leave', { keepalive: true }).catch(() => {});
+      return;
+    }
+    s.flush({ keepalive: true });
   };
   s.hasPending = () => s.pending.length > 0;
   s.hasReady = () => s.pending.some((p) => p.ready);
@@ -3704,13 +3717,13 @@ function onToggle(item, checked, el, cb) {
       // 부모·하위 모두 원래 상태(미완료)로 정확히 되돌림
       cancelLinger(item);
       activeStore.apply(opSetChecks([{ item, checked: false }, ...kids.map((k) => ({ item: k, checked: false }))]),
-        { msg: 'undo complete with subtasks', debounce: 400, onFail: 'keep' })
+        { msg: 'undo complete with subtasks', debounce: 400, onFail: 'keep', idem: true })
         .then(() => { if (currentTab === 'active' && !isEditingUI() && !dragCtx.active) renderApp(); })
         .catch((e) => notifyError(e, { retry: () => activeStore.flush() }));
       renderApp();
     });
   }
-  activeStore.apply(op, { msg: 'toggle tasks', debounce: 400, onFail: 'keep' })
+  activeStore.apply(op, { msg: 'toggle tasks', debounce: 400, onFail: 'keep', idem: true })
     .then(() => {
       // 다른 저장이 남아 있지 않을 때만 다시 그림(줄 번호 정리). 남아 있으면 다음 저장이 처리
       if (!activeStore.hasPending() && currentTab === 'active' && !isEditingUI() && !dragCtx.active) renderApp();
@@ -4529,7 +4542,11 @@ function init() {
   // 앱을 벗어날 때: 디바운스를 기다리지 않고 바로 저장(keepalive — 페이지가 멈춰도 요청 유지)(A3)
   // keepalive는 체크 보호용 active.md에만(작은 파일). 나머지는 일반 요청 — 64KB 합계 초과 방지(Q9)
   const flushOnLeave = () => {
-    ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush({ keepalive: st === activeStore }); });
+    ALL_STORES().forEach((st) => {
+      if (!st.hasReady()) return;
+      if (st === activeStore) st.leaveFlush();
+      else st.flush();
+    });
   };
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { flushOnLeave(); return; }
