@@ -630,11 +630,13 @@
     word-break: break-word;
     white-space: pre-wrap;
     position: relative;
-    transition: box-shadow 0.12s;
-    user-select: none; -webkit-user-select: none;
-    touch-action: none;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    touch-action: pan-y; /* 메모 위에서도 세로 스크롤(B13). 옮기기는 길게 누르기 */
     min-height: 56px;
+    transition: box-shadow 0.12s, transform 400ms ease-out;
   }
+  .memo.pressing, .task.pressing { transform: scale(0.98); }
+  @media (prefers-reduced-motion: reduce) { .memo.pressing, .task.pressing { transform: none; } }
   .memo:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.1); }
   .memo.dragging { opacity: 0.3; }
   .memo.editing {
@@ -663,6 +665,7 @@
     font-size: 13px; line-height: 1.5;
     box-shadow: 0 8px 24px rgba(0,0,0,0.2);
     opacity: 0.92;
+    transform: scale(1.03) rotate(2deg);
     word-break: break-word;
     white-space: pre-wrap;
   }
@@ -2080,10 +2083,82 @@ function renderMemoEl(m) {
   return div;
 }
 
+// ============ 길게 눌러 드래그 (F6) ============
+// 터치: 400ms 가만히 누르면 드래그 시작(진동 10ms), 그 전에 8px 넘게 움직이면 스크롤로 판단해 취소.
+// 짧게 떼면 탭. 드래그가 시작된 뒤에만 touchmove를 막아 화면이 따라 스크롤되지 않게 한다.
+// 마우스는 이 유틸을 쓰지 않는다(PC는 기존 방식 유지).
+const LONG_PRESS_MS = 400;
+const LONG_PRESS_SLOP = 8;
+let blockTouchScroll = false;
+document.addEventListener('touchmove', (e) => { if (blockTouchScroll && e.cancelable) e.preventDefault(); }, { passive: false });
+
+function longPress(e, el, { onTap, onStart }) {
+  const startX = e.clientX, startY = e.clientY, id = e.pointerId;
+  let last = e, done = false;
+  el.classList.add('pressing'); // 0.98배로 살짝 눌리는 예고
+  const cleanup = () => {
+    done = true;
+    clearTimeout(timer);
+    el.classList.remove('pressing');
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onCancel);
+  };
+  const onMove = (ev) => {
+    if (ev.pointerId !== id) return;
+    last = ev;
+    if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > LONG_PRESS_SLOP) cleanup(); // 스크롤
+  };
+  const onUp = (ev) => {
+    if (ev.pointerId !== id || done) return;
+    cleanup();
+    onTap && onTap(ev);
+  };
+  const onCancel = () => cleanup();
+  const timer = setTimeout(() => {
+    if (done) return;
+    cleanup();
+    blockTouchScroll = true;
+    try { navigator.vibrate && navigator.vibrate(10); } catch (err) {}
+    onStart(last);
+  }, LONG_PRESS_MS);
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  document.addEventListener('pointercancel', onCancel);
+}
+function endTouchDrag() { blockTouchScroll = false; autoScroll.stop(); }
+
+// 드래그 중 화면 위·아래 끝 60px에 닿으면 자동 스크롤(메모·할 일 공용)
+const autoScroll = {
+  y: null, raf: 0,
+  update(y) {
+    this.y = y;
+    if (!this.raf) this.raf = requestAnimationFrame(() => this.tick());
+  },
+  tick() {
+    this.raf = 0;
+    if (this.y == null) return;
+    const edge = 60, h = window.innerHeight;
+    let dy = 0;
+    if (this.y < edge) dy = -Math.ceil((edge - this.y) / 4);
+    else if (this.y > h - edge) dy = Math.ceil((this.y - (h - edge)) / 4);
+    if (dy) { window.scrollBy(0, dy); this.raf = requestAnimationFrame(() => this.tick()); }
+  },
+  stop() { this.y = null; if (this.raf) cancelAnimationFrame(this.raf); this.raf = 0; },
+};
+
 function onMemoPointerDown(e, m, div) {
   if (div.classList.contains('editing')) return;
   if (e.target.closest('.memo-del')) return;
   if (e.button != null && e.button !== 0) return;
+  // 터치: 길게 눌러야 옮기기(메모 위에서도 스크롤 가능, B13). 짧게 누르면 편집
+  if (e.pointerType && e.pointerType !== 'mouse') {
+    longPress(e, div, {
+      onTap: () => startEditMemo(div, m),
+      onStart: (ev) => startMemoDrag(ev, m, div),
+    });
+    return;
+  }
 
   const startX = e.clientX, startY = e.clientY;
   let started = false;
@@ -2113,6 +2188,7 @@ function startMemoDrag(e, m, div) {
 
   const ghost = div.cloneNode(true);
   ghost.classList.add('memo-ghost');
+  ghost.classList.remove('pressing');
   ghost.classList.remove('dragging');
   ghost.style.left = divRect.left + 'px';
   ghost.style.top = divRect.top + 'px';
@@ -2137,6 +2213,7 @@ function startMemoDrag(e, m, div) {
 
 function onMemoDragMove(e) {
   const { ghost, placeholder, offsetX, offsetY, div } = memoDragCtx;
+  autoScroll.update(e.clientY);
   ghost.style.left = (e.clientX - offsetX) + 'px';
   ghost.style.top = (e.clientY - offsetY) + 'px';
 
@@ -2174,6 +2251,7 @@ function onMemoDragMove(e) {
 }
 
 async function onMemoDragEnd() {
+  endTouchDrag();
   document.removeEventListener('pointermove', onMemoDragMove);
   document.removeEventListener('pointerup', onMemoDragEnd);
   document.removeEventListener('pointercancel', onMemoDragEnd);
@@ -3298,6 +3376,7 @@ function onDragStart(e, item, key, taskEl) {
 
 function onDragMove(e) {
   if (!dragCtx.active) return;
+  autoScroll.update(e.clientY);
   const { ghost, indicator, offsetX, offsetY } = dragCtx;
   ghost.style.left = (e.clientX - offsetX) + 'px';
   ghost.style.top = (e.clientY - offsetY) + 'px';
@@ -3395,6 +3474,7 @@ function sectionEndLine(section, taskUnder) {
 
 function onDragEnd() {
   if (!dragCtx.active) return;
+  endTouchDrag();
   document.removeEventListener('pointermove', onDragMove);
   document.removeEventListener('pointerup', onDragEnd);
   document.removeEventListener('pointercancel', onDragEnd);
@@ -3986,6 +4066,11 @@ function init() {
     renderSync();
     ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush(); });
     if (syncStatus.hasError) retryFailedSaves();
+  });
+
+  // 길게 누를 때 뜨는 기본 메뉴(Android 컨텍스트 메뉴 등)를 메모·할 일 행에서는 막는다
+  document.addEventListener('contextmenu', (e) => {
+    if (e.target.closest && e.target.closest('.memo:not(.editing), .task') && (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) e.preventDefault();
   });
 
   // Re-layout memos on resize (column count may change)
