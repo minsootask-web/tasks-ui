@@ -682,7 +682,17 @@
     transition: box-shadow var(--dur-fast), transform var(--dur-press) ease-out;
   }
   .memo.pressing, .task.pressing { transform: scale(0.98); }
-  @media (prefers-reduced-motion: reduce) { .memo.pressing, .task.pressing { transform: none; } }
+  /* 길게 누르는 400ms 동안 행 배경이 왼쪽부터 차오르는 예고(D8 — 첫 안내 토스트 대신, 화면 요소 없이 알려 줌) */
+  .task.pressing, .memo.pressing {
+    background-image: linear-gradient(var(--press-fill, var(--accent-soft)), var(--press-fill, var(--accent-soft)));
+    background-repeat: no-repeat; background-position: left center; background-size: 0% 100%;
+    animation: press-fill var(--dur-press) linear forwards;
+  }
+  .memo.pressing { --press-fill: color-mix(in srgb, var(--memo-fg) 12%, transparent); }
+  @keyframes press-fill { to { background-size: 100% 100%; } }
+  @media (prefers-reduced-motion: reduce) {
+    .memo.pressing, .task.pressing { transform: none; animation: none; background-size: 100% 100%; }
+  }
   .memo:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.1); }
   .memo.dragging { opacity: 0.3; }
   .memo.editing {
@@ -3537,7 +3547,6 @@ function renderApp() {
     root.appendChild(div);
   });
   setComposerMode('active');
-  maybeShowLongPressHint();
   restoreTaskFocus(focusKey, focusSection);
 }
 
@@ -3554,16 +3563,6 @@ function restoreTaskFocus(focusKey, sectionCls) {
   if (sectionCls) document.querySelector(`#sections .section.${sectionCls} .done-fold`)?.focus({ preventScroll: true });
 }
 
-// 터치 기기에서 Task 목록을 처음 볼 때 한 번만: 길게 눌러 옮기기 안내(이후 기기에 기억)
-function maybeShowLongPressHint() {
-  if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
-  if (!document.querySelector('#sections .task')) return;
-  try {
-    if (localStorage.getItem(lsKey('tako_hint_longpress'))) return;
-    localStorage.setItem(lsKey('tako_hint_longpress'), '1');
-  } catch (e) { return; }
-  setTimeout(() => { if (!$('#toast').classList.contains('show')) notify.info('길게 눌러 순서를 바꿀 수 있어요'); }, 600);
-}
 
 // 상위 항목 + 그 하위들을 한 블록으로 묶는다(섹션이 들여쓴 줄로 시작해도 버리지 않음)
 function splitBlocks(items) {
