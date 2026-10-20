@@ -2097,10 +2097,25 @@ function updateArchiveBar() {
   }
 }
 
+// 복구 잠금(Q5): 같은 보관 항목을 두 번 복구하면 Task에 같은 블록이 두 번 들어간다.
+// 처리 중인 id는 무시하고, 이미 보관함 화면에서 빠진(복구된) 항목도 무시한다.
+// 화면이 바로 바뀌므로(B9) 두 번째 탭이 바로 아래 다른 항목에 떨어지지 않게 350ms 동안 행 버튼을 쉰다.
+const archiveBusy = new Set();
+let archiveCooldownUntil = 0;
+function claimArchive(entries) {
+  if (Date.now() < archiveCooldownUntil) return null;
+  const live = entries.filter((e) => state.archiveItems.some((x) => x.id === e.id) && !archiveBusy.has(e.id));
+  if (!live.length) return null;
+  live.forEach((e) => archiveBusy.add(e.id));
+  archiveCooldownUntil = Date.now() + 350;
+  return { live, release: () => live.forEach((e) => archiveBusy.delete(e.id)) };
+}
+
 async function onBulkRestore() {
-  const ids = [...selectedArchive];
-  const entries = state.archiveItems.filter((i) => selectedArchive.has(i.id));
-  if (!entries.length) return;
+  const claim = claimArchive(state.archiveItems.filter((i) => selectedArchive.has(i.id)));
+  if (!claim) return;
+  const entries = claim.live;
+  const ids = entries.map((e) => e.id);
   const work = runTransfer({
     adds: restoreAdds(entries),
     remove: { store: archiveStore, op: opArchiveRemove(ids), msg: `restore done: ${ids.length}` },
@@ -2111,7 +2126,7 @@ async function onBulkRestore() {
     renderArchive();
     flashArchiveRows(ids);
     notifyTransferError(e, () => { ids.forEach((id) => selectedArchive.add(id)); onBulkRestore(); });
-  }
+  } finally { claim.release(); }
 }
 
 // 보관함 항목 복구의 "추가" 단계들(Task·Inbox 각각)
@@ -2179,12 +2194,15 @@ function archiveActiveTask(item) {
 
 
 async function onRestore(entry) {
+  const claim = claimArchive([entry]);
+  if (!claim) return;
   const work = runTransfer({
     adds: restoreAdds([entry]),
     remove: { store: archiveStore, op: opArchiveRemove([entry.id]), msg: 'restore done' },
   });
   renderArchive();
   try { await work; } catch (e) { renderArchive(); flashArchiveRows([entry.id]); notifyTransferError(e, () => onRestore(entry)); }
+  finally { claim.release(); }
 }
 
 async function onPurge(entry) {
