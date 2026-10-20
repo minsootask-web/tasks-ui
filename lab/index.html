@@ -424,6 +424,8 @@
   .sync-pill .dot { background: var(--low); width: 6px; height: 6px; }
   .sync-pill.saving .dot { background: var(--med); animation: pulse 1s infinite; }
   .sync-pill.error .dot { background: var(--danger); }
+  .sync-pill.error { color: var(--danger); cursor: pointer; font-weight: 600; }
+  .sync-pill.loading .dot { background: var(--faint); animation: pulse 1s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
   /* Hover-action UX on mobile: tap to reveal */
@@ -732,7 +734,6 @@ const state = {
   content: '',
   sha: '',
   sections: [],
-  saving: false,
   inboxContent: '',
   inboxSha: '',
   inboxItems: [],
@@ -955,21 +956,29 @@ async function ghCreateArchive() {
 }
 
 async function ghSaveArchive(newItems, message) {
-  const content = JSON.stringify(newItems, null, 2) + '\n';
-  const res = await fetch(ARCHIVE_API, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.archiveSha }),
-  });
-  if (!res.ok) throw new Error(`PUT archive ${res.status}`);
-  const data = await res.json();
-  state.archiveSha = data.content.sha;
-  state.archiveContent = content;
-  state.archiveItems = newItems;
+  syncStatus.start('archive');
+  try {
+    const content = JSON.stringify(newItems, null, 2) + '\n';
+    const res = await fetch(ARCHIVE_API, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.archiveSha }),
+    });
+    if (!res.ok) throw new Error(`PUT archive ${res.status}`);
+    const data = await res.json();
+    state.archiveSha = data.content.sha;
+    state.archiveContent = content;
+    state.archiveItems = newItems;
+    syncStatus.ok('archive');
+  } catch (e) {
+    if (/ 409$/.test(e.message)) syncStatus.end('archive');
+    else syncStatus.fail('archive');
+    throw e;
+  }
 }
 
 async function ghLoadMemos() {
@@ -1006,38 +1015,54 @@ async function ghCreateMemos() {
 }
 
 async function ghSaveMemos(newMemos, message) {
-  // 화면에만 있는 초안 메모(_draft)는 저장하지 않는다(A10)
-  const content = JSON.stringify(newMemos.filter((x) => !x._draft), null, 2) + '\n';
-  const res = await fetch(MEMOS_API, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.memosSha }),
-  });
-  if (!res.ok) throw new Error(`PUT memos ${res.status}`);
-  const data = await res.json();
-  state.memosSha = data.content.sha;
-  state.memos = newMemos;
+  syncStatus.start('memos');
+  try {
+    // 화면에만 있는 초안 메모(_draft)는 저장하지 않는다(A10)
+    const content = JSON.stringify(newMemos.filter((x) => !x._draft), null, 2) + '\n';
+    const res = await fetch(MEMOS_API, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.memosSha }),
+    });
+    if (!res.ok) throw new Error(`PUT memos ${res.status}`);
+    const data = await res.json();
+    state.memosSha = data.content.sha;
+    state.memos = newMemos;
+    syncStatus.ok('memos');
+  } catch (e) {
+    if (/ 409$/.test(e.message)) syncStatus.end('memos');
+    else syncStatus.fail('memos');
+    throw e;
+  }
 }
 
 async function ghSaveInbox(newContent, message) {
-  const res = await fetch(INBOX_API, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message, content: utf8ToBase64(newContent), sha: state.inboxSha }),
-  });
-  if (!res.ok) throw new Error(`PUT inbox ${res.status}`);
-  const data = await res.json();
-  state.inboxSha = data.content.sha;
-  state.inboxContent = newContent;
-  state.inboxItems = parseInbox(newContent);
+  syncStatus.start('inbox');
+  try {
+    const res = await fetch(INBOX_API, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message, content: utf8ToBase64(newContent), sha: state.inboxSha }),
+    });
+    if (!res.ok) throw new Error(`PUT inbox ${res.status}`);
+    const data = await res.json();
+    state.inboxSha = data.content.sha;
+    state.inboxContent = newContent;
+    state.inboxItems = parseInbox(newContent);
+    syncStatus.ok('inbox');
+  } catch (e) {
+    if (/ 409$/.test(e.message)) syncStatus.end('inbox');
+    else syncStatus.fail('inbox');
+    throw e;
+  }
 }
 
 async function ghLoad() {
@@ -1057,8 +1082,7 @@ async function ghLoad() {
 }
 
 async function ghSave(newContent, message, opts = {}) {
-  state.saving = true;
-  renderSync();
+  syncStatus.start('active');
   try {
     let attempt = 0;
     let mutated = newContent;
@@ -1081,8 +1105,7 @@ async function ghSave(newContent, message, opts = {}) {
           state.content = mutated;
           state.sections = parseSections(state.content);
         }
-        state.saving = false;
-        renderSync();
+        syncStatus.ok('active');
         return;
       }
       // 409 = sha conflict → refetch and bail (caller should retry mutation)
@@ -1094,8 +1117,8 @@ async function ghSave(newContent, message, opts = {}) {
       throw new Error(`PUT ${res.status}`);
     }
   } catch (e) {
-    state.saving = false;
-    renderSync(true);
+    if (e.code === 409) syncStatus.end('active'); // 충돌은 호출자가 최신 기준으로 다시 처리
+    else syncStatus.fail('active');
     throw e;
   }
 }
@@ -2188,6 +2211,7 @@ async function onDeleteFromInbox(item) {
 }
 
 function bindTabEvents() {
+  renderSync(); // 헤더가 새로 그려졌으니 저장 표시를 현재 상태로
   const clearAll = () => {
     selectedInbox.clear(); updateInboxBar();
     selectedArchive.clear(); updateArchiveBar();
@@ -2238,7 +2262,7 @@ function renderShell(tab, { meta = '', sort = false } = {}) {
         <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
         <div class="meta">
           ${meta}
-          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
+          ${syncPillHTML()}
         </div>
       </div>
       <div class="header-actions">${headerActions({ sort })}</div>
@@ -2255,13 +2279,77 @@ function renderCurrent() {
   else renderApp();
 }
 
-function renderSync(isError) {
+// ============ 저장 상태 관리자 (F2) ============
+// 네 파일의 저장 진행·실패를 한 곳에서 관리한다. 저장 표시(pill)는 이 상태만 보고 그린다(A7).
+//  - loading: 첫 불러오기 중 → 스켈레톤
+//  - pending[file] > 0: 저장 중
+//  - errors[file]: 실패. 같은 파일 저장이 성공하거나 "다시 시도"가 성공할 때까지 유지(탭을 옮겨도 남음)
+const syncStatus = {
+  loading: true,
+  loadError: false,
+  pending: {},
+  errors: {},
+  retry: {},           // file → 다시 시도 함수(있으면). F3 스토어가 등록한다.
+  start(file) { this.pending[file] = (this.pending[file] || 0) + 1; renderSync(); },
+  end(file) { this.pending[file] = Math.max(0, (this.pending[file] || 0) - 1); renderSync(); },
+  ok(file) { delete this.errors[file]; this.end(file); },
+  fail(file) { this.errors[file] = true; this.end(file); },
+  get saving() { return Object.values(this.pending).some((n) => n > 0); },
+  get hasError() { return this.loadError || Object.keys(this.errors).length > 0; },
+};
+
+async function retryFailedSaves() {
+  if (syncStatus.loadError) { await initialLoad(); return; }
+  const files = Object.keys(syncStatus.errors);
+  const fns = files.map((f) => syncStatus.retry[f]).filter(Boolean);
+  if (fns.length) {
+    await Promise.all(fns.map((fn) => Promise.resolve().then(fn).catch(() => {})));
+  } else {
+    // 다시 보낼 변경이 따로 남아 있지 않으면 저장소 기준으로 새로 불러와 화면을 맞춘다
+    files.forEach((f) => delete syncStatus.errors[f]);
+    await refresh();
+  }
+  renderSync();
+}
+
+function syncPillHTML() {
+  return `<span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>`;
+}
+
+function renderSync() {
   const el = $('#sync-pill');
   if (!el) return;
-  el.classList.remove('saving', 'error');
-  if (state.saving) { el.classList.add('saving'); el.lastElementChild.textContent = '저장 중'; }
-  else if (isError) { el.classList.add('error'); el.lastElementChild.textContent = '저장 실패'; }
-  else el.lastElementChild.textContent = '동기화됨';
+  el.classList.remove('saving', 'error', 'loading');
+  el.onclick = null;
+  el.removeAttribute('role');
+  el.removeAttribute('tabindex');
+  const label = el.lastElementChild;
+  if (syncStatus.hasError) {
+    el.classList.add('error');
+    label.textContent = syncStatus.loadError ? '불러오지 못함 · 다시 시도' : '저장 안 됨 · 다시 시도';
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    el.onclick = retryFailedSaves;
+    el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); retryFailedSaves(); } };
+  } else if (syncStatus.loading) {
+    el.classList.add('loading');
+    label.textContent = '불러오는 중';
+  } else if (syncStatus.saving) {
+    el.classList.add('saving');
+    label.textContent = '저장 중';
+  } else {
+    label.textContent = '동기화됨';
+  }
+}
+
+// 첫 로딩 스켈레톤 — 섹션마다 회색 줄 3개
+function skeletonHTML() {
+  return ['high', 'medium', 'low'].map(() => `
+    <div class="section"><div class="card" style="padding:10px 14px">
+      <div class="skeleton" style="width:72%"></div>
+      <div class="skeleton" style="width:54%"></div>
+      <div class="skeleton" style="width:63%"></div>
+    </div></div>`).join('');
 }
 
 // 헤더 우측 액션(정렬 + 더보기). sort=true인 Task 화면에만 정렬 버튼 노출.
@@ -2382,6 +2470,13 @@ function renderApp() {
   bindTabEvents();
 
   const root = $('#sections');
+  if (syncStatus.loading && !state.sections.length) {
+    root.innerHTML = skeletonHTML();
+    $('#fab').hidden = true;
+    $('#composer').hidden = false;
+    updateComposerPriBtn();
+    return;
+  }
   ['high','medium','low'].forEach((key) => {
     const sec = findSectionByKey(key);
     if (!sec) return;
@@ -3279,7 +3374,25 @@ function init() {
     renderSetup();
   } else {
     renderApp();
-    Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]).then(() => renderApp()).catch(() => {});
+    initialLoad();
+  }
+}
+
+// 첫 불러오기. 실패하면 조용히 삼키지 않고 "불러오지 못함 · 다시 시도"를 남긴다.
+async function initialLoad() {
+  syncStatus.loading = true;
+  syncStatus.loadError = false;
+  renderSync();
+  try {
+    await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
+    syncStatus.loading = false;
+    renderCurrent();
+  } catch (e) {
+    syncStatus.loading = false;
+    if (e.code === 401) { handleUnauthorized(); return; }
+    syncStatus.loadError = true;
+    renderCurrent();
+    notifyError(e, { fallback: '불러오지 못했어요', retry: initialLoad });
   }
 }
 
@@ -3293,20 +3406,26 @@ function runDeferredRender() {
   renderCurrent();
 }
 
+function handleUnauthorized() {
+  localStorage.removeItem('gh_pat');
+  state.token = null;
+  renderSetup();
+  const err = document.querySelector('#setup-err');
+  if (err) err.textContent = '토큰이 만료되었거나 권한이 변경되었습니다. 다시 입력해주세요.';
+}
+
 async function refresh() {
   if (!state.token) return;
   try {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
+    syncStatus.loadError = false;
+    syncStatus.loading = false;
     // 메모를 쓰는 중이거나 시트가 열려 있으면 화면을 다시 그리지 않고, 끝난 뒤에 그린다
     if (isEditingUI()) deferredRender = true;
     else renderCurrent();
   } catch (e) {
     if (e.code === 401) {
-      localStorage.removeItem('gh_pat');
-      state.token = null;
-      renderSetup();
-      const err = document.querySelector('#setup-err');
-      if (err) err.textContent = '토큰이 만료되었거나 권한이 변경되었습니다. 다시 입력해주세요.';
+      handleUnauthorized();
     } else {
       notifyError(e, { fallback: '불러오지 못했어요', retry: refresh });
     }
