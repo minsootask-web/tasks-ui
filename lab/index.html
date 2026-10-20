@@ -1214,6 +1214,9 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
       }
     } catch (e) {
       console.error(e);
+      // 토큰 만료·권한 변경(Q12): 같은 실패를 반복하지 않고 토큰 다시 입력 화면으로.
+      // 저장 안 된 체크(keep)는 남겨 두어, 토큰을 다시 넣으면 다음 저장 때 함께 나간다
+      if (e.code === 401) setTimeout(handleUnauthorized, 0);
       batch.forEach((p) => { if (p.onFail !== 'keep') dropOp(p, e); });
       // 저장 안 된 변경(keep)이 남아 있을 때만 "저장 안 됨 · 다시 시도"를 계속 보인다.
       // 버린 변경(추가·이동 등)은 호출자가 글 복원·토스트로 알린다.
@@ -3569,7 +3572,7 @@ function renderSetup() {
       <div class="actions">
         <button class="btn btn-primary" id="setup-save">저장하고 시작</button>
       </div>
-      <div class="err" id="setup-err"></div>
+      <div class="err" id="setup-err" role="alert">${esc(setupNotice)}</div>
     </div>
   `;
   $('#setup-save').addEventListener('click', onSetupSave);
@@ -3581,6 +3584,7 @@ async function onSetupSave() {
   if (!tok) return;
   const errEl = $('#setup-err');
   errEl.textContent = '';
+  setupNotice = '';
   state.token = tok;
   try {
     await ghLoad();
@@ -4561,6 +4565,8 @@ async function initialLoad() {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
     syncStatus.loading = false;
     renderCurrent();
+    // 토큰을 다시 넣은 경우 등, 남아 있던 저장 안 된 변경(체크 등)을 이어서 저장(Q12)
+    ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush(); });
     runJournal(); // 지난번에 마저 못 끝낸 이동 정리(Q6)
   } catch (e) {
     syncStatus.loading = false;
@@ -4581,12 +4587,12 @@ function runDeferredRender() {
   renderCurrent();
 }
 
+let setupNotice = '';
 function handleUnauthorized() {
   localStorage.removeItem('gh_pat');
   state.token = null;
+  setupNotice = '토큰이 만료됐거나 권한이 바뀌었어요. 다시 입력해 주세요.';
   renderSetup();
-  const err = document.querySelector('#setup-err');
-  if (err) err.textContent = '토큰이 만료됐거나 권한이 바뀌었어요. 다시 입력해 주세요.';
 }
 
 async function refresh() {
