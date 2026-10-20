@@ -278,7 +278,7 @@
   .indent-2 { padding-left: 60px; }
   .indent-3 { padding-left: 84px; }
   .empty {
-    padding: 12px 10px; color: var(--muted); font-size: 13px; font-style: italic;
+    padding: 12px 10px; color: var(--muted); font-size: 13px;
   }
 
 
@@ -1825,7 +1825,7 @@ function renderInbox() {
   app.innerHTML = `
     ${renderShell('inbox')}
     <div class="card" id="inbox-list">
-      ${count === 0 ? '<div class="empty">Inbox가 비어 있어요</div>' : ''}
+      ${count === 0 ? '<div class="empty">Inbox를 다 정리했어요 🌮</div>' : ''}
     </div>
   `;
   bindTabEvents();
@@ -1892,7 +1892,7 @@ function renderArchive() {
   app.innerHTML = `
     ${renderShell('archive')}
     <div class="card" id="archive-list">
-      ${items.length === 0 ? '<div class="empty">보관된 항목이 없습니다</div>' : ''}
+      ${items.length === 0 ? '<div class="empty">보관한 항목이 없어요</div>' : ''}
     </div>
   `;
   bindTabEvents();
@@ -3052,7 +3052,7 @@ function renderApp() {
     if (realItems.length === 0) {
       const e = document.createElement('div');
       e.className = 'empty';
-      e.textContent = '비어 있음';
+      e.textContent = `${PRI[key].icon} 비어 있어요`;
       card.appendChild(e);
     } else {
       // 완료된 상위 할 일(하위 포함)은 섹션 아래 "완료 n개" 접기 행으로 모은다(B3).
