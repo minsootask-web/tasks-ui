@@ -598,6 +598,10 @@
   .bar-btn.danger:hover { background: var(--danger); border-color: var(--danger); color: white; }
   .bar-btn.ghost { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
   .bar-btn.ghost:hover { background: var(--surface-2); color: var(--text); }
+  /* 선택 끝내기 ✕(감사 B6): 44px */
+  .bar-btn.bar-cancel { width: 44px; height: 44px; padding: 0; font-size: 16px; flex-shrink: 0; margin-left: -8px; }
+  /* 선택 중에는 행의 🍅🍋🥝·📥·↺·🗑를 숨긴다 — 선택 바와 같은 동작이 겹치지 않게(감사 B5) */
+  .card.selecting .inbox-actions { display: none; }
 
   /* Drag & drop */
   .drag-handle {
@@ -786,6 +790,7 @@
 
 <!-- Inbox bulk action bar -->
 <div class="inbox-bar" id="inbox-bar">
+  <button class="bar-btn ghost bar-cancel" id="bar-cancel" aria-label="선택 끝내기" title="선택 끝내기">✕</button>
   <span class="inbox-bar-label" id="inbox-bar-label"></span>
   <button class="bar-btn ghost" id="bar-select-all">전체선택</button>
   <button class="bar-btn h" id="bar-high" aria-label="High로 보내기" title="High로 보내기">🍅</button>
@@ -796,6 +801,7 @@
 
 <!-- Archive bulk action bar -->
 <div class="inbox-bar" id="archive-bar">
+  <button class="bar-btn ghost bar-cancel" id="archive-bar-cancel" aria-label="선택 끝내기" title="선택 끝내기">✕</button>
   <span class="inbox-bar-label" id="archive-bar-label"></span>
   <button class="bar-btn ghost" id="archive-bar-select-all">전체선택</button>
   <button class="bar-btn" id="archive-bar-restore">↺ 복구</button>
@@ -2056,6 +2062,7 @@ function updateInboxBar() {
   const n = selectedInbox.size;
   const all = state.inboxItems.length;
   bar.classList.toggle('show', n > 0);
+  $('#inbox-list')?.classList.toggle('selecting', n > 0);
   syncComposerVisibility();
   if (n > 0) {
     $('#inbox-bar-label').textContent = `${n}개 선택`;
@@ -2245,6 +2252,8 @@ function updateArchiveBar() {
   const n = selectedArchive.size;
   const all = state.archiveItems.length;
   bar.classList.toggle('show', n > 0);
+  $('#archive-list')?.classList.toggle('selecting', n > 0);
+  syncComposerVisibility();
   if (n > 0) {
     $('#archive-bar-label').textContent = `${n}개 선택`;
     $('#archive-bar-select-all').textContent = n === all ? '전체해제' : '전체선택';
@@ -4384,6 +4393,9 @@ function init() {
     renderArchive();
   });
   $('#archive-bar-restore')?.addEventListener('click', onBulkRestore);
+  // 선택 끝내기(✕)
+  $('#bar-cancel')?.addEventListener('click', () => { selectedInbox.clear(); renderInbox(); });
+  $('#archive-bar-cancel')?.addEventListener('click', () => { selectedArchive.clear(); renderArchive(); });
   $('#archive-bar-purge')?.addEventListener('click', onBulkPurge);
   // 플로팅 컴포저
   updateComposerPriBtn();
