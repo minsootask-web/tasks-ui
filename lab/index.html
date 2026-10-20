@@ -120,7 +120,9 @@
   .title-row h1.brand { display: inline-flex; align-items: center; gap: 9px; }
   .title-row h1.brand span { font-weight: 900; text-transform: lowercase; }
   .brand-logo { width: 32px; height: 32px; flex-shrink: 0; display: block; }
-  .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title-row { min-width: 0; flex: 1; }
   .icon-btn {
     appearance: none; -webkit-appearance: none;
     background: transparent; border: 1px solid transparent; color: var(--muted);
@@ -132,7 +134,7 @@
   .icon-btn:active { transform: scale(0.96); }
   .icon-btn.sort-active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
-  .header-actions { display: inline-flex; gap: 8px; align-items: center; }
+  .header-actions { display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
   .menu-wrap { position: relative; display: inline-flex; }
   .menu {
     position: absolute; top: 46px; right: 0; z-index: 50;
@@ -444,16 +446,26 @@
   @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
   /* Sync indicator */
+  /* 저장 표시(B8): 헤더 오른쪽 고정 칸. 평소엔 비어 있고(자리만 차지 → 화면이 밀리지 않음),
+     0.6초 넘게 걸리면 작게 "저장 중", 실패하면 해결될 때까지 빨간 알약 */
+  .sync-slot { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 0; }
   .sync-pill {
     display: inline-flex; align-items: center; gap: 6px;
-    font-size: 11px; color: var(--muted);
-    padding: 3px 8px; background: var(--surface-2); border-radius: 999px;
+    font-size: 11px; color: var(--muted); white-space: nowrap;
+    padding: 3px 8px; border-radius: 999px; border: 0; background: transparent; font-family: inherit;
+    opacity: 0; transition: opacity 200ms ease-out; pointer-events: none;
   }
-  .sync-pill .dot { background: var(--low); width: 6px; height: 6px; }
-  .sync-pill.saving .dot { background: var(--med); animation: pulse 1s infinite; }
-  .sync-pill.error .dot { background: var(--danger); }
-  .sync-pill.error { color: var(--danger); cursor: pointer; font-weight: 600; }
-  .sync-pill.loading .dot { background: var(--faint); animation: pulse 1s infinite; }
+  .sync-pill.show { opacity: 1; }
+  .sync-pill .dot { width: 6px; height: 6px; display: none; }
+  .sync-pill.saving .dot { display: inline-block; background: var(--med); animation: pulse 1s infinite; }
+  .sync-pill.error {
+    background: var(--accent-soft); color: var(--accent-strong, #C23328); font-size: 12px; font-weight: 600;
+    cursor: pointer; pointer-events: auto; padding: 5px 10px; position: relative;
+  }
+  .sync-pill.error::before { content: ""; position: absolute; left: 0; right: 0; top: -8px; bottom: -8px; }
+  .sync-pill.error:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sync-pill.offline { background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 600; padding: 5px 10px; }
+  @media (prefers-reduced-motion: reduce) { .sync-pill.saving .dot { animation: none; } }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
   /* Hover-action UX on mobile: tap to reveal */
@@ -2614,12 +2626,9 @@ function renderShell(tab, { meta = '', sort = false } = {}) {
     <header>
       <div class="title-row">
         <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
-        <div class="meta">
-          ${meta}
-          ${syncPillHTML()}
-        </div>
+        ${meta ? `<div class="meta">${meta}</div>` : ''}
       </div>
-      <div class="header-actions">${headerActions({ sort })}</div>
+      <div class="header-actions"><span class="sync-slot">${syncPillHTML()}</span>${headerActions({ sort })}</div>
     </header>
     <div class="tabs">${tabsHtml}</div>`;
 }
@@ -2644,7 +2653,17 @@ const syncStatus = {
   pending: {},
   errors: {},
   retry: {},           // file → 다시 시도 함수(있으면). F3 스토어가 등록한다.
-  start(file) { this.pending[file] = (this.pending[file] || 0) + 1; renderSync(); },
+  savingSince: 0,
+  start(file) {
+    if (!this.saving) {
+      this.savingSince = Date.now();
+      // 0.6초 넘게 걸릴 때만 "저장 중"을 보인다
+      clearTimeout(this.slowTimer);
+      this.slowTimer = setTimeout(renderSync, 620);
+    }
+    this.pending[file] = (this.pending[file] || 0) + 1;
+    renderSync();
+  },
   end(file) { this.pending[file] = Math.max(0, (this.pending[file] || 0) - 1); renderSync(); },
   ok(file) { delete this.errors[file]; this.end(file); },
   fail(file) { this.errors[file] = true; this.end(file); },
@@ -2667,32 +2686,37 @@ async function retryFailedSaves() {
 }
 
 function syncPillHTML() {
-  return `<span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>`;
+  return `<span class="sync-pill" id="sync-pill" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span></span></span>`;
 }
+const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
 function renderSync() {
   const el = $('#sync-pill');
   if (!el) return;
-  el.classList.remove('saving', 'error', 'loading');
+  el.classList.remove('saving', 'error', 'offline', 'show');
   el.onclick = null;
-  el.removeAttribute('role');
+  el.onkeydown = null;
+  el.setAttribute('role', 'status');
   el.removeAttribute('tabindex');
   const label = el.lastElementChild;
-  if (syncStatus.hasError) {
-    el.classList.add('error');
+  const slow = syncStatus.saving && Date.now() - syncStatus.savingSince >= 600;
+  if (isOffline()) {
+    el.classList.add('offline', 'show');
+    label.textContent = '오프라인';
+  } else if (syncStatus.hasError) {
+    el.classList.add('error', 'show');
     label.textContent = syncStatus.loadError ? '불러오지 못함 · 다시 시도' : '저장 안 됨 · 다시 시도';
     el.setAttribute('role', 'button');
     el.tabIndex = 0;
     el.onclick = retryFailedSaves;
     el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); retryFailedSaves(); } };
-  } else if (syncStatus.loading) {
-    el.classList.add('loading');
-    label.textContent = '불러오는 중';
-  } else if (syncStatus.saving) {
-    el.classList.add('saving');
+  } else if (slow) {
+    el.classList.add('saving', 'show');
     label.textContent = '저장 중';
   } else {
-    label.textContent = '동기화됨';
+    // 평소·저장 완료: 비워 둠(200ms 페이드). 첫 로딩은 스켈레톤이 대신한다
+    label.textContent = syncStatus.saving ? '저장 중' : '';
+    if (syncStatus.saving) el.classList.add('saving');
   }
 }
 
@@ -3942,6 +3966,21 @@ function init() {
     if (state.token) refresh();
   });
   window.addEventListener('pagehide', flushOnLeave);
+  // 저장 안 된 변경이 있으면 창을 닫을 때 브라우저 기본 경고(B8)
+  window.addEventListener('beforeunload', (e) => {
+    if (ALL_STORES().some((st) => st.hasPending()) || memoDrafts.some((d) => d.text)) {
+      flushOnLeave();
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+  // 인터넷이 끊기면 "오프라인", 다시 연결되면 자동 저장 후 사라짐
+  window.addEventListener('offline', renderSync);
+  window.addEventListener('online', () => {
+    renderSync();
+    ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush(); });
+    if (syncStatus.hasError) retryFailedSaves();
+  });
 
   // Re-layout memos on resize (column count may change)
   let resizeTimer;
