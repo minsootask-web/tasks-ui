@@ -987,11 +987,21 @@ const highlightMeta = (s) => linkify(s, (t) => t.replace(/\(([~^]?[\d\-/.][^)]*)
 const TOAST_MS = { info: 2500, undo: 5000, error: 6000 };
 // 마지막 동작 1개의 되돌리기(D2): 토스트가 있는 동작(보관·분류·메모 삭제 등)은 토스트가, 토스트가 없는 동작
 // (체크·순서 바꾸기·우선순위·글 고치기·추가)은 setLastUndo가 기록. PC Cmd/Ctrl+Z가 이것을 무르고 그 행을 600ms 깜빡임
+// S12: 기록은 "저장이 성공한 뒤"에만(reserveUndo → 성공하면 그 함수로 기록). 실패하면 기록이 남지 않는다.
+// 기록되는 동작이 시작될 때마다 순번이 올라가 이전 기록을 지운다 → 늦게 끝난 앞 동작이 뒤 동작의 기록을 덮지 않음
 let lastUndo = null;
+let undoSeq = 0;
 function setLastUndo(run, flashKey) {
+  undoSeq++;
   let fired = false;
   lastUndo = { fire: () => { if (fired) return; fired = true; lastUndo = null; run(); if (flashKey) setTimeout(() => flashTaskRows([flashKey]), 0); } };
 }
+function reserveUndo() {
+  const tok = ++undoSeq;
+  lastUndo = null;
+  return (run, flashKey) => { if (tok === undoSeq) { setLastUndo(run, flashKey); undoSeq = tok; } };
+}
+const clearLastUndo = () => { undoSeq++; lastUndo = null; };
 const toastState = { timer: null, remaining: 0, startedAt: 0, action: null, kind: null };
 
 function showToast(msg, { kind = 'info', ms, action = null } = {}) {
@@ -1020,7 +1030,7 @@ function showToast(msg, { kind = 'info', ms, action = null } = {}) {
     t.appendChild(btn);
     toastState.action = { fire, undo: kind === 'undo' };
     // 되돌리기 토스트는 사라진 뒤에도 Cmd/Ctrl+Z로 무를 수 있게 "마지막 동작"으로 기억(D2)
-    if (kind === 'undo') lastUndo = { fire };
+    if (kind === 'undo') { undoSeq++; lastUndo = { fire }; }
   }
   t.classList.add('show');
   toastState.remaining = ms ?? TOAST_MS[kind] ?? TOAST_MS.info;
@@ -1450,10 +1460,13 @@ function ghLoadMemos() { return memosStore.reload(); }
 // 추가 연산이 "결과 모름" 뒤 이미 반영됐는지 판단(R5·B-5): 같은 줄 개수가 보내기 전보다 늘었으면 반영됨
 const countExactLines = (content, line) => (content || '').split('\n').filter((l) => l === line).length;
 const withApplied = (fn, isApplied) => Object.assign(fn, { isApplied });
-const opInboxAppend = (texts) => withApplied((c) => {
+// rec(선택): 넣은 줄의 지문(되돌리기·실패 되돌림이 그 줄만 찾게, S1·S12)
+const opInboxAppend = (texts, rec = null) => withApplied((c) => {
   let out = c || '';
   if (out && !out.endsWith('\n')) out += '\n';
+  const first = out.split('\n').length - 1;
   texts.forEach((t) => { out += `- ${String(t).replace(/\s*[\r\n]+\s*/g, ' ').trim()}\n`; });
+  if (rec) { const ls = out.split('\n'); rec.fps = texts.map((t, k) => lineFp(ls, first + k, INBOX_LOC)); }
   return out;
 }, (now, before) => texts.every((t) => countExactLines(now, `- ${t}`) > countExactLines(before, `- ${t}`)));
 const opInboxRemove = (items) => (c) => removeInboxLines(items, c, { strict: true });
@@ -1556,7 +1569,7 @@ const JOURNAL_OPS = {
     count: (item) => countAllActive(item.raw) },
   activeDeleteBlocks: { store: () => activeStore, op: (items) => opDeleteBlocks(items),
     count: (items) => [...new Set(items.map((i) => normLine(i.raw)))].reduce((n, r) => n + countAllActive(r), 0) },
-  activeRemoveAppended: { store: () => activeStore, op: (key, texts) => opActiveRemoveAppended(key, texts),
+  activeRemoveAppended: { store: () => activeStore, op: (key, texts, fps) => opActiveRemoveAppended(key, texts, fps),
     count: (key, texts) => [...new Set(texts)].reduce((n, t) => n + countActiveLine(key, `- [ ] ${t}`), 0) },
 };
 // 도착지 확인(verify) 종류
@@ -1667,50 +1680,28 @@ const sectionRange = (lines, key) => {
   for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
   return { header, end };
 };
-// 방금 섹션 끝에 넣은 줄(들)을 그 섹션 안에서 뒤에서부터 찾아 블록째 지운다.
-// 저장되는 사이 사용자가 체크하거나 하위를 붙였어도 찾는다(체크 상태 무시, 하위 포함)(Q7)
-const opActiveRemoveAppended = (key, texts) => (c) => {
+// 넣은 그 줄들(기록한 지문 fps)을 찾아 지운다 — 추가·복구의 되돌리기와 실패 되돌림(S1·S12).
+// 글로 찾지 않으므로 같은 글의 원래 항목을 지우지 않는다. 저장되는 사이 체크하거나 하위를 붙였어도 찾음(체크 무시, 하위 포함).
+// 하나라도 정확히 못 찾으면 gone(Q7)
+const removeByFps = (fps, opts = {}) => (c) => {
+  if (!fps || !fps.length) throw undoGone();
   const lines = c.split('\n');
-  texts.forEach((t) => {
-    const rg = sectionRange(lines, key);
-    const want = normLine(`- [ ] ${t}`);
-    let found = -1;
-    if (rg) for (let i = rg.end - 1; i > rg.header; i--) { if (normLine(lines[i]) === want) { found = i; break; } }
-    if (found === -1) throw undoGone();
-    const r = extractBlock(lines, found);
-    lines.splice(r.start, r.end - r.start + 1);
+  const claimed = new Set();
+  const ranges = fps.map((fp) => {
+    let idx;
+    try { idx = locate(lines, fp, { ...opts, exclude: claimed }); } catch (e) { throw undoGone(); }
+    const end = blockEndAt(lines, idx, opts.block !== false);
+    for (let i = idx; i <= end; i++) claimed.add(i);
+    return { start: idx, end };
   });
+  ranges.sort((a, b) => b.start - a.start).forEach((r) => lines.splice(r.start, r.end - r.start + 1));
   return lines.join('\n');
 };
-// 복구해 넣은 블록을 첫 줄 글로 찾아(섹션 안 뒤에서부터, 체크 상태·들여쓰기 무시) 지운다
-const opActiveRemoveRestored = (entries) => (c) => {
-  const lines = c.split('\n');
-  entries.forEach((entry) => {
-    const first = (entry.block || [])[0];
-    if (!first) return;
-    const want = normLine(first.trim());
-    const rg = sectionRange(lines, entry.priority);
-    let found = -1;
-    if (rg) for (let i = rg.end - 1; i > rg.header; i--) { if (normLine(lines[i].trim()) === want) { found = i; break; } }
-    if (found === -1) throw undoGone();
-    const r = extractBlock(lines, found);
-    lines.splice(r.start, r.end - r.start + 1);
-  });
-  return lines.join('\n');
-};
-// 되돌리기용: inbox 끝에 넣은 줄(들)을 뒤에서부터 지운다
-const opInboxRemoveLast = (texts) => (c) => {
-  const lines = c.split('\n');
-  texts.forEach((t) => {
-    let found = -1;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (/^-\s+\S/.test(lines[i]) && lines[i].replace(/^-\s+/, '').trim() === t) { found = i; break; }
-    }
-    if (found === -1) throw undoGone();
-    lines.splice(found, 1);
-  });
-  return lines.join('\n');
-};
+// Task: 넣은 블록들 지우기. rec는 {fps}를 담은 기록(연산이 채움) 또는 지문 목록
+const opActiveRemoveRec = (rec) => (c) => removeByFps(Array.isArray(rec) ? rec : rec && rec.fps)(c);
+const opInboxRemoveRec = (rec) => (c) => removeByFps(Array.isArray(rec) ? rec : rec && rec.fps, INBOX_LOC)(c);
+// 저널용(직렬화되는 인자): 넣은 줄의 지문 목록으로 지우기
+const opActiveRemoveAppended = (key, texts, fps) => opActiveRemoveRec(fps || []);
 
 // 지운 메모를 원래 col/order 그대로 되살리기(메모 삭제 되돌리기 전용). 새 메모 추가는 opMemoAddTop(봇과 같은 규칙)
 const opMemoRestore = (memo) => (list) => (list.some((x) => x.id === memo.id) ? list : [memo, ...list]);
@@ -1735,8 +1726,24 @@ const opMemoMove = (m, targetCol, targetIdx, cols, { aboveId, belowId } = {}) =>
 // 렌더 시점 item(raw·lineIndex)으로 현재 줄을 다시 찾는다.
 const lineOf = (item, content) => resolveLineIndex(item, content.split('\n'));
 const opToggle = (item, checked) => (c) => toggleAt(lineOf(item, c), checked, c);
-const opAppend = (key, text) => withApplied((c) => appendToSection(key, text, c),
-  (now, before) => countExactLines(now, `- [ ] ${text}`) > countExactLines(before, `- [ ] ${text}`));
+const opAppend = (key, text, rec = null) => withApplied((c) => {
+  const info = {};
+  const out = appendToSection(key, text, c, info);
+  if (rec) rec.fps = [lineFp(out.split('\n'), info.at)];
+  return out;
+}, (now, before) => countExactLines(now, `- [ ] ${text}`) > countExactLines(before, `- [ ] ${text}`));
+// 여러 줄을 한 섹션 끝에(Inbox → Task 분류)
+const opAppendMany = (key, texts, rec = null) => (c) => {
+  let out = c;
+  const ats = [];
+  texts.forEach((t) => {
+    const info = {};
+    out = appendToSection(key, t, out, info);
+    ats.push(info.at);
+  });
+  if (rec) { const ls = out.split('\n'); rec.fps = ats.map((a) => lineFp(ls, a)); }
+  return out;
+};
 // ---- 되돌리기 기록(S1·S13) ----
 // 되돌리기는 글로 다시 찾지 않는다. 연산이 실행될 때 "그 연산이 만든 줄"의 지문(locate용)과
 // 원래 자리(바로 위 기준 줄의 지문)를 rec에 남기고, 되돌릴 때 그 지문으로만 찾는다(못 고르면 gone).
@@ -1809,11 +1816,24 @@ const opUndoMove = (rec, { backText = null } = {}) => (c) => {
   return lines.join('\n');
 };
 // 보관함 항목들을 되돌려 넣기
-const opRestore = (entries) => (c) => {
+// rec(선택): 넣은 블록들의 지문(실패 되돌림이 그 블록만 지우게)
+const opRestore = (entries, rec = null) => (c) => {
   const lines = c.split('\n');
-  entries.forEach((entry) => restoreBlockInto(lines, entry));
+  const ats = [];
+  entries.forEach((entry) => {
+    const n = (entry.block || []).length;
+    const at = restoreBlockInto(lines, entry);
+    if (at < 0) return;
+    for (let k = 0; k < ats.length; k++) if (ats[k] >= at) ats[k] += n;
+    ats.push(at);
+  });
+  if (rec) rec.fps = recFps(lines, ats);
   return lines.join('\n');
 };
+// 앞 블록을 넣으면 뒤 블록 번호가 밀리므로, 넣은 번호를 그때그때 기록한 뒤 마지막 내용에서 다시 계산
+function recFps(lines, ats) {
+  return ats.filter((a) => a >= 0).map((a) => lineFp(lines, a));
+}
 // 여러 블록을 원문 줄로 찾아 한꺼번에 지우기(뒤에서부터)
 // 여러 대상을 한 번에 찾는다(Q1): 이미 잡힌 블록의 줄은 다음 대상 후보에서 빼서, 같은 글이 둘이어도
 // 서로 다른 줄로 배정된다. 범위가 겹치면 하나로 합친다.
@@ -2128,10 +2148,11 @@ function toggleAt(lineIndex, checked, content = state.content) {
   return lines.join('\n');
 }
 
-function appendToSection(key, text, content = state.content) {
+function appendToSection(key, text, content = state.content, info = null) {
   text = String(text).replace(/\s*[\r\n]+\s*/g, ' ').trim(); // 한 줄 보장(R4 방어 — md 형식이 깨지지 않게)
   const lines = content.split('\n');
-  insertIntoSection(lines, key, [`- [ ] ${text}`]);
+  const at = insertIntoSection(lines, key, [`- [ ] ${text}`]);
+  if (info) info.at = at;
   return lines.join('\n');
 }
 
@@ -2210,9 +2231,10 @@ function childInsertIndex(lines, parentIdx) {
 // 보관함 항목을 active.md 줄 배열에 되돌린다.
 // 하위 할 일(entry.parent 있음)은 같은 섹션에 부모가 있으면 그 부모의 마지막 하위로,
 // 없으면 상위 항목으로 섹션 끝에 넣는다(A6). 들여쓴 채 섹션 끝에 넣으면 엉뚱한 부모에 붙기 때문.
+// 반환: 넣은 블록 첫 줄 번호(없으면 -1)
 function restoreBlockInto(lines, entry) {
   const block = entry.block || [];
-  if (!block.length) return;
+  if (!block.length) return -1;
   if (entry.parent) {
     const headerIdx = ensureSectionHeader(lines, entry.priority);
     for (let i = headerIdx + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
@@ -2221,11 +2243,11 @@ function restoreBlockInto(lines, entry) {
         const at = childInsertIndex(lines, i);
         const indented = adjustBlockIndent(block, getLineIndent(lines[i]) + 1 - getLineIndent(block[0]));
         lines.splice(at, 0, ...indented);
-        return;
+        return at;
       }
     }
   }
-  insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));
+  return insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));
 }
 
 // info(선택): { at } = 옮긴 블록 첫 줄의 새 번호, { from } = 블록을 뺀 직후 줄 배열·원래 시작 번호(되돌리기 기록용)
@@ -2544,12 +2566,14 @@ function restoreAdds(entries) {
   const adds = [];
   const activeEntries = entries.filter((e) => e.source === 'active');
   if (activeEntries.length) {
-    adds.push({ store: activeStore, op: opRestore(activeEntries), undo: opActiveRemoveRestored(activeEntries),
+    const rec = {};
+    adds.push({ store: activeStore, op: opRestore(activeEntries, rec), undo: opActiveRemoveRec(rec),
       msg: `restore ${activeEntries.length} from archive` });
   }
   const inboxTexts = entries.filter((e) => e.source === 'inbox').map((e) => e.text);
   if (inboxTexts.length) {
-    adds.push({ store: inboxStore, op: opInboxAppend(inboxTexts), undo: opInboxRemoveLast(inboxTexts),
+    const rec = {};
+    adds.push({ store: inboxStore, op: opInboxAppend(inboxTexts, rec), undo: opInboxRemoveRec(rec),
       msg: `restore ${inboxTexts.length} from archive` });
   }
   return adds;
@@ -2600,8 +2624,9 @@ function archiveActiveTask(item) {
     remove: removeStep('activeDeleteBlock', [{ ...item, lineIndex, raw: block[0] }], `archive (from active): ${item.text}`,
       [{ k: 'archiveHas', ids: [entry.id] }]),
   });
-  // 되돌리기용 원래 자리: 블록 바로 위 줄(원문)과 원래 들여쓰기 블록
-  return { work, entry, pos: { block, after: { lineIndex: start - 1, raw: lines[start - 1] } } };
+  // 되돌리기용 원래 자리: 블록을 뺀 내용에서 바로 위 기준 줄의 지문과 원래 들여쓰기 블록
+  const mid = [...lines.slice(0, start), ...lines.slice(end + 1)];
+  return { work, entry, pos: { block, anchor: anchorAt(mid, start) } };
 }
 
 
@@ -2911,6 +2936,7 @@ async function onMemoDragEnd(e) {
       .sort((a, b) => memoOrder(a) - memoOrder(b));
     const belowId = colList[targetIdx]?.id || null;
     const aboveId = colList[targetIdx - 1]?.id || null;
+    clearLastUndo();
     const pr = memosStore.commit(opMemoMove(m, targetCol, targetIdx, cols, { aboveId, belowId }), { msg: 'memo: move' });
     drawMemos();
     await pr;
@@ -3022,6 +3048,7 @@ function startEditMemo(div, m) {
 
 // 메모 글 저장. 실패해도 화면의 글을 유지(저장 안 됨 · 다시 시도는 헤더 알약)
 async function saveMemoText(id, text) {
+  clearLastUndo(); // 마지막 동작이 바뀜 → 그 전 동작은 Cmd/Ctrl+Z로 무르지 않음
   try {
     await memosStore.apply(opMemoEdit(id, text), { msg: 'memo: edit', onFail: 'keep' });
   } catch (e) {
@@ -3075,7 +3102,7 @@ async function onMoveToActive(item, priority) {
   const work = moveInboxToActive([item], priority);
   selectedInbox.clear();
   vanishRows(rows, renderInbox);
-  offerUndo(`${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive([item], priority));
+  offerUndo(`${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive([item], priority, work.rec));
   try {
     await work;
   } catch (e) {
@@ -3092,7 +3119,7 @@ async function onBulkMove(priority) {
   const work = moveInboxToActive(items, priority);
   selectedInbox.clear();
   vanishRows(rows, renderInbox);
-  offerUndo(`${items.length}개를 ${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive(items, priority));
+  offerUndo(`${items.length}개를 ${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive(items, priority, work.rec));
   try {
     await work;
   } catch (e) {
@@ -3106,15 +3133,18 @@ async function onBulkMove(priority) {
 // 항목은 Inbox 한 곳에만 남는다(A4)
 function moveInboxToActive(items, priority) {
   const texts = items.map((i) => i.text);
-  return runTransfer({
+  const rec = {};
+  const work = runTransfer({
     adds: [{
       store: activeStore,
-      op: (c) => texts.reduce((acc, t) => appendToSection(priority, t, acc), c),
-      undo: opActiveRemoveAppended(priority, texts),
+      op: opAppendMany(priority, texts, rec),
+      undo: opActiveRemoveRec(rec),
       msg: items.length === 1 ? `inbox → active: ${texts[0]}` : `inbox → active (${items.length}개)`,
     }],
     remove: removeStep('inboxRemove', [items], `remove ${items.length} from inbox`, [{ k: 'activeHas', key: priority, texts }]),
   });
+  work.rec = rec; // 분류 되돌리기가 Task에 넣은 그 줄만 지우게
+  return work;
 }
 
 // ---- 행이 사라지는 모션 + 그 자리 탭 무시(C1) ----
@@ -3221,31 +3251,38 @@ function archiveInboxItems(items) {
 // 보관·분류·메모 삭제는 확인창 없이 바로 저장하고, 되돌리기는 "반대 연산"을 다시 저장한다
 // (지연 저장이 아니라서 그 사이 앱을 닫아도 유실이 없다). 확인창은 영구 삭제·토큰 재입력만.
 
-// Inbox 항목을 원래 줄 위치 근처로 되돌려 넣기(lineIdx 순서대로)
-const opInboxInsert = (items) => (c) => {
+// Inbox 항목을 원래 줄 위치 근처로 되돌려 넣기(lineIdx 순서대로). rec: 넣은 줄의 지문
+const opInboxInsert = (items, rec = null) => (c) => {
   const lines = (c || '').split('\n');
+  const ats = [];
   [...items].sort((a, b) => a.lineIdx - b.lineIdx).forEach((it) => {
     const at = Math.max(0, Math.min(it.lineIdx, lines.length));
     lines.splice(at, 0, `- ${it.text}`);
+    for (let k = 0; k < ats.length; k++) if (ats[k] >= at) ats[k]++;
+    ats.push(at);
   });
   let out = lines.join('\n');
   if (!out.endsWith('\n')) out += '\n';
+  if (rec) { const ls = out.split('\n'); rec.fps = ats.map((a) => lineFp(ls, a, INBOX_LOC)); }
   return out;
 };
 
 // Inbox → Task 분류 되돌리기: Inbox 원래 자리에 다시 넣고 Task에서 뺀다
-function undoMoveToActive(items, priority) {
+function undoMoveToActive(items, priority, moved) {
   const texts = items.map((i) => i.text);
+  const rec = {};
   return runTransfer({
-    adds: [{ store: inboxStore, op: opInboxInsert(items), undo: opInboxRemoveLast(texts), msg: `undo inbox → active (${items.length})` }],
-    remove: removeStep('activeRemoveAppended', [priority, texts], `undo inbox → active (${items.length})`, [{ k: 'inboxHas', texts }]),
+    adds: [{ store: inboxStore, op: opInboxInsert(items, rec), undo: opInboxRemoveRec(rec), msg: `undo inbox → active (${items.length})` }],
+    // Task에서는 분류할 때 넣은 그 줄(지문)만 지운다 — 같은 글의 원래 항목은 건드리지 않음
+    remove: removeStep('activeRemoveAppended', [priority, texts, (moved && moved.fps) || []], `undo inbox → active (${items.length})`, [{ k: 'inboxHas', texts }]),
   });
 }
 
 // Inbox 보관 되돌리기: Inbox 원래 자리에 다시 넣고 보관함에서 뺀다
 function undoArchiveInbox(items, entries) {
+  const rec = {};
   return runTransfer({
-    adds: [{ store: inboxStore, op: opInboxInsert(items), undo: opInboxRemoveLast(items.map((i) => i.text)), msg: `undo archive (${items.length})` }],
+    adds: [{ store: inboxStore, op: opInboxInsert(items, rec), undo: opInboxRemoveRec(rec), msg: `undo archive (${items.length})` }],
     remove: removeStep('archiveRemove', [entries.map((e) => e.id)], `undo archive (${items.length})`, [{ k: 'inboxHas', texts: items.map((i) => i.text) }]),
   });
 }
@@ -3523,7 +3560,8 @@ async function onBulkArchiveDone() {
     const positions = [];
     const entries = targets.map((t) => {
       const { start, end } = extractBlock(lines, t.lineIndex);
-      positions.push({ start, block: lines.slice(start, end + 1), after: { lineIndex: start - 1, raw: lines[start - 1] } });
+      const mid = [...lines.slice(0, start), ...lines.slice(end + 1)];
+      positions.push({ start, block: lines.slice(start, end + 1), anchor: anchorAt(mid, start) });
       return {
         id: genArchiveId(),
         deletedAt: new Date().toISOString(),
@@ -3547,31 +3585,31 @@ async function onBulkArchiveDone() {
   } catch (e) { renderApp(); notifyTransferError(e, onBulkArchiveDone); }
 }
 
-// Task 보관 되돌리기: 원래 줄 바로 아래(같은 들여쓰기)로 다시 넣는다. 위 줄을 못 찾으면 일반 복구 규칙
-const opActiveReinsert = (entry, pos) => (c) => {
+// Task 보관 되돌리기: 원래 기준 줄(지문) 바로 아래로 다시 넣는다. 기준 줄을 정확히 못 찾으면 일반 복구 규칙(섹션 끝·부모 아래)
+// ats(선택): 넣은 블록 첫 줄 번호를 모은다(실패 되돌림 기록용)
+const opActiveReinsert = (entry, pos, ats = null) => (c) => {
   const lines = c.split('\n');
   let at = -1;
-  if (pos.after && pos.after.raw != null && !/^##\s/.test(pos.after.raw) && pos.after.raw.trim() !== '') {
-    try { at = resolveLineIndex(pos.after, lines) + 1; } catch (e) { at = -1; }
-  } else if (pos.after && pos.after.raw != null && /^##\s/.test(pos.after.raw)) {
-    at = lines.findIndex((l) => l === pos.after.raw) + 1 || -1;
-  }
-  if (at > 0) {
-    // 위 줄 = 보관 직전 블록 바로 앞 줄이므로, 그 다음이 정확히 원래 자리
-    lines.splice(at, 0, ...pos.block);
-    return lines.join('\n');
-  }
-  restoreBlockInto(lines, entry);
+  try { at = anchorIndex(lines, pos.anchor); } catch (e) { at = -1; }
+  if (at >= 0) lines.splice(at, 0, ...pos.block);
+  else at = restoreBlockInto(lines, entry);
+  if (ats) { for (let k = 0; k < ats.length; k++) if (ats[k] >= at) ats[k] += pos.block.length; ats.push(at); }
   return lines.join('\n');
 };
 async function undoBulkArchive(entries, positions) {
   const order = entries.map((e, i) => ({ e, p: positions[i] })).sort((a, b) => a.p.start - b.p.start);
+  const rec = {};
   try {
     await runTransfer({
       adds: [{
         store: activeStore,
-        op: (c) => order.reduce((acc, { e, p }) => opActiveReinsert(e, p)(acc), c),
-        undo: opActiveRemoveRestored(entries),
+        op: (c) => {
+          const ats = [];
+          const out = order.reduce((acc, { e, p }) => opActiveReinsert(e, p, ats)(acc), c);
+          rec.fps = recFps(out.split('\n'), ats);
+          return out;
+        },
+        undo: opActiveRemoveRec(rec),
         msg: `undo archive: restore ${entries.length}`,
       }],
       remove: removeStep('archiveRemove', [entries.map((e) => e.id)], `undo archive: ${entries.length}`, restoreVerify(entries)),
@@ -3581,8 +3619,10 @@ async function undoBulkArchive(entries, positions) {
 }
 
 function undoArchiveTask(entry, pos) {
+  const rec = {};
+  const op = (c) => { const ats = []; const out = opActiveReinsert(entry, pos, ats)(c); rec.fps = recFps(out.split('\n'), ats); return out; };
   return runTransfer({
-    adds: [{ store: activeStore, op: opActiveReinsert(entry, pos), undo: opActiveRemoveRestored([entry]), msg: 'undo archive' }],
+    adds: [{ store: activeStore, op, undo: opActiveRemoveRec(rec), msg: 'undo archive' }],
     remove: removeStep('archiveRemove', [[entry.id]], 'undo archive', restoreVerify([entry])),
   });
 }
@@ -4284,17 +4324,19 @@ function onDragEnd(e) {
   try {
     if (opMove(srcItem || ref(srcLine), t)(state.content) === state.content) { renderApp(); return; }
   } catch (e) { /* 아래 safeMutate가 알림 */ }
-  // 되돌리기(D2·S1): 옮긴 블록의 새 자리와 원래 기준 줄을 연산이 rec에 기록
+  // 되돌리기(D2·S1): 옮긴 블록의 새 자리와 원래 기준 줄을 연산이 rec에 기록. 기록은 저장 성공 뒤(S12)
   const rec = {};
-  if (srcItem) {
-    setLastUndo(() => { safeMutate(opUndoMove(rec), 'undo move', null, { failMsg: '되돌리지 못했어요' }); }, srcItem.text);
-  }
-  return safeMutate(
+  const record = reserveUndo();
+  const pr = safeMutate(
     opMove(srcItem || ref(srcLine), t, rec),
     `move: ${SECTION_KEYS[target.sectionKey]}`,
     null,
     { flash: srcItem ? srcItem.text : null, failMsg: '옮기지 못했어요' }
   );
+  pr.then((ok) => {
+    if (ok && srcItem) record(() => { safeMutate(opUndoMove(rec), 'undo move', null, { failMsg: '되돌리지 못했어요' }); }, srcItem.text);
+  });
+  return pr;
 }
 
 // ============ Sheet (add/edit) ============
@@ -4361,6 +4403,7 @@ function addSubFromSheet() {
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedSet])); } catch (e) {}
   inp.value = '';
   $('#sheet-cancel').textContent = '닫기';
+  clearLastUndo();
   const pr = activeStore.apply(opAddChild(parent, text), { msg: `add sub: ${text}` });
   renderApp();
   renderSubList(parent);
@@ -4520,18 +4563,19 @@ async function runSheetSave(text, pri) {
   // 되돌리기(D2·S1·S13): 연산이 고친·옮긴 줄의 지문과 원래 자리를 rec에 기록
   const oldText = editingItem.text;
   const rec = {};
+  const record = reserveUndo();
   if (curKey !== pri) {
     // 글 수정 + 섹션 이동을 한 번에 저장. 실패해도 로컬 상태를 바꿔 두지 않는다.
     const ok = await safeMutate(opEditMove(editingItem, text, pri, rec), `edit+move: ${text}`, '수정됨', quiet);
     if (ok) {
       const back = text !== oldText ? oldText : null;
-      setLastUndo(() => { safeMutate(opUndoMove(rec, { backText: back }), 'undo edit+move', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+      record(() => { safeMutate(opUndoMove(rec, { backText: back }), 'undo edit+move', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
     }
     return ok;
   }
   const ok = await onEdit(editingItem, text, quiet, rec);
   if (ok && text !== oldText) {
-    setLastUndo(() => { safeMutate(opEditBack(rec, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+    record(() => { safeMutate(opEditBack(rec, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
   }
   return ok;
 }
@@ -4677,8 +4721,16 @@ function reportComposerFailure(job, e) {
   }, 0);
 }
 
+// 되돌리기(Cmd/Ctrl+Z) 공용: 다른 파일 연산 하나를 저장하고 다시 그림
+function runUndoOp(store, op, msg) {
+  store.apply(op, { msg }).then(() => renderCurrent(), (e) => { renderCurrent(); notifyError(e, { fallback: '되돌리지 못했어요' }); });
+  renderCurrent();
+}
 function addInboxFromComposer(job) {
-  const pr = inboxStore.apply(opInboxAppend([job.text]), { msg: `inbox: add ${job.text}` });
+  const rec = {};
+  const record = reserveUndo(); // Inbox 추가도 "마지막 동작"(S12)
+  const pr = inboxStore.apply(opInboxAppend([job.text], rec), { msg: `inbox: add ${job.text}` });
+  pr.then(() => record(() => runUndoOp(inboxStore, opInboxRemoveRec(rec), 'undo inbox add')), () => {});
   if (currentTab === 'inbox') {
     renderInbox();
     revealNewRow([...document.querySelectorAll('#inbox-list .inbox-item')]
@@ -4710,7 +4762,9 @@ function addMemoFromComposer(job) {
     col: 0,
     order: 0,
   };
+  const record = reserveUndo(); // 메모 추가도 "마지막 동작"(S12)
   const pr = memosStore.apply(opMemoAddTop(memo), { msg: 'memo: add' });
+  pr.then(() => record(() => runUndoOp(memosStore, opMemoDelete(memo.id), 'undo memo add')), () => {});
   if (currentTab === 'memo') {
     drawMemos();
     document.querySelector(`.memo[data-id="${memo.id}"]`)?.classList.add('fade-in');
@@ -4721,8 +4775,11 @@ function addMemoFromComposer(job) {
 // 즉시 반영(B9): 행을 바로 그리고 저장은 뒤에서. 실패하면 행을 거두고 글을 입력창으로(A1)
 const composerFailed = { jobs: [], err: null, timer: null };
 function addFromComposer(job) {
-  const pr = activeStore.apply(opAppend(job.pri, job.text), { msg: `add: ${job.text}` });
-  setLastUndo(() => { safeMutate(opActiveRemoveAppended(job.pri, [job.text]), 'undo add', null, { failMsg: '되돌리지 못했어요' }); }, null);
+  const rec = {};
+  const record = reserveUndo();
+  const pr = activeStore.apply(opAppend(job.pri, job.text, rec), { msg: `add: ${job.text}` });
+  // 되돌리기는 저장이 성공한 뒤에만, 넣은 그 줄(지문)만 지운다(S12 — 실패한 추가로 기존 같은 글 항목이 지워지던 문제)
+  pr.then(() => record(() => { safeMutate(opActiveRemoveRec(rec), 'undo add', null, { failMsg: '되돌리지 못했어요' }); }, null), () => {});
   renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
   const wantRaw = `- [ ] ${job.text}`;
   revealNewRow([...document.querySelectorAll(`#sections .pri-${job.pri === 'medium' ? 'med' : job.pri} .task`)]

@@ -83,6 +83,8 @@ const NAMES = [
   'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
   'childInsertIndex', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
+  'countExactLines', 'withApplied', 'opAppend', 'opAppendMany', 'removeByFps', 'opActiveRemoveRec', 'opInboxRemoveRec',
+  'opInboxAppend', 'opInboxInsert', 'recFps', 'opRestore', 'opActiveReinsert',
   'undoGone', 'anchorAt', 'anchorIndex', 'recordMove', 'opEdit', 'opEditBack', 'opEditMove', 'opUndoMove',
   'parseInbox', 'inboxTarget', 'resolveInboxLine', 'removeInboxLines',
   'memoCol', 'memoOrder', 'memosAfterMove',
@@ -258,6 +260,39 @@ test('S13: "기타"를 "운동"으로 고친 뒤 되돌리기 — High "운동"�
   eq(T.opEditBack(rec, '기타')(e1), c);
   // 고친 줄이 그새 사라졌으면 다른 같은 글 줄을 고치지 않고 gone
   throwsGone(() => T.opEditBack(rec, '기타')(md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '')));
+});
+
+test('S12: 추가 되돌리기는 넣은 그 줄만 — 같은 섹션의 원래 "우유"(하위 포함)는 그대로', () => {
+  const c = md('## 🔥 High', '- [ ] 우유', '  - [ ] 저지방', '- [ ] 빵', '', '## 🟡 Medium', '');
+  const rec = {};
+  const added = T.opAppend('high', '우유', rec)(c);
+  eq(sectionLines(added, 'high'), ['- [ ] 우유', '  - [ ] 저지방', '- [ ] 빵', '- [ ] 우유']);
+  eq(T.opActiveRemoveRec(rec)(added), c);
+  // 추가가 저장되지 않아(실패) 넣은 줄이 없으면 아무것도 지우지 않고 gone
+  throwsGone(() => T.opActiveRemoveRec(rec)(c));
+});
+
+test('S1·S12: Inbox→Task 분류 되돌리기·실패 되돌림 — Task에 원래 있던 같은 글은 남김', () => {
+  const c = md('## 🔥 High', '- [ ] 보고서', '- [ ] 메일', '', '## 🟡 Medium', '');
+  const rec = {};
+  const moved = T.opAppendMany('high', ['보고서', '메일'], rec)(c);
+  eq(T.opActiveRemoveRec(rec)(moved), c);
+  const ib = md('# Inbox', '', '- 보고서', '- 빵', '');
+  const r2 = {};
+  const back = T.opInboxInsert([{ text: '보고서', lineIdx: 4 }], r2)(ib);
+  eq(T.parseInbox(back).map((i) => i.text), ['보고서', '빵', '보고서']);
+  eq(T.opInboxRemoveRec(r2)(back), ib);
+});
+
+test('보관 되돌리기: 원래 기준 줄 아래로, 기준 줄이 애매하면 섹션 끝(일반 복구 규칙)', () => {
+  const c = md('## 🔥 High', '- [ ] a', '- [x] 끝냄', '- [ ] b', '', '## 🟡 Medium', '');
+  const lines = c.split('\n');
+  const mid = [...lines.slice(0, 2), ...lines.slice(3)];
+  const pos = { block: ['- [x] 끝냄'], anchor: T.anchorAt(mid, 2) };
+  const entry = { priority: 'high', block: ['- [x] 끝냄'] };
+  eq(T.opActiveReinsert(entry, pos)(mid.join('\n')), c);
+  const dup = md('## 🔥 High', '- [ ] a', '- [ ] a', '- [ ] b', '', '## 🟡 Medium', '');
+  eq(sectionLines(T.opActiveReinsert(entry, pos)(dup), 'high'), ['- [ ] a', '- [ ] a', '- [ ] b', '- [x] 끝냄']);
 });
 
 // ---------- 핵심 연산 ----------
