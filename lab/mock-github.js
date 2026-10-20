@@ -93,6 +93,31 @@
     });
   }
 
+  // 실패 주입 규칙.
+  //   __takoMockFail = true                         → 모든 PUT 500 (기존 동작)
+  //   __takoMockFail = { file, method, times, status, offline }
+  //   __takoMockFail = [ 규칙, 규칙 … ]               → 첫 번째로 맞는 규칙 적용
+  //   file 생략 = 모든 파일, method 생략 = 'PUT', times 생략 = 무제한(숫자면 그 횟수만 실패 후 해제)
+  //   offline: true 이면 응답 대신 네트워크 오류(TypeError)
+  function matchFailRule(file, method) {
+    var f = window.__takoMockFail;
+    if (!f) return null;
+    if (f === true) return method === 'PUT' ? { status: 500 } : null;
+    var rules = Array.isArray(f) ? f : [f];
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i];
+      if (!r) continue;
+      if (r.file && r.file !== file) continue;
+      if ((r.method || 'PUT').toUpperCase() !== method && r.method !== '*') continue;
+      if (typeof r.times === 'number') {
+        if (r.times <= 0) continue;
+        r.times--;
+      }
+      return r;
+    }
+    return null;
+  }
+
   var realFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : input.url;
@@ -103,6 +128,14 @@
     }
     var file = decodeURIComponent(m[1]);
     var method = (init && init.method || 'GET').toUpperCase();
+    window.__takoMockLog.push({ t: Date.now(), method: method, file: file });
+    var rule = matchFailRule(file, method);
+    if (rule) {
+      if (rule.offline) {
+        return new Promise(function (res, rej) { setTimeout(function () { rej(new TypeError('Failed to fetch')); }, LATENCY); });
+      }
+      return respond(rule.status || 500, { message: 'mock: forced failure' });
+    }
     var cur = read(file);
     if (method === 'GET') {
       if (cur == null) return respond(404, { message: 'Not Found' });
@@ -110,7 +143,6 @@
     }
     if (method === 'PUT') {
       var body = JSON.parse(init.body || '{}');
-      if (window.__takoMockFail) return respond(500, { message: 'mock: forced failure' });
       if (cur != null && body.sha !== sha(cur)) return respond(409, { message: 'sha mismatch' });
       var next = base64ToUtf8(body.content);
       write(file, next);
@@ -122,7 +154,23 @@
   // 실험실은 토큰 없이 바로 열린다(실제 토큰은 쓰지도 보내지도 않는다).
   try { if (!localStorage.getItem('gh_pat')) localStorage.setItem('gh_pat', 'lab-mock-token'); } catch (e) {}
 
-  // 콘솔·QA용 도우미: __takoMockReset() 으로 샘플 데이터 초기화, __takoMockFail = true 로 저장 실패 재현
+  // 콘솔·QA용 도우미: __takoMockReset() 샘플 데이터 초기화 · __takoMockFail 실패 주입(위 규칙)
+  // · __takoMockExternalWrite 외부 작성자 흉내 · __takoMockLog/__takoMockPuts 요청 기록 · __takoMockRead 저장소 내용
+  // 요청 기록 — 체크 연타가 PUT 1번으로 묶이는지 등 확인용. __takoMockLog.length = 0 으로 비움
+  window.__takoMockLog = [];
+  window.__takoMockPuts = function (file) {
+    return window.__takoMockLog.filter(function (r) { return r.method === 'PUT' && (!file || r.file === file); }).length;
+  };
+  // 다른 작성자(봇·다른 기기)가 사이에 파일을 바꾼 상황 흉내 — 다음 앱 저장이 409를 받는다.
+  //   __takoMockExternalWrite('inbox.md', function (c) { return c + '- 봇이 넣은 항목\n'; })
+  window.__takoMockExternalWrite = function (file, fn) {
+    var cur = read(file);
+    var next = fn(cur == null ? '' : cur);
+    write(file, next);
+    return next;
+  };
+  window.__takoMockRead = function (file) { return read(file); };
+
   window.__takoMockReset = function () {
     Object.keys(SEED).forEach(function (f) { try { localStorage.removeItem(NS + f); } catch (e) {} });
     location.reload();
