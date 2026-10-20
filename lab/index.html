@@ -1379,15 +1379,79 @@ function runTransfer({ adds, remove }) {
     try {
       await removeP;
     } catch (e2) {
-      await rollback([...adds], e2);
+      try {
+        await rollback([...adds], e2);
+      } catch (e3) {
+        // 추가는 모두 저장됐는데 제거·되돌리기가 모두 실패 → 제거를 기록해 두고 나중에 마저 끝낸다(Q6)
+        if (e3.partial && remove.journal && !(e2 && e2.gone)) { addJournal({ ...remove.journal, msg: remove.msg }); e3.journaled = true; }
+        throw e3;
+      }
     }
   })();
+}
+
+// ---- 마저 정리하기 기록(저널, Q6) ----
+// 뒤쪽(제거) 저장도 실패하고 되돌리기마저 실패하면 항목이 두 곳에 남는다. 이때 "제거" 단계를
+// 데이터로 localStorage에 남겨 두고, 다음 불러오기·새로고침·연결 복구 때 다시 실행해 이동을 마저 끝낸다.
+// 제거 연산은 다시 해도 결과가 같다(이미 없으면 gone = 끝난 것으로 봄).
+const JOURNAL_KEY = 'tako_pending_moves';
+const JOURNAL_OPS = {
+  archiveRemove: { store: () => archiveStore, op: (ids) => opArchiveRemove(ids) },
+  inboxRemove: { store: () => inboxStore, op: (items) => opInboxRemove(items) },
+  activeDeleteBlock: { store: () => activeStore, op: (item) => opDeleteBlock(item) },
+  activeDeleteBlocks: { store: () => activeStore, op: (items) => opDeleteBlocks(items) },
+  activeRemoveAppended: { store: () => activeStore, op: (key, texts) => opActiveRemoveAppended(key, texts) },
+};
+function removeStep(type, args, msg) {
+  const d = JOURNAL_OPS[type];
+  return { store: d.store(), op: d.op(...args), msg, journal: { type, args } };
+}
+function readJournal() {
+  try { return JSON.parse(localStorage.getItem(JOURNAL_KEY) || '[]') || []; } catch (e) { return []; }
+}
+function writeJournal(list) {
+  try {
+    if (list.length) localStorage.setItem(JOURNAL_KEY, JSON.stringify(list));
+    else localStorage.removeItem(JOURNAL_KEY);
+  } catch (e) {}
+}
+function addJournal(step) {
+  const list = readJournal();
+  list.push({ id: genArchiveId(), at: new Date().toISOString(), type: step.type, args: step.args, msg: step.msg || step.type });
+  writeJournal(list);
+}
+let journalRunning = false;
+async function runJournal() {
+  if (journalRunning || !state.token) return;
+  const list = readJournal();
+  if (!list.length) return;
+  journalRunning = true;
+  let changed = false;
+  try {
+    for (const j of list) {
+      const d = JOURNAL_OPS[j.type];
+      if (!d) { writeJournal(readJournal().filter((x) => x.id !== j.id)); continue; }
+      try {
+        await d.store().commit(d.op(...j.args), { msg: `finish: ${j.msg}` });
+        changed = true;
+        writeJournal(readJournal().filter((x) => x.id !== j.id));
+      } catch (e) {
+        if (e && e.gone) writeJournal(readJournal().filter((x) => x.id !== j.id)); // 이미 정리됨
+        else break; // 아직 연결이 안 됨 → 다음 기회에
+      }
+    }
+  } finally {
+    journalRunning = false;
+  }
+  if (changed) renderCurrent();
 }
 
 // 이동 실패 알림(디자이너 스펙 A4)
 function notifyTransferError(e, retry) {
   console.error(e && e.cause ? e.cause : e);
-  if (e && e.partial) {
+  if (e && e.partial && e.journaled) {
+    notify.error('일부만 저장됐어요. 연결되면 마저 정리할게요', { label: '지금 다시', retry: () => runJournal().then(refresh) });
+  } else if (e && e.partial) {
     notify.error('일부만 저장됐어요', { label: '새로 불러오기', retry: refresh });
   } else if (e && e.rolledBack && e.cause && e.cause.gone) {
     // 이미 다른 곳에서 처리됨 → 다시 시도할 일이 아님. 최신 내용으로 다시 그림
@@ -2151,7 +2215,7 @@ async function onBulkRestore() {
   const ids = entries.map((e) => e.id);
   const work = runTransfer({
     adds: restoreAdds(entries),
-    remove: { store: archiveStore, op: opArchiveRemove(ids), msg: `restore done: ${ids.length}` },
+    remove: removeStep('archiveRemove', [ids], `restore done: ${ids.length}`),
   });
   selectedArchive.clear();
   renderArchive();
@@ -2219,7 +2283,7 @@ function archiveActiveTask(item) {
   // 보관함에 먼저 넣고 Task에서 뺀다. 뺄 때 실패하면 보관함에서 다시 빼서 한 곳에만 남긴다(A4)
   const work = runTransfer({
     adds: [{ store: archiveStore, op: opArchiveAdd([entry]), undo: opArchiveRemove([entry.id]), msg: `archive: ${item.text}` }],
-    remove: { store: activeStore, op: opDeleteBlock({ ...item, lineIndex, raw: block[0] }), msg: `archive (from active): ${item.text}` },
+    remove: removeStep('activeDeleteBlock', [{ ...item, lineIndex, raw: block[0] }], `archive (from active): ${item.text}`),
   });
   // 되돌리기용 원래 자리: 블록 바로 위 줄(원문)과 원래 들여쓰기 블록
   return { work, entry, pos: { block, after: { lineIndex: start - 1, raw: lines[start - 1] } } };
@@ -2231,7 +2295,7 @@ async function onRestore(entry) {
   if (!claim) return;
   const work = runTransfer({
     adds: restoreAdds([entry]),
-    remove: { store: archiveStore, op: opArchiveRemove([entry.id]), msg: 'restore done' },
+    remove: removeStep('archiveRemove', [[entry.id]], 'restore done'),
   });
   renderArchive();
   try { await work; } catch (e) { renderArchive(); flashArchiveRows([entry.id]); notifyTransferError(e, () => onRestore(entry)); }
@@ -2751,7 +2815,7 @@ function moveInboxToActive(items, priority) {
       undo: opActiveRemoveAppended(priority, texts),
       msg: items.length === 1 ? `inbox → active: ${texts[0]}` : `inbox → active (${items.length}개)`,
     }],
-    remove: { store: inboxStore, op: opInboxRemove(items), msg: `remove ${items.length} from inbox` },
+    remove: removeStep('inboxRemove', [items], `remove ${items.length} from inbox`),
   });
 }
 
@@ -2796,7 +2860,7 @@ function archiveInboxItems(items) {
   const work = runTransfer({
     adds: [{ store: archiveStore, op: opArchiveAdd(entries), undo: opArchiveRemove(entries.map((e) => e.id)),
       msg: `archive ${items.length} from inbox` }],
-    remove: { store: inboxStore, op: opInboxRemove(items), msg: `archive ${items.length} from inbox` },
+    remove: removeStep('inboxRemove', [items], `archive ${items.length} from inbox`),
   });
   return { work, entries };
 }
@@ -2822,7 +2886,7 @@ function undoMoveToActive(items, priority) {
   const texts = items.map((i) => i.text);
   return runTransfer({
     adds: [{ store: inboxStore, op: opInboxInsert(items), undo: opInboxRemoveLast(texts), msg: `undo inbox → active (${items.length})` }],
-    remove: { store: activeStore, op: opActiveRemoveAppended(priority, texts), msg: `undo inbox → active (${items.length})` },
+    remove: removeStep('activeRemoveAppended', [priority, texts], `undo inbox → active (${items.length})`),
   });
 }
 
@@ -2830,7 +2894,7 @@ function undoMoveToActive(items, priority) {
 function undoArchiveInbox(items, entries) {
   return runTransfer({
     adds: [{ store: inboxStore, op: opInboxInsert(items), undo: opInboxRemoveLast(items.map((i) => i.text)), msg: `undo archive (${items.length})` }],
-    remove: { store: archiveStore, op: opArchiveRemove(entries.map((e) => e.id)), msg: `undo archive (${items.length})` },
+    remove: removeStep('archiveRemove', [entries.map((e) => e.id)], `undo archive (${items.length})`),
   });
 }
 
@@ -3101,7 +3165,7 @@ async function onBulkArchiveDone() {
     const work = runTransfer({
       adds: [{ store: archiveStore, op: opArchiveAdd(entries), undo: opArchiveRemove(entries.map((e) => e.id)),
         msg: `archive ${entries.length} done tasks` }],
-      remove: { store: activeStore, op: opDeleteBlocks(targets), msg: `archive ${entries.length} done tasks (from active)` },
+      remove: removeStep('activeDeleteBlocks', [targets], `archive ${entries.length} done tasks (from active)`),
     });
     renderApp();
     // 되돌리면 각 항목을 원래 자리로(위에서부터 차례로 넣어 앞 항목이 다음 항목의 기준 줄이 됨)
@@ -3138,7 +3202,7 @@ async function undoBulkArchive(entries, positions) {
         undo: opActiveRemoveRestored(entries),
         msg: `undo archive: restore ${entries.length}`,
       }],
-      remove: { store: archiveStore, op: opArchiveRemove(entries.map((e) => e.id)), msg: `undo archive: ${entries.length}` },
+      remove: removeStep('archiveRemove', [entries.map((e) => e.id)], `undo archive: ${entries.length}`),
     });
     renderCurrent();
   } catch (e) { renderCurrent(); notifyTransferError(e, () => undoBulkArchive(entries, positions)); }
@@ -3147,7 +3211,7 @@ async function undoBulkArchive(entries, positions) {
 function undoArchiveTask(entry, pos) {
   return runTransfer({
     adds: [{ store: activeStore, op: opActiveReinsert(entry, pos), undo: opActiveRemoveRestored([entry]), msg: 'undo archive' }],
-    remove: { store: archiveStore, op: opArchiveRemove([entry.id]), msg: 'undo archive' },
+    remove: removeStep('archiveRemove', [[entry.id]], 'undo archive'),
   });
 }
 
@@ -3155,7 +3219,7 @@ function undoArchiveTask(entry, pos) {
 function restoreEntries(entries) {
   return runTransfer({
     adds: restoreAdds(entries),
-    remove: { store: archiveStore, op: opArchiveRemove(entries.map((e) => e.id)), msg: `restore ${entries.length}` },
+    remove: removeStep('archiveRemove', [entries.map((e) => e.id)], `restore ${entries.length}`),
   });
 }
 
@@ -4427,6 +4491,7 @@ function init() {
     renderSync();
     ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush(); });
     if (syncStatus.hasError) retryFailedSaves();
+    runJournal();
   });
 
   // 길게 누를 때 뜨는 기본 메뉴(Android 컨텍스트 메뉴 등)를 메모·할 일 행에서는 막는다
@@ -4460,6 +4525,7 @@ async function initialLoad() {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
     syncStatus.loading = false;
     renderCurrent();
+    runJournal(); // 지난번에 마저 못 끝낸 이동 정리(Q6)
   } catch (e) {
     syncStatus.loading = false;
     if (e.code === 401) { handleUnauthorized(); return; }
@@ -4495,6 +4561,7 @@ async function refresh() {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
     syncStatus.loadError = false;
     syncStatus.loading = false;
+    runJournal();
     // 메모를 쓰는 중이거나 시트가 열려 있으면 화면을 다시 그리지 않고, 끝난 뒤에 그린다
     if (isEditingUI()) deferredRender = true;
     else renderCurrent();
