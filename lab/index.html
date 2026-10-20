@@ -1809,27 +1809,29 @@ const opMove = (srcItem, target) => (c) => {
 // key: 줄 번호 대신 쓰는 안정 키(Q10·Q14) = 글 + 같은 글 중 몇 번째. 위쪽 줄이 바뀌어도 같은 항목을 가리킨다
 function parseInbox(text) {
   const seen = new Map();
-  return text.split('\n')
+  const lines = text.split('\n');
+  const same = new Map();
+  lines.forEach((l, i) => { const k = inboxKey(l); if (!same.has(k)) same.set(k, []); same.get(k).push(i); });
+  return lines
     .map((line, idx) => ({ line, idx }))
     .filter(({ line }) => line.match(/^-\s+\S/))
     .map(({ line, idx }) => {
       const t = line.replace(/^-\s+/, '').trim();
       const n = (seen.get(t) || 0) + 1;
       seen.set(t, n);
-      return { text: t, lineIdx: idx, key: `${t}\u0000${n}` };
+      const list = same.get(inboxKey(line));
+      // 지문(locate): Inbox는 섹션이 없어 section null, 하위 없음
+      return { text: t, lineIdx: idx, key: `${t}\u0000${n}`, raw: line, lineIndex: idx, section: null,
+        ordinal: list.indexOf(idx), sameCount: list.length, ...lineSig(lines, idx, INBOX_LOC) };
     });
 }
 
-// Inbox 줄 위치는 렌더 이후 바뀔 수 있다(앞선 처리·봇 추가). 줄 번호만 믿고 지우면 엉뚱한 줄이
-// 지워지므로, 원래 글(`- text`)로 가장 가까운 줄을 다시 찾는다. 없으면 -1(이미 지워짐).
-function resolveInboxLine(item, lines) {
-  const same = (l) => l != null && /^-\s+\S/.test(l) && l.replace(/^-\s+/, '').trim() === item.text;
-  if (same(lines[item.lineIdx])) return item.lineIdx;
-  for (let d = 1; d < lines.length; d++) {
-    if (same(lines[item.lineIdx - d])) return item.lineIdx - d;
-    if (same(lines[item.lineIdx + d])) return item.lineIdx + d;
-  }
-  return -1;
+// Inbox 줄 위치는 렌더 이후 바뀔 수 있다(앞선 처리·봇 추가). 줄 번호가 아니라 지문으로 locate.
+// 정확히 하나로 정해지지 않으면 -1(이미 지워졌거나 애매함)
+const inboxTarget = (item) => ({ ...item, raw: item.raw != null ? item.raw : `- ${item.text}`,
+  lineIndex: item.lineIndex != null ? item.lineIndex : item.lineIdx });
+function resolveInboxLine(item, lines, { exclude = null } = {}) {
+  try { return locate(lines, inboxTarget(item), { ...INBOX_LOC, exclude }); } catch (e) { return -1; }
 }
 
 function removeInboxLine(item, content = state.inboxContent) {
@@ -1841,7 +1843,7 @@ function removeInboxLines(items, content = state.inboxContent, { strict = false 
   const lines = content.split('\n');
   const idxs = [];
   items.forEach((it) => {
-    const i = resolveInboxLine(it, lines.map((l, k) => (idxs.includes(k) ? null : l)));
+    const i = resolveInboxLine(it, lines, { exclude: new Set(idxs) });
     if (i !== -1) idxs.push(i);
     else if (strict) {
       const msg = '이미 다른 곳에서 정리된 항목이에요';
@@ -1902,6 +1904,7 @@ function parseSections(text) {
       const list = same.get(normLine(it.raw)) || [];
       it.ordinal = list.indexOf(it.lineIndex);
       it.sameCount = list.length;
+      Object.assign(it, lineSig(lines, it.lineIndex));
       stack.push(it);
     });
   });
@@ -1971,56 +1974,91 @@ function lineContext(ls, idx) {
   return { section, parent };
 }
 
-// 줄 위치 다시 찾기. 원래 자리에 그대로 있으면 그 줄, 아니면 같은 글의 줄을 찾는다.
-// 같은 글의 줄이 여럿이면(Q2) 섹션 → 부모 줄 → "같은 글 중 몇 번째"(개수가 그대로일 때) 순서로 좁히고,
-// 그래도 하나로 정해지지 않으면 추측하지 않고 gone 예외(엉뚱한 줄을 지우거나 옮기지 않게).
+// ---- 대상 찾기(공용, QA3 구조 원칙) ----
+// 같은 글의 줄이 여럿일 때 "글로 대상을 찾다가" 다른 줄을 지우거나 옮기는 버그가 1~3차 리뷰 대부분이었다.
+// 그래서 줄을 찾는 모든 경로(체크·고치기·보관·이동·되돌리기·응답 유실 판정·저널·Inbox)가 locate 하나만 쓴다.
+// 규칙: 후보가 정확히 하나로 정해질 때만 그 줄. 조금이라도 애매하면 추측하지 않고 gone
+//      ("목록이 바뀌었어요 · 새로 불러오기") — 유실·오삭제보다 멈춤이 낫다.
+// 대상(지문) = 줄 원문 raw + 섹션 section + 부모 줄 parentRaw + 같은 글 중 순번 ordinal / 개수 sameCount
+//            + 앞 줄 prev + 블록 다음 줄 next + 하위 줄 kids. parseSections·parseInbox·lineFp가 만든다.
+const locateGone = () => {
+  const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
+  return Object.assign(new Error(msg), { userMessage: msg, gone: true });
+};
+// Inbox 줄 비교 기준(앞 기호 뒤 공백 차이는 같은 줄로)
+function inboxKey(l) {
+  if (l == null) return null;
+  return /^-\s+\S/.test(l) ? '- ' + l.replace(/^-\s+/, '').trim() : l;
+}
+const INBOX_LOC = { key: inboxKey, block: false };
+// idx 줄 블록(하위 포함)의 마지막 줄
+function blockEndAt(lines, idx, block = true) {
+  if (!block) return idx;
+  const ind = (l) => (l.match(/^(\s*)/)?.[0] || '').length;
+  const base = ind(lines[idx] || '');
+  let end = idx;
+  for (let i = idx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) break;
+    if (lines[i].trim() === '') continue;
+    if (ind(lines[i]) > base) end = i; else break;
+  }
+  return end;
+}
+// 앞 줄·블록 다음 줄·하위 줄(비교 기준 key로 정규화)
+function lineSig(lines, idx, { key = normLine, block = true } = {}) {
+  const end = blockEndAt(lines, idx, block);
+  return {
+    prev: idx > 0 ? key(lines[idx - 1]) : null,
+    next: end + 1 < lines.length ? key(lines[end + 1]) : null,
+    kids: lines.slice(idx + 1, end + 1).filter((l) => l.trim()).map(key).join('\n'),
+  };
+}
+// 지금 lines의 idx 줄 지문(되돌리기·저널 기록용)
+function lineFp(lines, idx, { key = normLine, block = true } = {}) {
+  const want = key(lines[idx]);
+  const same = [];
+  lines.forEach((l, i) => { if (key(l) === want) same.push(i); });
+  const ctx = lineContext(lines, idx);
+  return {
+    raw: lines[idx], lineIndex: idx, section: ctx.section, parentRaw: ctx.parent,
+    ordinal: same.indexOf(idx), sameCount: same.length, ...lineSig(lines, idx, { key, block }),
+  };
+}
+function locate(lines, t, { exclude = null, key = normLine, block = true } = {}) {
+  const want = t && t.raw != null ? key(t.raw) : null;
+  if (want == null) throw locateGone();
+  const all = [];
+  lines.forEach((l, i) => { if (key(l) === want) all.push(i); });
+  const cands = all.filter((i) => !(exclude && exclude.has(i)));
+  if (!cands.length) throw locateGone();
+  // ① 같은 글이 기록 때도 지금도 하나뿐 → 그 줄(섹션을 옮겼어도 같은 항목)
+  if (all.length === 1 && !(t.sameCount > 1)) return cands[0];
+  // 맥락을 남기지 않은 옛 기록은 하나뿐일 때만
+  if (t.section === undefined) throw locateGone();
+  const norm = (l) => (l == null ? null : key(l));
+  const ctx = cands.filter((i) => {
+    const c = lineContext(lines, i);
+    if (c.section !== t.section) return false;
+    return t.parentRaw === undefined || norm(c.parent) === norm(t.parentRaw);
+  });
+  // ② 같은 글 개수가 그대로이고 순번 자리의 줄이 섹션·부모도 같음
+  if (t.sameCount === all.length && t.ordinal >= 0 && ctx.includes(all[t.ordinal])) return all[t.ordinal];
+  // ③ 개수가 바뀜(R2·S4): 앞 줄·다음 줄·하위 줄이 모두 기록과 같은 줄이 정확히 하나일 때만.
+  //    기록한 앞뒤 줄이 같은 글(같은 글이 붙어 있음)이면 구분할 근거가 없으니 멈춘다
+  if (t.prev === undefined || t.prev === want || t.next === want) throw locateGone();
+  const strong = ctx.filter((i) => {
+    const g = lineSig(lines, i, { key, block });
+    return g.prev === t.prev && g.next === t.next && (t.kids === undefined || g.kids === t.kids);
+  });
+  if (strong.length === 1) return strong[0];
+  throw locateGone();
+}
+// active.md 줄 찾기(예전 이름 유지 — 내부는 locate)
 // exclude: 이미 다른 대상으로 잡힌 줄(Q1, 여러 대상을 한 번에 찾을 때)
-// 렌더 정보가 없는 위치 기준(드래그 목표·되돌리기 기준 줄)은 예전처럼 가장 가까운 줄.
 function resolveLineIndex(item, lines, { exclude = null } = {}) {
   const ls = lines || state.content.split('\n');
-  const want = normLine(item.raw);
-  if (want == null) return item.lineIndex;
-  const free = (i) => !(exclude && exclude.has(i));
-  // 맥락(섹션·부모)이 같은지 — 원래 자리에 같은 글이 있어도 다른 섹션·다른 부모의 줄일 수 있다
-  const sameContext = (i) => {
-    if (item.section === undefined) return true;
-    const ctx = lineContext(ls, i);
-    if (ctx.section !== item.section) return false;
-    if (item.parentRaw === undefined) return true;
-    return (ctx.parent == null ? null : normLine(ctx.parent)) === (item.parentRaw == null ? null : normLine(item.parentRaw));
-  };
-  const all = [];
-  ls.forEach((l, i) => { if (normLine(l) === want) all.push(i); });
-  // 원래 자리 그대로 쓰기(빠른 경로)는 같은 글이 하나뿐이거나, 같은 글 개수가 그대로이고 순번도 이 줄일 때만(R2).
-  // 같은 글이 여럿인데 개수가 바뀌었으면 원래 번호 자리에 다른 쪽 줄이 와 있을 수 있다
-  if (free(item.lineIndex) && normLine(ls[item.lineIndex]) === want && sameContext(item.lineIndex)) {
-    if (item.section === undefined || all.length === 1) return item.lineIndex;
-    if (item.sameCount === all.length && all[item.ordinal] === item.lineIndex) return item.lineIndex;
-  }
-  let cands = all.filter(free);
-  const gone = () => {
-    const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
-    return Object.assign(new Error(msg), { userMessage: msg, gone: true });
-  };
-  if (!cands.length) throw gone();
-  if (cands.length === 1) return cands[0];
-  if (item.section === undefined) {
-    // 맥락 정보가 없는 기준 줄: 가장 가까운 줄
-    return cands.reduce((a, b) => (Math.abs(b - item.lineIndex) < Math.abs(a - item.lineIndex) ? b : a));
-  }
-  let c = cands.filter((i) => lineContext(ls, i).section === item.section);
-  if (!c.length) c = cands;
-  if (item.parentRaw !== undefined) {
-    const wantParent = item.parentRaw == null ? null : normLine(item.parentRaw);
-    const c2 = c.filter((i) => { const p = lineContext(ls, i).parent; return (p == null ? null : normLine(p)) === wantParent; });
-    if (c2.length) c = c2;
-  }
-  if (c.length === 1) return c[0];
-  if (item.ordinal != null && item.ordinal >= 0 && all.length === item.sameCount) {
-    const byOrder = all[item.ordinal];
-    if (c.includes(byOrder)) return byOrder;
-  }
-  throw gone();
+  if (item.raw == null) return item.lineIndex;
+  return locate(ls, item, { exclude });
 }
 
 // 헤더·빈 줄은 항목 조작 대상이 될 수 없다. 마지막 안전장치.
@@ -4186,7 +4224,7 @@ function onDragEnd(e) {
   if (!stillValid) { renderApp(); toast('목록이 바뀌었어요. 다시 해 주세요'); return; }
   // 드롭 시점의 원문 줄로 출발·목표를 기억해 두고, 저장 직전에 다시 찾는다(그 사이 줄이 밀려도 안전)
   const lines = state.content.split('\n');
-  const ref = (n) => (n == null ? null : { lineIndex: n, raw: lines[n] });
+  const ref = (n) => (n == null || lines[n] == null ? null : lineFp(lines, n)); // 지문으로(locate)
   const t = { sectionKey: target.sectionKey, indent: target.indent, beforeItem: ref(target.beforeLine), intoItem: ref(target.intoLine) };
   // 옮겨도 내용이 그대로면(제자리·바로 위아래 틈) 저장하지 않음(B-3 — 섹션 끝으로 가던 문제)
   try {

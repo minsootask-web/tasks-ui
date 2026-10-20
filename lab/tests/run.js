@@ -77,12 +77,13 @@ function grab(name) {
 
 const NAMES = [
   'esc', 'escAttr', 'linkHTML', 'linkify', 'highlightMeta',
-  'normLine', 'getLineIndent', 'assertItemLine', 'extractBlock', 'adjustBlockIndent', 'lineContext', 'resolveLineIndex',
+  'normLine', 'getLineIndent', 'assertItemLine', 'extractBlock', 'adjustBlockIndent', 'lineContext',
+  'locateGone', 'inboxKey', 'INBOX_LOC', 'blockEndAt', 'lineSig', 'lineFp', 'locate', 'resolveLineIndex',
   'parseSections', 'sectionHeaderIndex', 'ensureSectionHeader', 'sectionInsertAfter', 'insertIntoSection',
   'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
   'childInsertIndex', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
-  'parseInbox', 'resolveInboxLine', 'removeInboxLines',
+  'parseInbox', 'inboxTarget', 'resolveInboxLine', 'removeInboxLines',
   'memoCol', 'memoOrder', 'memosAfterMove',
   'splitPastedLines',
 ];
@@ -147,6 +148,26 @@ test('R2: 같은 글 개수가 바뀌고 맥락으로도 못 고르면 추측하
   throwsGone(() => T.opDeleteBlock({ ...second, lineIndex: 99 })(changed));
 });
 
+test('S4: 같은 글 "운동" 둘 중 첫째가 다른 기기에서 먼저 지워짐 → 다시 적용해도 둘째(러닝 5km)를 지우지 않고 gone', () => {
+  const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [ ] 운동', '  - [ ] 스트레칭', '- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km', '', '## 🟢 Low', '');
+  const first = items(c, '🟡 Medium').find((i) => i.text === '운동');
+  const after = c.replace('- [ ] 운동\n  - [ ] 스트레칭\n', '');
+  throwsGone(() => T.opDeleteBlock(first)(after));
+  // 둘째를 지우는 것은(첫째가 먼저 사라졌어도) 앞뒤 줄·하위가 같아 그대로 찾음
+  const second = items(c, '🟡 Medium').filter((i) => i.text === '운동')[1];
+  eq(sectionLines(T.opDeleteBlock(second)(after), 'medium'), ['- [ ] 기타']);
+});
+
+test('locate: 같은 글이 하나뿐이면 다른 섹션으로 옮겨져 있어도 찾음 / 같은 글이 붙어 있고 개수가 바뀌면 gone', () => {
+  const c = md('## 🔥 High', '- [ ] a', '', '## 🟡 Medium', '- [ ] 혼자', '');
+  const it = items(c, '🟡 Medium')[0];
+  const moved = md('## 🔥 High', '- [ ] a', '- [x] 혼자', '', '## 🟡 Medium', '');
+  eq(T.locate(moved.split('\n'), it), 2);
+  const d = md('## 🟡 Medium', '- [ ] 우유', '- [ ] 우유', '');
+  const second = items(d, '🟡 Medium')[1];
+  throwsGone(() => T.locate(md('## 🟡 Medium', '- [ ] 우유', '- [ ] 우유', '- [ ] 우유', '').split('\n'), second));
+});
+
 test('Q2: 서로 다른 섹션의 같은 글 부모 — 줄이 밀려도 Low 쪽만 지움', () => {
   const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [ ] 회의', '  - [ ] 첫째 하위', '', '## 🟢 Low', '- [ ] 회의', '  - [ ] 둘째 하위', '');
   const low = items(c, '🟢 Low').find((i) => i.text === '회의');
@@ -171,6 +192,14 @@ test('R8: Inbox "우유" 둘 — 첫째를 뺀 뒤 둘째(줄 번호 밀림)를 
   const after2 = T.removeInboxLines([m2], after1, { strict: true });
   eq(T.parseInbox(after2).map((i) => i.text), ['빵']);
   eq(T.parseInbox(c).map((i) => i.key.split('\u0000')[1]), ['1', '1', '2']);
+});
+
+test('S3: Inbox "우유"·"빵"·"우유" — 첫째 우유 제거가 이미 반영된 내용에 다시 적용하면 둘째 우유를 지우지 않고 gone', () => {
+  const ib = md('# Inbox', '', '- 우유', '- 빵', '- 우유', '');
+  const [m1] = T.parseInbox(ib);
+  const landed = T.removeInboxLines([m1], ib, { strict: true });
+  eq(T.parseInbox(landed).map((i) => i.text), ['빵', '우유']);
+  throwsGone(() => T.removeInboxLines([m1], landed, { strict: true }));
 });
 
 test('Q14: 이미 다른 곳에서 정리된 Inbox 항목은 strict 제거에서 gone', () => {
