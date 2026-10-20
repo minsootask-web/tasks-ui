@@ -1188,8 +1188,9 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
           if (rebased) onRebase && onRebase();
           return;
         } catch (e) {
-          if (e.code === 409 && attempt < 2) {
-            // 다른 기기·봇이 먼저 썼다 → 최신본 위에 같은 연산을 다시 적용해 재시도
+          // 409: 다른 기기·봇이 먼저 썼다. 422: 파일이 없던 줄 알고 sha 없이 보냈는데 그새 생겼다(Q18)
+          if ((e.code === 409 || e.code === 422) && attempt < 2) {
+            // → 최신본 위에 같은 연산을 다시 적용해 재시도
             await s.reloadBase();
             rebased = true;
             continue;
