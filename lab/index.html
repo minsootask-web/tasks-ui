@@ -1226,6 +1226,8 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
           if ((e.code === 409 || e.code === 422) && attempt < 2) {
             // → 최신본 위에 같은 연산을 다시 적용해 재시도
             await s.reloadBase();
+            // 먼저 도착한 것이 앱을 떠날 때 보낸 내 요청이면 다른 기기 변경이 아니다(R20)
+            if (s.leaveSent && serialize(s.base) === s.leaveSent) { s.leaveSent = null; continue; }
             rebased = true;
             continue;
           }
@@ -1317,7 +1319,8 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
     if (!s.hasReady()) return;
     if (s.flushing && s.base != null && s.pending.every((p) => p.idem)) {
       const { c } = applyAll(s.base, s.pending);
-      ghPut(url, serialize(c), s.sha, 'save on leave', { keepalive: true }).catch(() => {});
+      s.leaveSent = serialize(c); // 이 요청이 먼저 도착해 앞 저장이 409가 나도 "다른 기기" 안내를 하지 않게(R20)
+      ghPut(url, s.leaveSent, s.sha, 'save on leave', { keepalive: true }).catch(() => {});
       return;
     }
     s.flush({ keepalive: true });
