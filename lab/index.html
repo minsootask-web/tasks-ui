@@ -389,17 +389,20 @@
     background: var(--text); color: var(--bg);
     padding: 9px 12px 9px 16px; border-radius: 999px; font-size: 13px;
     opacity: 0; transition: opacity 0.18s, transform 0.18s; pointer-events: none;
-    z-index: 50; max-width: 90vw;
+    z-index: 50; width: max-content; max-width: calc(100vw - 32px);
     display: inline-flex; align-items: center; gap: 12px;
   }
-  .toast.show { opacity: 0.94; transform: translateX(-50%) translateY(0); }
+  .toast.show { opacity: 0.94; transform: translateX(-50%) translateY(0); pointer-events: auto; }
   .toast .toast-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toast .toast-action {
     pointer-events: auto; flex-shrink: 0; cursor: pointer;
     appearance: none; -webkit-appearance: none; border: none;
     background: var(--accent); color: var(--accent-fg);
-    font-size: 12px; font-weight: 700; padding: 3px 11px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; padding: 0 12px; height: 32px; border-radius: 999px;
+    position: relative; margin: -6px -4px -6px 0;
   }
+  /* 보이는 높이 32px, 누르는 영역은 위아래로 넓혀 44px */
+  .toast .toast-action::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; bottom: -6px; }
   .toast .toast-action:active { transform: scale(0.96); }
 
   /* Skeleton */
@@ -679,7 +682,7 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <!-- Inbox bulk action bar -->
 <div class="inbox-bar" id="inbox-bar">
@@ -806,32 +809,88 @@ const fmtDate = (d) => {
 const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const highlightMeta = (s) => esc(s).replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>');
 
-let toastTimer;
-function toast(msg, ms = 1400, action = null) {
+// ============ 공용 토스트 (F1) ============
+// 규칙: 한 번에 하나만(새 것이 오면 이전 것은 그대로 확정되고 교체), 용도는 되돌리기·다시 시도·짧은 안내.
+// 시간: 되돌리기 5초, 오류 6초, 안내 2.5초. 손가락·마우스가 올라가 있는 동안은 멈춤.
+// PC에서 Cmd/Ctrl+Z = 지금 떠 있는 토스트의 되돌리기.
+const TOAST_MS = { info: 2500, undo: 5000, error: 6000 };
+const toastState = { timer: null, remaining: 0, startedAt: 0, action: null, kind: null };
+
+function showToast(msg, { kind = 'info', ms, action = null } = {}) {
   const t = $('#toast');
+  clearTimeout(toastState.timer);
   t.innerHTML = '';
   const span = document.createElement('span');
   span.className = 'toast-msg';
   span.textContent = msg;
   t.appendChild(span);
+  toastState.action = null;
+  toastState.kind = kind;
   if (action && action.label && typeof action.onClick === 'function') {
     const btn = document.createElement('button');
     btn.className = 'toast-action';
     btn.type = 'button';
     btn.textContent = action.label;
     let fired = false;
-    btn.addEventListener('click', () => {
+    const fire = () => {
       if (fired) return;
       fired = true;
-      clearTimeout(toastTimer);
-      t.classList.remove('show');
+      hideToast();
       action.onClick();
-    });
+    };
+    btn.addEventListener('click', fire);
     t.appendChild(btn);
+    toastState.action = { fire, undo: kind === 'undo' };
   }
   t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+  toastState.remaining = ms ?? TOAST_MS[kind] ?? TOAST_MS.info;
+  startToastTimer();
+}
+function startToastTimer() {
+  clearTimeout(toastState.timer);
+  toastState.startedAt = Date.now();
+  toastState.timer = setTimeout(hideToast, toastState.remaining);
+}
+function pauseToast() {
+  if (!$('#toast').classList.contains('show')) return;
+  clearTimeout(toastState.timer);
+  toastState.remaining = Math.max(800, toastState.remaining - (Date.now() - toastState.startedAt));
+}
+function resumeToast() {
+  if (!$('#toast').classList.contains('show')) return;
+  startToastTimer();
+}
+function hideToast() {
+  clearTimeout(toastState.timer);
+  $('#toast').classList.remove('show');
+  toastState.action = null;
+}
+
+// 화면에 보여줄 쉬운 오류 문구. 원래 오류(PUT 500, conflict 등)는 콘솔에만 남긴다.
+function friendlyError(e, fallback = '저장하지 못했어요') {
+  if (e && e.userMessage) return e.userMessage;
+  if (e && (e.name === 'TypeError' || e.offline || (typeof navigator !== 'undefined' && navigator.onLine === false))) {
+    return '인터넷 연결을 확인해 주세요';
+  }
+  return fallback;
+}
+
+const notify = {
+  info: (msg, ms) => showToast(msg, { kind: 'info', ms }),
+  undo: (msg, onUndo) => showToast(msg, { kind: 'undo', action: { label: '되돌리기', onClick: onUndo } }),
+  error: (msg, { retry, label = '다시 시도', ms } = {}) =>
+    showToast(msg, { kind: 'error', ms, action: retry ? { label, onClick: retry } : null }),
+};
+// 오류 객체를 받아 쉬운 말로 알린다(retry가 있으면 "다시 시도" 버튼)
+function notifyError(e, { fallback, retry } = {}) {
+  if (e) console.error(e);
+  notify.error(friendlyError(e, fallback), { retry });
+}
+
+// 이전 호출부 호환: toast(msg, ms, { label, onClick })
+function toast(msg, ms, action = null) {
+  if (action) showToast(msg, { kind: 'undo', ms, action });
+  else showToast(msg, { kind: 'info', ms });
 }
 
 // utf-8 safe base64
@@ -1525,7 +1584,7 @@ async function onBulkRestore() {
     selectedArchive.clear();
     toast(`${ids.length}개 복구됨`);
     renderArchive();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 async function onBulkPurge() {
@@ -1538,7 +1597,7 @@ async function onBulkPurge() {
     selectedArchive.clear();
     toast(`${ids.length}개 영구 삭제됨`);
     renderArchive();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 function genArchiveId() {
@@ -1597,7 +1656,7 @@ async function onRestore(entry) {
     await ghSaveArchive(state.archiveItems.filter((i) => i.id !== entry.id), `restore done`);
     toast('복구됨');
     renderArchive();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 async function onPurge(entry) {
@@ -1607,7 +1666,7 @@ async function onPurge(entry) {
     await ghSaveArchive(state.archiveItems.filter((i) => i.id !== entry.id), `purge: archive`);
     toast('영구 삭제됨');
     renderArchive();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 // ============ Memos ============
@@ -1811,7 +1870,7 @@ async function onMemoDragEnd() {
   try {
     await ghSaveMemos(newMemos, `memo: move`);
     drawMemos();
-  } catch (e) { toast(`실패: ${e.message}`); drawMemos(); }
+  } catch (e) { notifyError(e); drawMemos(); }
 }
 
 function sameMemos(a, b) {
@@ -1852,7 +1911,7 @@ function startEditMemo(div, m) {
     if (newText === (m.text || '')) return;
     const newMemos = state.memos.map((x) => x.id === m.id ? { ...x, text: newText } : x);
     try { await ghSaveMemos(newMemos, `memo: edit`); }
-    catch (e) { toast(`실패: ${e.message}`); textEl.textContent = m.text || ''; }
+    catch (e) { notifyError(e); textEl.textContent = m.text || ''; }
   };
   const onBlur = () => finish(true);
   const onKey = (e) => {
@@ -1892,7 +1951,7 @@ async function onAddMemo() {
     drawMemos();
     const el = document.querySelector(`.memo[data-id="${newMemo.id}"]`);
     if (el) startEditMemo(el, newMemo);
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 async function onDeleteMemo(id) {
@@ -1902,7 +1961,7 @@ async function onDeleteMemo(id) {
   try {
     await ghSaveMemos(state.memos.filter((x) => x.id !== id), `memo: delete`);
     drawMemos();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 function bindBarEvents() {
@@ -1930,7 +1989,7 @@ async function onMoveToActive(item, priority) {
     selectedInbox.clear();
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
     renderInbox();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 async function onBulkMove(priority) {
@@ -1947,7 +2006,7 @@ async function onBulkMove(priority) {
     selectedInbox.clear();
     toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
     renderInbox();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 async function onBulkDelete() {
@@ -1967,7 +2026,7 @@ async function onBulkDelete() {
     selectedInbox.clear();
     toast(`${items.length}개 보관됨`);
     renderInbox();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 async function onDeleteFromInbox(item) {
@@ -1977,7 +2036,7 @@ async function onDeleteFromInbox(item) {
     selectedInbox.clear();
     toast('보관됨');
     renderInbox();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 function bindTabEvents() {
@@ -2135,8 +2194,8 @@ async function onBulkArchiveDone() {
     await ghSaveArchive([...state.archiveItems, ...entries], `archive ${entries.length} done tasks`);
     await ghSave(newContent, `archive ${entries.length} done tasks (from active)`);
     renderApp();
-    toast(`${entries.length}개 보관됨`, 5000, { label: '실행취소', onClick: () => undoArchive(entries) });
-  } catch (e) { toast(`실패: ${e.message}`); }
+    notify.undo(`${entries.length}개를 보관함으로 옮겼어요`, () => undoArchive(entries));
+  } catch (e) { notifyError(e); }
 }
 
 // 직전 일괄 보관을 취소 — 보관한 항목들을 Task 탭으로 되돌리고 보관함에서 제거
@@ -2155,7 +2214,7 @@ async function undoArchive(entries) {
     currentTab = 'active';
     renderApp();
     toast(`${entries.length}개 복원됨`);
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 function renderApp() {
@@ -2353,7 +2412,7 @@ async function onSetupSave() {
     state.token = null;
     if (e.code === 401) errEl.textContent = '토큰이 유효하지 않습니다.';
     else if (e.code === 404) errEl.textContent = `repo 또는 ${FILE} 파일을 찾을 수 없습니다.`;
-    else errEl.textContent = `오류: ${e.message}`;
+    else { console.error(e); errEl.textContent = friendlyError(e, '연결하지 못했어요. 잠시 뒤 다시 해 주세요.'); }
   }
 }
 
@@ -2368,10 +2427,9 @@ async function safeMutate(producer, msg, label) {
     if (e.code === 409) {
       // Conflict: state.content was refreshed by ghSave. Re-render and notify.
       renderApp();
-      toast('충돌 — 최신 데이터 가져옴, 다시 시도하세요');
+      notify.info('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 해 주세요');
     } else {
-      toast(`실패: ${e.message}`);
-      console.error(e);
+      notifyError(e);
     }
   }
 }
@@ -2412,13 +2470,12 @@ async function flushToggles() {
     if (e.code === 409) {
       // 충돌: ghSave가 원격 최신 상태로 갱신함 — 화면을 원격 기준으로 되돌린다.
       renderApp();
-      toast('충돌 — 최신 데이터 가져옴, 다시 시도하세요');
+      notify.info('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 해 주세요');
     } else {
       // 저장 실패: 원격 상태로 되돌려 로컬/원격 불일치를 막는다.
       await ghLoad().catch(() => {});
       renderApp();
-      toast(`저장 실패: ${e.message}`);
-      console.error(e);
+      notifyError(e);
     }
   } finally {
     toggleSync.saving = false;
@@ -2451,7 +2508,7 @@ async function onDelete(item) {
         await ghSave(deleteAt(resolveLineIndex(item)), `delete sub: ${item.text}`);
         renderApp();
         toast('삭제됨');
-      } catch (e) { toast(`실패: ${e.message}`); }
+      } catch (e) { notifyError(e); }
     });
   }
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
@@ -2461,8 +2518,7 @@ async function onDelete(item) {
       renderApp();
       toast('보관됨');
     } catch (e) {
-      toast(`실패: ${e.message}`);
-      console.error(e);
+      notifyError(e);
     }
   });
 }
@@ -2795,7 +2851,7 @@ async function onAddToInbox(text) {
     await ghSaveInbox(c, `inbox: add ${text}`);
     toast('Inbox에 추가됨');
     if (currentTab === 'inbox') renderInbox();
-  } catch (e) { toast(`실패: ${e.message}`); }
+  } catch (e) { notifyError(e); }
 }
 
 // ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
@@ -2851,9 +2907,9 @@ async function processComposerQueue() {
           try {
             await serializeActive(() => ghSave(appendToSection(pri, text), `add: ${text}`));
             ok = true;
-          } catch (e2) { toast(`추가 실패: ${text}`); }
+          } catch (e2) { notifyError(e2); }
         } else {
-          toast(`추가 실패: ${e.message}`);
+          notifyError(e);
         }
       }
       if (ok) renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
@@ -2910,6 +2966,21 @@ function init() {
     if (composerIme.composing || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     quickAdd();
+  });
+
+  // 토스트: 올라가 있는 동안 시간 멈춤, Cmd/Ctrl+Z = 되돌리기
+  const toastEl = $('#toast');
+  toastEl.addEventListener('pointerenter', pauseToast);
+  toastEl.addEventListener('pointerleave', resumeToast);
+  toastEl.addEventListener('pointerdown', pauseToast);
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
+    // 입력 중에는 브라우저 기본 되돌리기(글자 취소)를 그대로 둔다
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    if (!toastState.action || !toastState.action.undo) return;
+    e.preventDefault();
+    toastState.action.fire();
   });
 
   $('#scrim').addEventListener('click', hideSheet);
@@ -3017,7 +3088,7 @@ async function refresh() {
       const err = document.querySelector('#setup-err');
       if (err) err.textContent = '토큰이 만료되었거나 권한이 변경되었습니다. 다시 입력해주세요.';
     } else {
-      toast(`로드 실패: ${e.message}`);
+      notifyError(e, { fallback: '불러오지 못했어요', retry: refresh });
     }
   }
 }
