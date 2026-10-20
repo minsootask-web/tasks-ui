@@ -3055,12 +3055,10 @@ const taskRowsFor = (texts) => {
 };
 
 // 실패 후 원래 자리로 돌아온 Task 행을 600ms 깜빡여 알려 준다(B9)
+// 행 찾기는 화면 글자(링크는 "도메인/…"으로 줄어 보임)가 아니라 원문 key로(R21)
 function flashTaskRows(texts) {
-  const set = new Set(texts);
-  document.querySelectorAll('#sections .task').forEach((row) => {
-    const t = row.querySelector('.task-text');
-    if (t && [...set].some((x) => t.textContent.startsWith(x))) flashEl(row);
-  });
+  const set = new Set(texts.map((t) => String(t).trim()));
+  document.querySelectorAll('#sections .task').forEach((row) => { if (set.has(row.dataset.key)) flashEl(row); });
 }
 function flashArchiveRows(ids) {
   document.querySelectorAll('#archive-list .archive-item').forEach((row) => {
@@ -3666,6 +3664,7 @@ function renderTask(item, key, opts = {}) {
   t.dataset.line = item.lineIndex;
   t.dataset.indent = item.indent;
   t.dataset.key = lingerKey(item);
+  t.dataset.raw = item.raw; // 원문 줄(R21) — 새 행 찾기·깜빡임에 사용
 
   // 접기/펼치기 토글 — 자식 있는 항목만 화살표, 나머지는 정렬용 빈 자리
   const toggle = document.createElement('button');
@@ -4573,8 +4572,9 @@ const composerFailed = { jobs: [], err: null, timer: null };
 function addFromComposer(job) {
   const pr = activeStore.apply(opAppend(job.pri, job.text), { msg: `add: ${job.text}` });
   renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
+  const wantRaw = `- [ ] ${job.text}`;
   revealNewRow([...document.querySelectorAll(`#sections .pri-${job.pri === 'medium' ? 'med' : job.pri} .task`)]
-    .filter((r) => r.querySelector('.task-text')?.textContent === job.text).pop());
+    .filter((r) => r.dataset.raw === wantRaw).pop());
   const inp = $('#composer-input');
   if (inp && currentTab === 'active' && document.activeElement !== inp) inp.focus();
   pr.catch((e) => reportComposerFailure(job, e));
