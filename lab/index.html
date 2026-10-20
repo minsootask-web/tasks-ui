@@ -1332,21 +1332,7 @@ function renderInbox() {
   const app = $('#app');
   const count = state.inboxItems.length;
   app.innerHTML = `
-    <header>
-      <div class="title-row">
-        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
-        <div class="meta">
-          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
-        </div>
-      </div>
-      <div class="header-actions">${headerActions()}</div>
-    </header>
-    <div class="tabs">
-      <button class="tab" id="tab-active">Task</button>
-      <button class="tab active" id="tab-inbox">Inbox ${count ? `<span class="badge">${count}</span>` : ''}</button>
-      <button class="tab" id="tab-memo">Memo</button>
-      <button class="tab" id="tab-archive">Archive</button>
-    </div>
+    ${renderShell('inbox')}
     <div class="card" id="inbox-list">
       ${count === 0 ? '<div class="empty">Inbox가 비어 있어요</div>' : ''}
     </div>
@@ -1413,23 +1399,8 @@ function toggleInboxSelect(lineIdx, div, cb) {
 function renderArchive() {
   const app = $('#app');
   const items = [...state.archiveItems].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
-  const inboxCount = state.inboxItems.length;
   app.innerHTML = `
-    <header>
-      <div class="title-row">
-        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
-        <div class="meta">
-          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
-        </div>
-      </div>
-      <div class="header-actions">${headerActions()}</div>
-    </header>
-    <div class="tabs">
-      <button class="tab" id="tab-active">Task</button>
-      <button class="tab" id="tab-inbox">Inbox ${inboxCount ? `<span class="badge">${inboxCount}</span>` : ''}</button>
-      <button class="tab" id="tab-memo">Memo</button>
-      <button class="tab active" id="tab-archive">Archive</button>
-    </div>
+    ${renderShell('archive')}
     <div class="card" id="archive-list">
       ${items.length === 0 ? '<div class="empty">보관된 항목이 없습니다</div>' : ''}
     </div>
@@ -1644,23 +1615,8 @@ function renderMemos() {
   selectedInbox.clear();
   updateInboxBar();
   const app = $('#app');
-  const inboxCount = state.inboxItems.length;
   app.innerHTML = `
-    <header>
-      <div class="title-row">
-        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
-        <div class="meta">
-          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
-        </div>
-      </div>
-      <div class="header-actions">${headerActions()}</div>
-    </header>
-    <div class="tabs">
-      <button class="tab" id="tab-active">Task</button>
-      <button class="tab" id="tab-inbox">Inbox ${inboxCount ? `<span class="badge">${inboxCount}</span>` : ''}</button>
-      <button class="tab active" id="tab-memo">Memo</button>
-      <button class="tab" id="tab-archive">Archive</button>
-    </div>
+    ${renderShell('memo')}
     <div class="memo-board" id="memo-board"></div>
   `;
   bindTabEvents();
@@ -2061,6 +2017,37 @@ function sortItemsIncompleteFirst(items) {
 }
 
 // ============ Rendering ============
+// 네 탭이 공유하는 헤더·탭 줄. 탭 이름·배지·저장 표시는 여기 한 곳만 고친다.
+const TABS = [['active', 'Task'], ['inbox', 'Inbox'], ['memo', 'Memo'], ['archive', 'Archive']];
+function renderShell(tab, { meta = '', sort = false } = {}) {
+  const inboxCount = state.inboxItems.length;
+  const tabsHtml = TABS.map(([id, label]) => {
+    const badge = id === 'inbox' && inboxCount ? ` <span class="badge">${inboxCount}</span>` : '';
+    return `<button class="tab${id === tab ? ' active' : ''}" id="tab-${id}">${label}${badge}</button>`;
+  }).join('');
+  return `
+    <header>
+      <div class="title-row">
+        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
+        <div class="meta">
+          ${meta}
+          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
+        </div>
+      </div>
+      <div class="header-actions">${headerActions({ sort })}</div>
+    </header>
+    <div class="tabs">${tabsHtml}</div>`;
+}
+
+// 지금 보고 있는 탭을 다시 그린다(탭 배지 등 공용 영역까지 함께 갱신)
+function renderCurrent() {
+  if (!state.token) { renderSetup(); return; }
+  if (currentTab === 'inbox') renderInbox();
+  else if (currentTab === 'archive') renderArchive();
+  else if (currentTab === 'memo') renderMemos();
+  else renderApp();
+}
+
 function renderSync(isError) {
   const el = $('#sync-pill');
   if (!el) return;
@@ -2181,24 +2168,11 @@ function renderApp() {
     return acc + s.items.filter((i) => i.type === 'task' && i.checked && i.text.trim()).length;
   }, 0);
 
-  const inboxCount = state.inboxItems.length;
   app.innerHTML = `
-    <header>
-      <div class="title-row">
-        <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
-        <div class="meta">
-          ${fmtDate(new Date())} · ${totalLine ? `${doneLine}/${totalLine} 완료` : ''}
-          <span class="sync-pill" id="sync-pill"><span class="dot"></span><span>동기화됨</span></span>
-        </div>
-      </div>
-      <div class="header-actions">${headerActions({ sort: true })}</div>
-    </header>
-    <div class="tabs">
-      <button class="tab active" id="tab-active">Task</button>
-      <button class="tab" id="tab-inbox">Inbox ${inboxCount ? `<span class="badge">${inboxCount}</span>` : ''}</button>
-      <button class="tab" id="tab-memo">Memo</button>
-      <button class="tab" id="tab-archive">Archive</button>
-    </div>
+    ${renderShell('active', {
+      meta: `${fmtDate(new Date())} · ${totalLine ? `${doneLine}/${totalLine} 완료` : ''}`,
+      sort: true,
+    })}
     <div id="sections"></div>
   `;
   bindTabEvents();
@@ -3034,10 +3008,7 @@ async function refresh() {
   if (!state.token) return;
   try {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
-    if (currentTab === 'inbox') renderInbox();
-    else if (currentTab === 'archive') renderArchive();
-    else if (currentTab === 'memo') renderMemos();
-    else renderApp();
+    renderCurrent();
   } catch (e) {
     if (e.code === 401) {
       localStorage.removeItem('gh_pat');
