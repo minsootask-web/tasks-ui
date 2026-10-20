@@ -2735,6 +2735,7 @@ function startMemoDrag(e, m, div) {
 
   Object.assign(memoDragCtx, {
     div, m, ghost, placeholder,
+    lift: e.pointerType && e.pointerType !== 'mouse' ? 28 : 0,
     offsetX: e.clientX - divRect.left,
     offsetY: e.clientY - divRect.top,
     targetCol: memoCol(m),
@@ -2749,8 +2750,9 @@ function startMemoDrag(e, m, div) {
 function onMemoDragMove(e) {
   const { ghost, placeholder, offsetX, offsetY, div } = memoDragCtx;
   autoScroll.update(e.clientY);
-  ghost.style.left = (e.clientX - offsetX) + 'px';
-  ghost.style.top = (e.clientY - offsetY) + 'px';
+  const w = ghost.offsetWidth || 0;
+  ghost.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, e.clientX - offsetX)) + 'px';
+  ghost.style.top = (e.clientY - offsetY - (memoDragCtx.lift || 0)) + 'px';
 
   const board = $('#memo-board');
   if (!board) return;
@@ -4029,6 +4031,7 @@ function onDragStart(e, item, key, taskEl) {
   dragCtx.ghost = ghost;
   dragCtx.indicator = indicator;
   dragCtx.offsetX = e.clientX - rect.left;
+  dragCtx.lift = e.pointerType && e.pointerType !== 'mouse' ? 28 : 0; // 터치는 손가락에 가리지 않게 28px 위로(다듬기)
   dragCtx.startX = e.clientX;
   dragCtx.offsetY = e.clientY - rect.top;
   dragCtx.target = null;
@@ -4044,8 +4047,12 @@ function onDragMove(e) {
   if (!dragCtx.active) return;
   autoScroll.update(e.clientY);
   const { ghost, indicator, offsetX, offsetY } = dragCtx;
-  ghost.style.left = (e.clientX - offsetX) + 'px';
-  ghost.style.top = (e.clientY - offsetY) + 'px';
+  // 화면 밖으로 삐져나가지 않게 좌우를 화면 안으로, 하위로 넣는 중이면 24px 들여 보이기(다듬기)
+  const w = ghost.offsetWidth || 0;
+  const indent = dragCtx.intoEl ? 24 : 0;
+  const left = Math.max(4, Math.min(window.innerWidth - w - 4, e.clientX - offsetX + indent));
+  ghost.style.left = left + 'px';
+  ghost.style.top = (e.clientY - offsetY - (dragCtx.lift || 0)) + 'px';
 
   ghost.style.display = 'none';
   const el = document.elementFromPoint(e.clientX, e.clientY);
