@@ -706,16 +706,16 @@
   }
   .memo .memo-del {
     position: absolute; top: 2px; right: 2px;
-    width: 20px; height: 20px; border-radius: 50%;
+    width: 24px; height: 24px; border-radius: 50%; /* 20 → 24px(다듬기), 누르는 영역은 44px */
     border: 0; background: color-mix(in srgb, var(--memo-fg) 12%, transparent); color: var(--memo-fg);
-    font-size: 13px; line-height: 1; cursor: pointer;
+    font-size: 14px; line-height: 1; cursor: pointer;
     display: none; align-items: center; justify-content: center;
     padding: 0;
   }
   /* 메모 ×는 편집 중일 때만(B13). 글과 겹치지 않게 오른쪽 여백 28px, 누르는 영역 44px */
-  .memo.editing { padding-right: 28px; }
+  .memo.editing { padding-right: 32px; }
   .memo.editing .memo-del { display: inline-flex; top: 4px; right: 4px; }
-  .memo .memo-del::before { content: ""; position: absolute; inset: -12px; }
+  .memo .memo-del::before { content: ""; position: absolute; inset: -10px; }
   .memo-ghost {
     position: fixed; pointer-events: none; z-index: 100;
     background: var(--memo-bg); color: var(--memo-fg);
@@ -2938,8 +2938,9 @@ async function saveMemoText(id, text) {
 // 기존 메모를 지우고 되돌리기를 준다(원래 col/order 그대로 복원)
 async function deleteMemoWithUndo(memo) {
   try {
+    const card = document.querySelector(`.memo[data-id="${memo.id}"]`);
     const pr = memosStore.commit(opMemoDelete(memo.id), { msg: 'memo: delete' });
-    drawMemos();
+    vanishRows(card ? [card] : [], drawMemos); // 사라지는 모션 통일(C1과 같은 리듬)
     await pr;
     notify.undo('메모를 지웠어요', async () => {
       try {
