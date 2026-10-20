@@ -69,7 +69,7 @@ function sliceStatement(src, start) {
   throw new Error('문장 끝을 찾지 못함');
 }
 function grab(name) {
-  const re = new RegExp(`^(?:async\\s+)?function\\s+${name}\\s*\\(|^const\\s+${name}\\s*=`, 'm');
+  const re = new RegExp(`^(?:async\\s+)?function\\s+${name}\\s*\\(|^(?:const|let)\\s+${name}\\s*=`, 'm');
   const m = re.exec(html);
   if (!m) return null; // 아직 옮기지 않은 묶음의 함수 → 그 함수를 쓰는 테스트는 "건너뜀"
   return sliceStatement(html, m.index);
@@ -83,6 +83,10 @@ const NAMES = [
   'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
   'childInsertIndex', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
+  'LS_PREFIX', 'lsKey', 'genArchiveId', 'JOURNAL_KEY', 'JOURNAL_MAX_AGE', 'countActiveLine', 'countAllActive', 'countInbox',
+  'JOURNAL_OPS', 'JOURNAL_DEST', 'destCounts', 'destArrived', 'removeStep', 'readJournal', 'writeJournal', 'liveJournal',
+  'TAB_ID', 'JOURNAL_BEAT_MS', 'JOURNAL_STALE_MS', 'JOURNAL_VER', 'journalBeatTimer', 'journalBeat', 'patchJournal', 'releaseJournal',
+  'ownedElsewhere', 'addJournal', 'dropJournal', 'journalRunning', 'journalRecheck', 'runJournal',
   'deferred', 'createStore', 'removedVerdict', 'countKeyLines', 'opInboxRemove', 'opArchiveRemove',
   'countExactLines', 'withApplied', 'opAppend', 'opAppendMany', 'removeByFps', 'opActiveRemoveRec', 'opInboxRemoveRec',
   'opInboxAppend', 'opInboxInsert', 'recFps', 'opRestore', 'opActiveReinsert',
@@ -104,7 +108,9 @@ const sandbox = {
   renderSync() {}, handleUnauthorized() {},
   notify: { error() {}, info() {}, undo() {} },
   friendlyError: (e, f) => (e && e.userMessage) || f || '저장하지 못했어요',
-  setTimeout, clearTimeout, Promise,
+  setTimeout: (f, ms) => (ms > 5000 ? 0 : setTimeout(f, ms)), clearTimeout, setInterval: () => 0, clearInterval() {}, Promise,
+  localStorage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), clear: () => m.clear() }; })(),
+  renderCurrent() {},
 };
 vm.createContext(sandbox);
 vm.runInContext(sources + '\n' + found.map(([n]) => `globalThis.${n} = ${n};`).join('\n'), sandbox, { filename: 'extracted-from-index.html' });
@@ -371,6 +377,76 @@ test('R5: 요청이 닿지 않았고 다시 받아 보니 그대로 → 미반�
   try { await st.commit(T.opInboxRemove([T.parseInbox(ib)[0]])); } catch (e) { err = e; }
   if (!err || err.uncertain) throw new Error('uncertain이 아닌 실패 기대');
   eq(T.opDeleteBlock({ raw: '- [ ] a', lineIndex: 1 }).isApplied('## H\n', '## H\n- [ ] a\n'), true);
+});
+
+// 저널 환경: 화면 state와 파일 스토어를 흉내 낸다
+function journalEnv({ active = '', inbox = '', archive = [] } = {}) {
+  T.localStorage.clear();
+  const notices = [];
+  T.notify = { error: (m) => notices.push(m), info() {}, undo() {} };
+  T.state = { token: 't', content: active, sections: T.parseSections(active), inboxContent: inbox, inboxItems: T.parseInbox(inbox), archiveItems: archive };
+  const mk = (get, set) => ({ sha: 's0', commits: 0, async commit(op) { set(op(get())); this.commits++; } });
+  T.activeStore = mk(() => T.state.content, (c) => { T.state.content = c; T.state.sections = T.parseSections(c); });
+  T.inboxStore = mk(() => T.state.inboxContent, (c) => { T.state.inboxContent = c; T.state.inboxItems = T.parseInbox(c); });
+  T.archiveStore = mk(() => T.state.archiveItems, (l) => { T.state.archiveItems = l; });
+  return notices;
+}
+const inboxMoveStep = (items, key) => T.removeStep('inboxRemove', [items], 'm', [{ k: 'activeHas', key, texts: items.map((i) => i.text) }]).journal;
+
+test('S6: 도착지에 원래 같은 글이 있으면 이동이 안 됐을 때 Inbox 항목을 지우지 않음', async () => {
+  const active = md('## 🔥 High', '- [ ] 우유', '', '## 🟡 Medium', '');
+  journalEnv({ active, inbox: md('# Inbox', '', '- 우유', '') });
+  T.addJournal(inboxMoveStep(T.state.inboxItems, 'high')); // Task 추가가 서버에 닿기 전 앱 종료(이 탭 기록 아님)
+  T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null })));
+  await T.runJournal();
+  eq(T.state.inboxItems.map((i) => i.text), ['우유']);
+  eq(T.readJournal().length, 0);
+});
+
+test('S6: 이동이 실제로 됐으면(도착지 개수가 늘었으면) Inbox에서 마저 정리', async () => {
+  const active = md('## 🔥 High', '- [ ] 우유', '', '## 🟡 Medium', '');
+  journalEnv({ active, inbox: md('# Inbox', '', '- 우유', '- 빵', '') });
+  T.addJournal(inboxMoveStep([T.state.inboxItems[0]], 'high'));
+  T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null })));
+  T.state.content = md('## 🔥 High', '- [ ] 우유', '- [ ] 우유', '', '## 🟡 Medium', '');
+  T.state.sections = T.parseSections(T.state.content);
+  await T.runJournal();
+  eq(T.state.inboxItems.map((i) => i.text), ['빵']);
+});
+
+test('S7: 결과 모름 기록 — 그 뒤 원격(sha)이 바뀌었으면(봇이 같은 글 추가 등) 자동으로 지우지 않고 안내', async () => {
+  const notices = journalEnv({ active: md('## 🔥 High', '', '## 🟡 Medium', ''), inbox: md('# Inbox', '', '- 우유', '') });
+  T.addJournal(inboxMoveStep(T.state.inboxItems, 'high'));
+  T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null, uncertain: true, sha: 's0' })));
+  T.state.content = md('## 🔥 High', '- [ ] 우유', '', '## 🟡 Medium', '');
+  T.state.sections = T.parseSections(T.state.content);
+  T.inboxStore.sha = 's9'; // 내 제거가 반영된 뒤 봇이 새 "우유"를 넣음 → 개수는 기록과 같음
+  await T.runJournal();
+  eq(T.inboxStore.commits, 0);
+  eq(notices.length, 1);
+});
+
+test('S5: 다른 탭이 진행 중인 기록(beat 신선)은 실행하지 않음, 멈춘 지 오래면 실행', async () => {
+  journalEnv({ active: md('## 🔥 High', '- [ ] 보고서', '', '## 🟡 Medium', ''), inbox: md('# Inbox', '', '- 보고서', '') });
+  T.state.content = md('## 🔥 High', '', '## 🟡 Medium', ''); T.state.sections = T.parseSections(T.state.content);
+  T.addJournal(inboxMoveStep(T.state.inboxItems, 'high'));
+  T.state.content = md('## 🔥 High', '- [ ] 보고서', '', '## 🟡 Medium', ''); T.state.sections = T.parseSections(T.state.content);
+  T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: 'other-tab', beat: Date.now() })));
+  await T.runJournal();
+  eq(T.inboxStore.commits, 0);
+  eq(T.readJournal().length, 1);
+  T.writeJournal(T.readJournal().map((j) => ({ ...j, beat: Date.now() - 10 * 60 * 1000 })));
+  await T.runJournal();
+  eq(T.state.inboxItems.length, 0);
+});
+
+test('S20④: 옛 형식 기록(ver·도착지 개수 없음)은 실행하지 않고 지움', async () => {
+  const notices = journalEnv({ active: md('## 🔥 High', '- [ ] 우유', ''), inbox: md('# Inbox', '', '- 우유', '') });
+  T.writeJournal([{ id: 'old', at: new Date().toISOString(), type: 'inboxRemove', args: [T.state.inboxItems], verify: [{ k: 'activeHas', key: 'high', texts: ['우유'] }], expectCount: 1 }]);
+  await T.runJournal();
+  eq(T.state.inboxItems.length, 1);
+  eq(T.readJournal().length, 0);
+  eq(notices.length, 1);
 });
 
 // ---------- 핵심 연산 ----------

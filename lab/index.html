@@ -1514,9 +1514,17 @@ const opMemoEdit = (id, text) => (list) => {
 //  되돌리기마저 실패하면 e.partial = true (두 곳에 있을 수 있음 → "일부만 저장됐어요 · 새로 불러오기")
 function runTransfer({ adds, remove }) {
   // 선기록(R16): 화면을 바꾸기 전에 "제거" 단계를 저널에 먼저 쓴다. 끝나면(성공·되돌림) 지운다
+  // 진행 중 표시는 이 탭(liveJournal)과 다른 탭(기록의 owner·beat, S5) 모두에 남긴다
   const jid = remove.journal ? addJournal({ ...remove.journal, msg: remove.msg }) : null;
   if (jid) liveJournal.add(jid);
-  const finishJournal = (keep) => { if (!jid) return; liveJournal.delete(jid); if (!keep) dropJournal(jid); };
+  // keep: 다음 확인 때 마저 정리하도록 남김(소유 해제 → 어느 탭이든 실행 가능). patch: 기록에 덧붙일 값(sha 등)
+  const finishJournal = (keep, patch = null) => {
+    if (!jid) return;
+    liveJournal.delete(jid);
+    if (!keep) dropJournal(jid);
+    else patchJournal(jid, { owner: null, beat: 0, ...(patch || {}) });
+  };
+  const journalTakenElsewhere = () => !!jid && !readJournal().some((x) => x.id === jid);
   // 화면은 지금 바로 바뀐다(B9): 추가 쪽은 즉시, 제거 쪽은 화면엔 즉시·저장은 추가가 저장된 뒤(gate)
   const addPs = adds.map((a) => a.store.apply(a.op, { msg: a.msg }));
   const gate = Promise.all(addPs);
@@ -1547,10 +1555,13 @@ function runTransfer({ adds, remove }) {
       await removeP;
       finishJournal(false);
     } catch (e2) {
+      // 다른 탭이 이 기록을 먼저 실행해 제거를 끝냈다(기록이 사라짐) → 되돌리면 두 곳 모두에서 사라진다(S5)
+      if (e2 && e2.gone && journalTakenElsewhere()) { liveJournal.delete(jid); return; }
       if (e2 && e2.uncertain) {
         // 제거가 서버에 반영됐는지 모름(R5): 여기서 추가를 되돌리면 둘 다 사라질 수 있다.
         // 되돌리지 않고 선기록 저널에 맡긴다(다음 확인 때 도착지·개수를 보고 마저 정리 — 중복은 잠깐 생길 수 있어도 유실 없음)
-        finishJournal(true);
+        // 보낸 기준 sha를 남겨, 그 뒤 원격이 바뀌었으면(내 요청이 반영됐거나 다른 기기가 씀) 자동으로 지우지 않게(S7)
+        finishJournal(true, { sha: e2.baseSha || null, uncertain: true });
         throw Object.assign(new Error('uncertain'), { uncertain: true, journaled: true, cause: e2 });
       }
       try {
@@ -1598,13 +1609,24 @@ const JOURNAL_OPS = {
   activeRemoveAppended: { store: () => activeStore, op: (key, texts, fps) => opActiveRemoveAppended(key, texts, fps),
     count: (key, texts) => [...new Set(texts)].reduce((n, t) => n + countActiveLine(key, `- [ ] ${t}`), 0) },
 };
-// 도착지 확인(verify) 종류
-const JOURNAL_VERIFY = {
-  archiveHas: (v) => v.ids.every((id) => state.archiveItems.some((e) => e.id === id)),
-  inboxHas: (v) => v.texts.every((t) => countInbox(t) > 0),
-  activeHas: (v) => v.texts.every((t) => countActiveLine(v.key, `- [ ] ${t}`) > 0),
-  activeHasFirst: (v) => v.list.every((x) => countActiveLine(x.priority, x.first) > 0),
+// 도착지 확인(verify) 종류 — 도착지의 같은 글(id) 개수. 기록할 때의 개수(before)보다 "늘었을 때만" 이동된 것으로 본다(S6:
+// 도착지에 원래 같은 글이 있으면 "있는지"만으로는 이동이 안 됐어도 통과해 원래 자리 항목을 지웠다)
+const JOURNAL_DEST = {
+  archiveHas: (v) => v.ids.map((id) => ['a:' + id, () => state.archiveItems.filter((e) => e.id === id).length]),
+  inboxHas: (v) => v.texts.map((t) => ['i:' + t, () => countInbox(t)]),
+  activeHas: (v) => v.texts.map((t) => ['t:' + t, () => countActiveLine(v.key, `- [ ] ${t}`)]),
+  activeHasFirst: (v) => v.list.map((x) => [`f:${x.priority}:${x.first}`, () => countActiveLine(x.priority, x.first)]),
 };
+function destCounts(v) {
+  const m = {};
+  (JOURNAL_DEST[v.k] ? JOURNAL_DEST[v.k](v) : []).forEach(([k, f]) => { m[k] = { need: ((m[k] && m[k].need) || 0) + 1, now: f() }; });
+  return m;
+}
+function destArrived(v) {
+  if (!JOURNAL_DEST[v.k] || !v.before) return false;
+  const m = destCounts(v);
+  return Object.keys(m).every((k) => m[k].now - (v.before[k] || 0) >= m[k].need);
+}
 function restoreVerify(entries) {
   const out = [];
   const act = entries.filter((e) => e.source === 'active' && e.block && e.block[0]);
@@ -1626,22 +1648,60 @@ function writeJournal(list) {
     else localStorage.removeItem(JOURNAL_KEY);
   } catch (e) {}
 }
-const liveJournal = new Set(); // 이번 실행에서 아직 진행 중인 이동(다시 실행하면 안 됨)
-// 선기록: 화면에 반영(apply)하기 전, 지금 보이는 상태 기준으로 지울 대상 개수를 함께 남긴다
+const liveJournal = new Set(); // 이 탭에서 아직 진행 중인 이동(다시 실행하면 안 됨)
+// 다른 탭(같은 브라우저의 PC 탭 2개, PWA 창 + 탭)도 같은 기록을 본다(S5). 진행 중인 탭은 기록에 자기 id(owner)와
+// 갱신 시각(beat)을 15초마다 남기고, 다른 탭은 beat가 90초 넘게 멈춘 기록만 실행한다(탭이 닫히거나 멈춤)
+const TAB_ID = genArchiveId();
+const JOURNAL_BEAT_MS = 15000;
+const JOURNAL_STALE_MS = 90000;
+const JOURNAL_VER = 2; // verify.before·expectCount를 남기는 형식. 그 전 기록은 확인할 근거가 없어 실행하지 않음(S20④)
+let journalBeatTimer = null;
+function journalBeat() {
+  if (!liveJournal.size) { clearInterval(journalBeatTimer); journalBeatTimer = null; return; }
+  const now = Date.now();
+  writeJournal(readJournal().map((j) => (liveJournal.has(j.id) ? { ...j, owner: TAB_ID, beat: now } : j)));
+}
+function patchJournal(id, patch) {
+  writeJournal(readJournal().map((j) => (j.id === id ? { ...j, ...patch } : j)));
+}
+// 이 탭이 닫힐 때 진행 중이던 기록을 놓아 준다(새로고침 뒤 바로 마저 정리)
+function releaseJournal() {
+  if (!liveJournal.size) return;
+  writeJournal(readJournal().map((j) => (liveJournal.has(j.id) ? { ...j, owner: null, beat: 0 } : j)));
+}
+const ownedElsewhere = (j) => !!j.owner && j.owner !== TAB_ID && Date.now() - (j.beat || 0) < JOURNAL_STALE_MS;
+// 선기록: 화면에 반영(apply)하기 전, 지금 보이는 상태 기준으로 지울 대상 개수와 도착지 개수를 함께 남긴다
 function addJournal(step) {
   const d = JOURNAL_OPS[step.type];
+  const verify = (step.verify || []).map((v) => {
+    const m = destCounts(v);
+    const before = {};
+    Object.keys(m).forEach((k) => { before[k] = m[k].now; });
+    return { ...v, before };
+  });
   const entry = {
-    id: genArchiveId(), at: new Date().toISOString(), type: step.type, args: step.args,
-    verify: step.verify || [], expectCount: d.count(...step.args), msg: step.msg || step.type,
+    id: genArchiveId(), ver: JOURNAL_VER, at: new Date().toISOString(), type: step.type, args: step.args,
+    verify, expectCount: d.count(...step.args), msg: step.msg || step.type, owner: TAB_ID, beat: Date.now(),
   };
   writeJournal([...readJournal(), entry]);
+  if (!journalBeatTimer) journalBeatTimer = setInterval(journalBeat, JOURNAL_BEAT_MS);
   return entry.id;
 }
 function dropJournal(id) { writeJournal(readJournal().filter((x) => x.id !== id)); }
 let journalRunning = false;
+let journalRecheck = null;
+// 실행 순서: 불러오기를 마친 state 기준(refresh 뒤에만 부름 — online에서도 refresh를 거침, S7)
+//  ① 다른 탭이 진행 중(owner·beat 신선)이면 건너뜀 ② 옛 형식·24시간 넘음 → 지움(안내)
+//  ③ 도착지 개수가 기록 때보다 늘지 않았으면 → 이동이 안 됐거나 사본이 정리됨 → 지움
+//  ④ 지울 대상 개수: 줄었으면 이미 정리됨, 늘었으면 같은 글이 새로 생김(안내) → 지움
+//  ⑤ 결과 모름 기록인데 원격 sha가 그 뒤 바뀜 → 자동으로 지우지 않음(안내)
 async function runJournal() {
   if (journalRunning || !state.token) return;
-  const list = readJournal().filter((j) => !liveJournal.has(j.id));
+  const all = readJournal().filter((j) => !liveJournal.has(j.id));
+  const busy = all.filter(ownedElsewhere);
+  const list = all.filter((j) => !ownedElsewhere(j));
+  // 다른 탭이 잡고 있는 기록은 그 탭이 멈췄을 때를 대비해 나중에 다시 확인
+  if (busy.length && !journalRecheck) journalRecheck = setTimeout(() => { journalRecheck = null; runJournal(); }, JOURNAL_STALE_MS + 1000);
   if (!list.length) return;
   journalRunning = true;
   let changed = false, doubtful = false;
@@ -1649,15 +1709,17 @@ async function runJournal() {
     for (const j of list) {
       const d = JOURNAL_OPS[j.type];
       if (!d) { dropJournal(j.id); continue; }
+      if (j.ver !== JOURNAL_VER || j.expectCount == null) { dropJournal(j.id); doubtful = true; continue; }
       if (Date.now() - new Date(j.at).getTime() > JOURNAL_MAX_AGE) { dropJournal(j.id); doubtful = true; continue; }
-      const destOk = (j.verify || []).every((v) => JOURNAL_VERIFY[v.k] && JOURNAL_VERIFY[v.k](v));
+      const destOk = (j.verify || []).every(destArrived);
       if (!destOk) { dropJournal(j.id); continue; } // 이동이 안 됐거나 사본이 이미 정리됨 → 남은 쪽은 건드리지 않음
       const now = d.count(...j.args);
-      if (j.expectCount != null && now !== j.expectCount) {
+      if (now !== j.expectCount) {
         dropJournal(j.id);
         if (now > j.expectCount) doubtful = true; // 같은 글이 새로 생김 → 자동으로 지우지 않음
         continue; // 줄었으면 이미 정리된 것
       }
+      if (j.uncertain && j.sha && d.store().sha !== j.sha) { dropJournal(j.id); doubtful = true; continue; }
       try {
         await d.store().commit(d.op(...j.args), { msg: `finish: ${j.msg}` });
         changed = true;
@@ -5090,7 +5152,7 @@ function init() {
     if (document.hidden) { flushOnLeave(); return; }
     if (state.token) refresh();
   });
-  window.addEventListener('pagehide', flushOnLeave);
+  window.addEventListener('pagehide', () => { flushOnLeave(); releaseJournal(); });
   // 저장 안 된 변경이 있으면 창을 닫을 때 브라우저 기본 경고(B8)
   window.addEventListener('beforeunload', (e) => {
     if (ALL_STORES().some((st) => st.hasPending())) {
@@ -5103,9 +5165,9 @@ function init() {
   window.addEventListener('offline', renderSync);
   window.addEventListener('online', () => {
     renderSync();
-    ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush(); });
     if (syncStatus.hasError) retryFailedSaves();
-    runJournal();
+    // 저장 대기분을 보내고 다시 불러온 뒤에 저널 확인(S7 — 오프라인 동안 바뀐 것을 모르는 state로 판정하지 않게)
+    if (state.token) refresh();
   });
 
   // 길게 누를 때 뜨는 기본 메뉴(Android 컨텍스트 메뉴 등)를 메모·할 일 행에서는 막는다
