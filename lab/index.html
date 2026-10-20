@@ -796,7 +796,7 @@
   <button class="bar-btn h" id="bar-high" aria-label="High로 보내기" title="High로 보내기">🍅</button>
   <button class="bar-btn m" id="bar-med" aria-label="Medium으로 보내기" title="Medium으로 보내기">🍋</button>
   <button class="bar-btn l" id="bar-low" aria-label="Low로 보내기" title="Low로 보내기">🥝</button>
-  <button class="bar-btn danger" id="bar-delete">🗑</button>
+  <button class="bar-btn" id="bar-delete" aria-label="보관함으로 옮기기" title="보관함으로 옮기기">📥</button>
 </div>
 
 <!-- Archive bulk action bar -->
@@ -805,7 +805,7 @@
   <span class="inbox-bar-label" id="archive-bar-label"></span>
   <button class="bar-btn ghost" id="archive-bar-select-all">전체선택</button>
   <button class="bar-btn" id="archive-bar-restore">↺ 복구</button>
-  <button class="bar-btn danger" id="archive-bar-purge">🗑</button>
+  <button class="bar-btn danger" id="archive-bar-purge" aria-label="완전히 지우기" title="완전히 지우기">🗑</button>
 </div>
 
 <!-- UX 실험실: 가짜 GitHub API (실제 데이터 미접근) -->
@@ -2110,7 +2110,7 @@ function renderInboxItem(item) {
     <button class="pri-mini h" title="High로 보내기" aria-label="High로 보내기">🍅</button>
     <button class="pri-mini m" title="Medium으로 보내기" aria-label="Medium으로 보내기">🍋</button>
     <button class="pri-mini l" title="Low로 보내기" aria-label="Low로 보내기">🥝</button>
-    <button class="row-btn danger" title="보관함으로 옮기기" aria-label="보관함으로 옮기기">×</button>
+    <button class="row-btn" title="보관함으로 옮기기" aria-label="보관함으로 옮기기">📥</button>
   `;
   actions.querySelectorAll('.pri-mini').forEach((btn) => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); onMoveToActive(item, btn.classList.contains('h') ? 'high' : btn.classList.contains('m') ? 'medium' : 'low'); });
@@ -2207,7 +2207,7 @@ function renderArchiveItem(entry) {
   del.className = 'row-btn danger';
   del.title = '완전히 지우기';
   del.setAttribute('aria-label', '완전히 지우기');
-  del.innerHTML = '×';
+  del.innerHTML = '🗑';
   del.addEventListener('click', (e) => { e.stopPropagation(); onPurge(entry); });
   actions.appendChild(restore);
   actions.appendChild(del);
