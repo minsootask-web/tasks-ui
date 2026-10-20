@@ -980,8 +980,12 @@ async function ghLoadMemos() {
   if (!res.ok) return;
   const data = await res.json();
   state.memosSha = data.sha;
-  try { state.memos = JSON.parse(base64ToUtf8(data.content)) || []; }
-  catch { state.memos = []; }
+  // 다시 불러와도 쓰는 중인 초안 메모는 남긴다
+  const drafts = state.memos.filter((x) => x._draft);
+  let loaded;
+  try { loaded = JSON.parse(base64ToUtf8(data.content)) || []; }
+  catch { loaded = []; }
+  state.memos = [...drafts, ...loaded.filter((x) => !drafts.some((d) => d.id === x.id))];
 }
 
 async function ghCreateMemos() {
@@ -998,7 +1002,8 @@ async function ghCreateMemos() {
 }
 
 async function ghSaveMemos(newMemos, message) {
-  const content = JSON.stringify(newMemos, null, 2) + '\n';
+  // 화면에만 있는 초안 메모(_draft)는 저장하지 않는다(A10)
+  const content = JSON.stringify(newMemos.filter((x) => !x._draft), null, 2) + '\n';
   const res = await fetch(MEMOS_API, {
     method: 'PUT',
     headers: {
@@ -1928,11 +1933,22 @@ function startEditMemo(div, m) {
     textEl.removeAttribute('contenteditable');
     div.classList.remove('editing');
     const newText = textEl.textContent.trim();
-    if (!commit) { textEl.textContent = m.text || ''; return; }
-    if (newText === (m.text || '')) return;
-    const newMemos = state.memos.map((x) => x.id === m.id ? { ...x, text: newText } : x);
-    try { await ghSaveMemos(newMemos, `memo: edit`); }
-    catch (e) { notifyError(e); textEl.textContent = m.text || ''; }
+    const cur = state.memos.find((x) => x.id === m.id) || m;
+    // 아직 저장 안 된 새 메모(초안): 비었거나 Esc면 저장 없이 조용히 사라진다(A10)
+    if (cur._draft && (!commit || !newText)) {
+      removeDraftMemo(div, m.id);
+      runDeferredRender();
+      return;
+    }
+    if (!commit) { textEl.textContent = cur.text || ''; runDeferredRender(); return; }
+    if (!cur._draft && newText === (cur.text || '')) { runDeferredRender(); return; }
+    // 기존 메모를 비우면 지운다(되돌리기 제공)
+    if (!cur._draft && !newText) {
+      runDeferredRender();
+      return deleteMemoWithUndo(cur);
+    }
+    await saveMemoText(m.id, newText, cur._draft);
+    runDeferredRender();
   };
   const onBlur = () => finish(true);
   const onKey = (e) => {
@@ -1941,6 +1957,47 @@ function startEditMemo(div, m) {
   };
   textEl.addEventListener('blur', onBlur);
   textEl.addEventListener('keydown', onKey);
+}
+
+// 초안 메모 제거 — 150ms 동안 흐려지며 사라짐(저장은 하지 않음)
+function removeDraftMemo(div, id) {
+  state.memos = state.memos.filter((x) => x.id !== id);
+  if (div) {
+    div.style.transition = 'opacity 150ms ease-out';
+    div.style.opacity = '0';
+    setTimeout(() => drawMemos(), 150);
+  } else drawMemos();
+}
+
+// 메모 글 저장(새 메모 추가 포함). 실패해도 쓴 글은 화면에 남기고 "다시 시도"를 준다.
+async function saveMemoText(id, text, isNew) {
+  const newMemos = state.memos.map((x) => (x.id === id ? { ...x, text, _draft: isNew ? true : undefined } : x));
+  // 저장 실패 시에도 글이 남도록 먼저 로컬에 반영
+  state.memos = newMemos;
+  const toSave = newMemos.map((x) => {
+    if (x.id !== id) return x;
+    const u = { ...x }; delete u._draft; return u;
+  });
+  try {
+    await ghSaveMemos(toSave, isNew ? 'memo: add' : 'memo: edit');
+  } catch (e) {
+    drawMemos();
+    notifyError(e, { retry: () => saveMemoText(id, text, isNew) });
+  }
+}
+
+// 기존 메모를 지우고 되돌리기를 준다(원래 col/order 그대로 복원)
+async function deleteMemoWithUndo(memo) {
+  try {
+    await ghSaveMemos(state.memos.filter((x) => x.id !== memo.id), 'memo: delete');
+    drawMemos();
+    notify.undo('메모를 지웠어요', async () => {
+      try {
+        await ghSaveMemos([...state.memos, memo], 'memo: undo delete');
+        drawMemos();
+      } catch (e) { notifyError(e); }
+    });
+  } catch (e) { drawMemos(); notifyError(e); }
 }
 
 async function onAddMemo() {
@@ -1954,25 +2011,21 @@ async function onAddMemo() {
   let targetCol = 0;
   for (let i = 1; i < cols; i++) if (counts[i] < counts[targetCol]) targetCol = i;
 
-  // Shift others in target column down by 1
-  const newMemos = state.memos.map((m) => {
-    if (Math.min(cols - 1, Math.max(0, memoCol(m))) === targetCol) {
-      return { ...m, col: targetCol, order: memoOrder(m) + 1, x: undefined, y: undefined };
-    }
-    return m;
-  });
+  // 새 메모는 글을 쓴 뒤에 저장한다(A10). 그 전까지는 화면에만 있는 초안.
+  // 맨 위에 오도록 그 열의 가장 작은 order보다 1 작게 — 다른 메모는 건드리지 않는다.
+  const inCol = state.memos.filter((m) => Math.min(cols - 1, Math.max(0, memoCol(m))) === targetCol);
+  const minOrder = inCol.length ? Math.min(...inCol.map(memoOrder)) : 1;
   const newMemo = {
     id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
     text: '',
     col: targetCol,
-    order: 0,
+    order: minOrder - 1,
+    _draft: true,
   };
-  try {
-    await ghSaveMemos([newMemo, ...newMemos], 'memo: add');
-    drawMemos();
-    const el = document.querySelector(`.memo[data-id="${newMemo.id}"]`);
-    if (el) startEditMemo(el, newMemo);
-  } catch (e) { notifyError(e); }
+  state.memos = [newMemo, ...state.memos];
+  drawMemos();
+  const el = document.querySelector(`.memo[data-id="${newMemo.id}"]`);
+  if (el) startEditMemo(el, newMemo);
 }
 
 async function onDeleteMemo(id) {
@@ -2794,6 +2847,7 @@ function hideSheet() {
     sheetLastFocus.focus();
   }
   sheetLastFocus = null;
+  setTimeout(runDeferredRender, 0);
 }
 
 // 시트가 열려 있는 동안 Tab 포커스를 시트 내부에 가둔다
@@ -3097,11 +3151,23 @@ function init() {
   }
 }
 
+let deferredRender = false;
+function isEditingUI() {
+  return !!document.querySelector('.memo.editing') || $('#sheet').classList.contains('show');
+}
+function runDeferredRender() {
+  if (!deferredRender || isEditingUI()) return;
+  deferredRender = false;
+  renderCurrent();
+}
+
 async function refresh() {
   if (!state.token) return;
   try {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
-    renderCurrent();
+    // 메모를 쓰는 중이거나 시트가 열려 있으면 화면을 다시 그리지 않고, 끝난 뒤에 그린다
+    if (isEditingUI()) deferredRender = true;
+    else renderCurrent();
   } catch (e) {
     if (e.code === 401) {
       localStorage.removeItem('gh_pat');
