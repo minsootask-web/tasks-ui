@@ -105,6 +105,7 @@
   //   __takoMockFail = [ 규칙, 규칙 … ]               → 첫 번째로 맞는 규칙 적용
   //   file 생략 = 모든 파일, method 생략 = 'PUT', times 생략 = 무제한(숫자면 그 횟수만 실패 후 해제)
   //   offline: true 이면 응답 대신 네트워크 오류(TypeError)
+  //   lost: true 이면 PUT을 실제로 반영한 뒤 응답 대신 네트워크 오류(결과를 알 수 없는 실패)
   function matchFailRule(file, method) {
     var f = window.__takoMockFail;
     if (!f) return null;
@@ -136,6 +137,12 @@
     var method = (init && init.method || 'GET').toUpperCase();
     window.__takoMockLog.push({ t: Date.now(), method: method, file: file });
     var rule = matchFailRule(file, method);
+    // lost: 서버에는 반영됐는데 응답이 오기 전에 연결이 끊긴 상황(결과를 알 수 없는 실패, Q8 재현)
+    if (rule && rule.lost && method === 'PUT') {
+      var b0 = JSON.parse(init.body || '{}'); var c0 = read(file);
+      if (c0 == null || b0.sha === sha(c0)) write(file, base64ToUtf8(b0.content));
+      return new Promise(function (res, rej) { setTimeout(function () { rej(new TypeError('Failed to fetch')); }, LATENCY); });
+    }
     if (rule) {
       if (rule.offline) {
         return new Promise(function (res, rej) { setTimeout(function () { rej(new TypeError('Failed to fetch')); }, LATENCY); });

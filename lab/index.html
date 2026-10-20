@@ -1173,8 +1173,8 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
         bad.forEach(({ p, e }) => { batch.splice(batch.indexOf(p), 1); dropOp(p, e); });
         if (!batch.length) { syncStatus.ok(file); recompute(); return; }
         const msg = batch.length === 1 ? batch[0].msg : `${batch[batch.length - 1].msg} (+${batch.length - 1})`;
+        const text = serialize(next);
         try {
-          const text = serialize(next);
           s.sha = await ghPut(url, text, s.sha, msg, { keepalive });
           s.gen++;
           s.base = next;
@@ -1190,6 +1190,21 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
             await s.reloadBase();
             rebased = true;
             continue;
+          }
+          if (e.network) {
+            // 결과를 알 수 없는 실패(응답 전에 연결 끊김)(Q8): 서버에 이미 반영됐을 수 있으니
+            // 원격본을 받아 우리가 보낸 내용과 같으면 성공으로 처리(같은 할 일 2개 방지)
+            let applied = false;
+            try { applied = (await s.reloadBase()) && serialize(s.base) === text; } catch (e2) { /* 아직 연결 안 됨 */ }
+            if (applied) {
+              s.gen++;
+              s.pending = s.pending.filter((p) => !batch.includes(p));
+              recompute();
+              syncStatus.ok(file);
+              batch.forEach((p) => p.done.resolve());
+              if (rebased) onRebase && onRebase();
+              return;
+            }
           }
           throw e;
         }
