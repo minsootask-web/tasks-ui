@@ -555,6 +555,7 @@
   }
 
   /* Archive */
+  .archive-parent { margin-left: 0; font-size: 12px; }
   .archive-badge {
     display: inline-flex; align-items: center; justify-content: center;
     width: 22px; height: 22px; flex-shrink: 0;
@@ -1307,6 +1308,41 @@ function adjustBlockIndent(block, deltaIndent) {
   });
 }
 
+// 부모 줄(parentIdx)의 마지막 하위 항목 바로 다음 위치
+function childInsertIndex(lines, parentIdx) {
+  const parentIndent = getLineIndent(lines[parentIdx]);
+  let insertAt = parentIdx + 1;
+  while (insertAt < lines.length) {
+    const l = lines[insertAt];
+    if (l.startsWith('## ')) break;
+    if (l.trim() === '') { insertAt++; continue; }
+    if (getLineIndent(l) <= parentIndent) break;
+    insertAt++;
+  }
+  return insertAt;
+}
+
+// 보관함 항목을 active.md 줄 배열에 되돌린다.
+// 하위 할 일(entry.parent 있음)은 같은 섹션에 부모가 있으면 그 부모의 마지막 하위로,
+// 없으면 상위 항목으로 섹션 끝에 넣는다(A6). 들여쓴 채 섹션 끝에 넣으면 엉뚱한 부모에 붙기 때문.
+function restoreBlockInto(lines, entry) {
+  const block = entry.block || [];
+  if (!block.length) return;
+  if (entry.parent) {
+    const headerIdx = ensureSectionHeader(lines, entry.priority);
+    for (let i = headerIdx + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
+      const m = lines[i].match(/^(\s*)- \[[ xX]\] (.*)$/);
+      if (m && m[2] === entry.parent) {
+        const at = childInsertIndex(lines, i);
+        const indented = adjustBlockIndent(block, getLineIndent(lines[i]) + 1 - getLineIndent(block[0]));
+        lines.splice(at, 0, ...indented);
+        return;
+      }
+    }
+  }
+  insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));
+}
+
 function moveLineToSection(lineIndex, targetKey) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, lineIndex);
@@ -1355,16 +1391,7 @@ function moveLineToPosition(srcLineIndex, target) {
   if (target.intoLine != null) {
     let parentIdx = target.intoLine;
     if (parentIdx > start) parentIdx -= blockLen;
-    const parentIndent = getLineIndent(lines[parentIdx]);
-    let insertAt = parentIdx + 1;
-    while (insertAt < lines.length) {
-      const l = lines[insertAt];
-      if (l.startsWith('## ')) break;
-      if (l.trim() === '') { insertAt++; continue; }
-      if (getLineIndent(l) <= parentIndent) break;
-      insertAt++;
-    }
-    lines.splice(insertAt, 0, ...block);
+    lines.splice(childInsertIndex(lines, parentIdx), 0, ...block);
     return lines.join('\n');
   }
 
@@ -1508,7 +1535,8 @@ function renderArchiveItem(entry) {
     ? (entry.block?.[0] || '').replace(/^\s*- \[[ xX]\] /, '')
     : (entry.text || '');
   const extraCount = entry.source === 'active' && entry.block && entry.block.length > 1 ? entry.block.length - 1 : 0;
-  text.innerHTML = esc(firstLine) + (extraCount ? ` <span class="meta-inline">+${extraCount}</span>` : '');
+  text.innerHTML = esc(firstLine) + (extraCount ? ` <span class="meta-inline">+${extraCount}</span>` : '')
+    + (entry.parent ? `<div class="meta-inline archive-parent">↳ ${esc(entry.parent)}</div>` : '');
   cb.setAttribute('aria-label', `선택: ${firstLine}`);
 
   const actions = document.createElement('div');
@@ -1568,10 +1596,7 @@ async function onBulkRestore() {
     if (activeEntries.length) {
       await ghLoad();
       const lines = state.content.split('\n');
-      activeEntries.forEach((entry) => {
-        const block = entry.block || [];
-        if (block.length) insertIntoSection(lines, entry.priority, block);
-      });
+      activeEntries.forEach((entry) => restoreBlockInto(lines, entry));
       await ghSave(lines.join('\n'), `restore ${activeEntries.length} from archive`);
     }
 
@@ -1623,6 +1648,15 @@ async function archiveActiveTask(item) {
     priority,
     block,
   };
+  // 하위 할 일: 들여쓰기를 0으로 맞춰 보관하고, 복구할 자리를 찾도록 부모 글을 함께 남긴다(A6)
+  const baseIndent = getLineIndent(lines[start]);
+  if (baseIndent > 0) {
+    entry.block = adjustBlockIndent(block, -baseIndent);
+    for (let i = start - 1; i >= 0 && !lines[i].startsWith('## '); i--) {
+      const m = lines[i].match(/^(\s*)- \[[ xX]\] (.*)$/);
+      if (m && getLineIndent(lines[i]) < baseIndent) { entry.parent = m[2]; break; }
+    }
+  }
   await ghLoadArchive();
   await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
   // archive.json을 저장하는 사이 active.md가 바뀌었을 수 있으니 위치를 다시 확인한다
@@ -1647,9 +1681,8 @@ async function onRestore(entry) {
     if (entry.source === 'active') {
       await ghLoad();
       const lines = state.content.split('\n');
-      const block = entry.block;
-      insertIntoSection(lines, entry.priority, block);
-      await ghSave(lines.join('\n'), `restore: ${block[0]}`);
+      restoreBlockInto(lines, entry);
+      await ghSave(lines.join('\n'), `restore: ${entry.block[0]}`);
     } else if (entry.source === 'inbox') {
       await ghLoadInbox();
       let c = state.inboxContent;
@@ -2278,10 +2311,7 @@ async function undoArchive(entries) {
   try {
     await ghLoad();
     const lines = state.content.split('\n');
-    entries.forEach((entry) => {
-      const block = entry.block || [];
-      if (block.length) insertIntoSection(lines, entry.priority, block);
-    });
+    entries.forEach((entry) => restoreBlockInto(lines, entry));
     await ghSave(lines.join('\n'), `undo archive: restore ${entries.length}`);
     await ghLoadArchive();
     await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `undo archive: ${entries.length}`);
@@ -2431,7 +2461,8 @@ function renderTask(item, key, opts = {}) {
 
   const del = document.createElement('button');
   del.className = 'row-btn danger';
-  del.title = item.indent === 0 ? '보관함으로 이동' : '삭제';
+  del.title = '보관함으로 이동';
+  del.setAttribute('aria-label', `보관함으로 이동: ${item.text}`);
   del.innerHTML = '×';
   del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
   actions.appendChild(del);
@@ -2574,17 +2605,7 @@ function onEdit(lineIndex, text) {
 }
 
 async function onDelete(item) {
-  if (item.indent > 0) {
-    if (!confirm(`삭제할까요?\n\n"${item.text}"`)) return;
-    // 앞선 변경이 끝난 뒤 실제 줄 위치를 다시 찾아 지운다
-    return serializeActive(async () => {
-      try {
-        await ghSave(deleteAt(resolveLineIndex(item)), `delete sub: ${item.text}`);
-        renderApp();
-        toast('삭제됨');
-      } catch (e) { notifyError(e); }
-    });
-  }
+  // 상위·하위 모두 보관함으로(하위만 영구 삭제되던 문제 A6)
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
   return serializeActive(async () => {
     try {
