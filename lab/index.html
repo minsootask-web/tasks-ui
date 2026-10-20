@@ -4938,6 +4938,15 @@ function onComposerFailed(failed, err) {
 // ============ Init ============
 // [lab 전용] fail closed(C2): 가짜 API(mock-github.js)가 실제로 로드돼 fetch를 가로채고 있을 때만 시작한다.
 // mock이 없으면 실제 GitHub(tasks-data)에 쓰게 되므로 아무것도 하지 않고 안내만 보인다. 본 서비스에서는 이 함수와 호출을 지운다.
+// 글을 입력하는 요소인지(단축키 양보 기준, S2)
+function isTextEntry(el) {
+  if (!el || el === document.body) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName !== 'INPUT') return false;
+  return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image'].includes((el.type || 'text').toLowerCase());
+}
+
 function labMockGuard() {
   if (window.__TAKO_LAB_MOCK === true) return true;
   document.getElementById('app').innerHTML =
@@ -4985,6 +4994,8 @@ function init() {
     $('#composer-send').disabled = composerInput.value.trim() === '';
   });
   composerInput.addEventListener('keydown', (e) => {
+    // Esc = 입력창에서 빠져나가기(그다음 Cmd/Ctrl+Z·단축키 사용). 쓰던 글은 그대로 둔다
+    if (e.key === 'Escape' && !composerIme.composing && !e.isComposing) { e.preventDefault(); composerInput.blur(); return; }
     if (e.key !== 'Enter') return;
     // 조합 중 Enter는 한글 확정용이므로 추가하지 않는다 (keyCode 229 = IME 처리 중)
     if (composerIme.composing || e.isComposing || e.keyCode === 229) return;
@@ -5011,23 +5022,25 @@ function init() {
   toastEl.addEventListener('pointerenter', pauseToast);
   toastEl.addEventListener('pointerleave', resumeToast);
   toastEl.addEventListener('pointerdown', pauseToast);
-  // 입력창 포커스 단축키(D3): / 또는 N. e.code로 판정해 한글 입력 상태에서도 동작. 글 입력 중·시트 열림 중엔 무시
+  // 단축키 공통 규칙(S2·S14): 글을 입력하는 요소에 포커스가 있을 때만 양보한다(체크박스·버튼 포커스는 해당 없음 —
+  // 체크한 뒤 포커스가 체크박스에 남아도 Cmd/Ctrl+Z·/·N이 동작). 시트·더보기 메뉴가 열려 있으면 뒤 화면을 건드리지 않음
+  const shortcutBlocked = () => isTextEntry(document.activeElement) || $('#sheet').classList.contains('show')
+    || !!document.querySelector('#more-menu.show');
+  // 입력창 포커스 단축키(D3): / 또는 N. e.code(한글 입력 상태)와 e.key(/ 자리가 다른 자판·가상 키보드) 모두 받음
   document.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
-    if (e.code !== 'Slash' && e.code !== 'KeyN') return;
-    const ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
-    if ($('#sheet').classList.contains('show')) return;
+    if (e.code !== 'Slash' && e.code !== 'KeyN' && e.key !== '/') return;
+    if (shortcutBlocked()) return;
     const box = $('#composer');
     if (!composerMode || box.hidden) return;
     e.preventDefault();
     $('#composer-input').focus();
   });
   document.addEventListener('keydown', (e) => {
-    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
+    // e.code KeyZ(한글 입력 상태에서 e.key가 "ㅋ")와 e.key z(QWERTZ 등) 모두
+    if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || (e.code !== 'KeyZ' && String(e.key).toLowerCase() !== 'z')) return;
     // 입력 중에는 브라우저 기본 되돌리기(글자 취소)를 그대로 둔다
-    const ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+    if (shortcutBlocked()) return;
     if (toastState.action && toastState.action.undo) {
       e.preventDefault();
       lastUndo = null;
