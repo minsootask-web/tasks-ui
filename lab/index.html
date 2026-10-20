@@ -266,20 +266,6 @@
     padding: 12px 10px; color: var(--muted); font-size: 13px; font-style: italic;
   }
 
-  /* FAB - Add button */
-  .fab {
-    position: fixed; right: 20px; bottom: calc(var(--safe-bottom) + 20px);
-    width: 56px; height: 56px; border-radius: 50%;
-    background: var(--accent); color: var(--accent-fg);
-    border: 0; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 26px; font-weight: 300;
-    box-shadow: var(--shadow);
-    z-index: 10;
-    transition: transform 0.12s;
-  }
-  .fab[hidden] { display: none; }
-  .fab:active { transform: scale(0.94); }
 
   /* 플로팅 컴포저 (Task 탭) — 메신저/프롬프트 입력창 스타일 */
   .composer {
@@ -312,9 +298,17 @@
   .composer-pri:active { transform: scale(0.9); }
   .composer-input {
     flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
-    font-size: 15px; color: var(--text); font-family: inherit;
-    padding: 9px 4px;
+    font-size: 15px; color: var(--text); font-family: inherit; line-height: 20px;
+    padding: 9px 4px; resize: none; height: 38px; max-height: 98px; /* 메모는 최대 4줄 */
+    overflow-y: auto; display: block;
   }
+  .composer-inner { align-items: flex-end; }
+  .composer.mode-inbox .composer-pri, .composer.mode-memo .composer-pri { display: none; }
+  .composer.mode-inbox .composer-inner, .composer.mode-memo .composer-inner { padding-left: 14px; }
+  body.no-composer { padding-bottom: calc(var(--safe-bottom) + 32px); }
+  .memo.fade-in { animation: memo-in 200ms cubic-bezier(.2,.8,.2,1); }
+  @keyframes memo-in { from { opacity: 0; transform: translateY(-4px); } }
+  @media (prefers-reduced-motion: reduce) { .memo.fade-in { animation: none; } }
   .composer-input::placeholder { color: var(--muted); }
   .composer-send {
     flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
@@ -697,13 +691,12 @@
 
 <div class="wrap" id="app"></div>
 
-<button class="fab" id="fab" aria-label="추가" hidden>+</button>
 
-<!-- 플로팅 컴포저 (Task 탭 전용) -->
+<!-- 하단 입력창 — Task·Inbox·Memo 공용(B5). Archive에는 없음 -->
 <div class="composer" id="composer" hidden>
   <div class="composer-inner">
     <button class="composer-pri" id="composer-pri" type="button" aria-label="우선순위 선택">🍋</button>
-    <input class="composer-input" id="composer-input" type="text" placeholder="할 일 입력…" autocomplete="off" enterkeyhint="send" aria-label="할 일 입력">
+    <textarea class="composer-input" id="composer-input" rows="1" placeholder="할 일 입력…" autocomplete="off" enterkeyhint="send" aria-label="할 일 입력"></textarea>
     <button class="composer-send" id="composer-send" type="button" aria-label="추가" disabled>+</button>
   </div>
 </div>
@@ -1742,6 +1735,7 @@ function updateInboxBar() {
   const n = selectedInbox.size;
   const all = state.inboxItems.length;
   bar.classList.toggle('show', n > 0);
+  syncComposerVisibility();
   if (n > 0) {
     $('#inbox-bar-label').textContent = `${n}개 선택`;
     $('#bar-select-all').textContent = n === all ? '전체해제' : '전체선택';
@@ -1761,8 +1755,7 @@ function renderInbox() {
   const list = $('#inbox-list');
   state.inboxItems.forEach((item) => list.appendChild(renderInboxItem(item)));
   updateInboxBar();
-  $('#fab').hidden = false;
-  $('#composer').hidden = true;
+  setComposerMode('inbox');
 }
 
 function renderInboxItem(item) {
@@ -1829,8 +1822,7 @@ function renderArchive() {
   const list = $('#archive-list');
   items.forEach((entry) => list.appendChild(renderArchiveItem(entry)));
   updateArchiveBar();
-  $('#fab').hidden = false;
-  $('#composer').hidden = true;
+  setComposerMode(null);
 }
 
 function renderArchiveItem(entry) {
@@ -2027,8 +2019,7 @@ function renderMemos() {
   `;
   bindTabEvents();
   drawMemos();
-  $('#fab').hidden = false;
-  $('#composer').hidden = true;
+  setComposerMode('memo');
 }
 
 function memoCol(m) {
@@ -2368,34 +2359,6 @@ async function deleteMemoWithUndo(memo) {
   } catch (e) { drawMemos(); notifyError(e); }
 }
 
-async function onAddMemo() {
-  // 가장 짧은 열 맨 위에 넣는다. 열은 화면이 아니라 저장 기준(PC 3열, 봇과 같은 규칙) — A5
-  const cols = MEMO_MAX_COLS;
-  const counts = Array.from({ length: cols }, () => 0);
-  state.memos.forEach((m) => {
-    const c = Math.min(cols - 1, Math.max(0, memoCol(m)));
-    counts[c]++;
-  });
-  let targetCol = 0;
-  for (let i = 1; i < cols; i++) if (counts[i] < counts[targetCol]) targetCol = i;
-
-  // 새 메모는 글을 쓴 뒤에 저장한다(A10). 그 전까지는 화면에만 있는 초안.
-  // 맨 위에 오도록 그 열의 가장 작은 order보다 1 작게 — 다른 메모는 건드리지 않는다.
-  const inCol = state.memos.filter((m) => Math.min(cols - 1, Math.max(0, memoCol(m))) === targetCol);
-  const minOrder = inCol.length ? Math.min(...inCol.map(memoOrder)) : 1;
-  const newMemo = {
-    id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
-    text: '',
-    col: targetCol,
-    order: minOrder - 1,
-    _draft: true,
-  };
-  memoDrafts = [newMemo, ...memoDrafts];
-  syncMemoView();
-  drawMemos();
-  const el = document.querySelector(`.memo[data-id="${newMemo.id}"]`);
-  if (el) startEditMemo(el, newMemo);
-}
 
 async function onDeleteMemo(id) {
   const m = state.memos.find((x) => x.id === id);
@@ -2883,9 +2846,7 @@ function renderApp() {
   const root = $('#sections');
   if (syncStatus.loading && !state.sections.length) {
     root.innerHTML = skeletonHTML();
-    $('#fab').hidden = true;
-    $('#composer').hidden = false;
-    updateComposerPriBtn();
+    setComposerMode('active');
     return;
   }
   ['high','medium','low'].forEach((key) => {
@@ -2941,10 +2902,7 @@ function renderApp() {
     }
     root.appendChild(div);
   });
-  // Task 탭: FAB 대신 플로팅 컴포저 사용
-  $('#fab').hidden = true;
-  $('#composer').hidden = false;
-  updateComposerPriBtn();
+  setComposerMode('active');
 }
 
 // 상위 항목 + 그 하위들을 한 블록으로 묶는다(섹션이 들여쓴 줄로 시작해도 버리지 않음)
@@ -3101,8 +3059,7 @@ function renderTask(item, key, opts = {}) {
 }
 
 function renderSetup() {
-  $('#fab').hidden = true;
-  $('#composer').hidden = true;
+  setComposerMode(null);
   $('#app').innerHTML = `
     <div class="setup">
       <h1>초기 설정</h1>
@@ -3472,18 +3429,6 @@ function onDragEnd() {
 }
 
 // ============ Sheet (add/edit) ============
-function openAddSheet() {
-  sheetMode = 'add';
-  editingLine = -1;
-  editingItem = null;
-  editingIsSub = false;
-  $('#pri-picker').closest('.field').hidden = false;
-  $('#sheet-title').textContent = '새 할 일';
-  $('#sub-field').hidden = true;
-  $('#sheet-text').value = '';
-  selectPriority('medium');
-  showSheet();
-}
 
 // 우선순위 라디오 선택 상태(class·aria-checked·roving tabindex)를 일괄 갱신
 function selectPriority(pri) {
@@ -3560,16 +3505,6 @@ function addSubFromSheet() {
   });
 }
 
-function openInboxSheet() {
-  sheetMode = 'inbox';
-  editingLine = -1;
-  editingItem = null;
-  $('#sheet-title').textContent = 'Inbox에 추가';
-  $('#sub-field').hidden = true;
-  $('#sheet-text').value = '';
-  $('#pri-picker').closest('.field').hidden = true;
-  showSheet();
-}
 
 function openEditSheet(item) {
   sheetMode = 'edit';
@@ -3740,14 +3675,92 @@ function cycleComposerPriority() {
 // 비운 입력창으로 되돌아와 '기'처럼 한 글자짜리 항목이 하나 더 생긴다.
 const composerIme = { composing: false, sentWhileComposing: false };
 
+// ---- 하단 입력창 모드(B5): 'active' | 'inbox' | 'memo' | null(없음) ----
+let composerMode = null;
+const composerDrafts = { active: '', inbox: '', memo: '' }; // 탭을 옮겨도 쓰던 글 유지
+const COMPOSER_PLACEHOLDER = { active: '할 일 입력…', inbox: 'Inbox에 적어 두기', memo: '메모 남기기' };
+function setComposerMode(mode) {
+  const input = $('#composer-input');
+  if (composerMode && composerMode !== mode) composerDrafts[composerMode] = input.value;
+  const changed = composerMode !== mode;
+  composerMode = mode;
+  const box = $('#composer');
+  box.classList.remove('mode-active', 'mode-inbox', 'mode-memo');
+  document.body.classList.toggle('no-composer', !mode);
+  if (!mode) { box.hidden = true; return; }
+  box.classList.add(`mode-${mode}`);
+  if (changed) {
+    input.value = composerDrafts[mode] || '';
+    input.placeholder = COMPOSER_PLACEHOLDER[mode];
+    input.setAttribute('aria-label', COMPOSER_PLACEHOLDER[mode].replace('…', ''));
+    autoGrowComposer();
+  }
+  $('#composer-send').disabled = input.value.trim() === '';
+  if (mode === 'active') updateComposerPriBtn();
+  syncComposerVisibility();
+}
+// 선택 모드에서는 입력창 대신 선택 바만 보인다
+function syncComposerVisibility() {
+  const selecting = (currentTab === 'inbox' && selectedInbox.size > 0) || (currentTab === 'archive' && selectedArchive.size > 0);
+  $('#composer').hidden = !composerMode || selecting;
+}
+function autoGrowComposer() {
+  const input = $('#composer-input');
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 98) + 'px';
+}
+
 function quickAdd() {
   const input = $('#composer-input');
-  const text = input.value.trim();
-  if (!text) return;
+  const text = composerMode === 'memo' ? input.value.replace(/\s+$/, '').replace(/^\s*\n/, '') : input.value.trim();
+  if (!text.trim() || !composerMode) return;
   input.value = '';
+  autoGrowComposer();
   composerIme.sentWhileComposing = true; // 전송 뒤 되돌아오는 조합 잔여 문자 제거용
   $('#composer-send').disabled = true;
-  addFromComposer({ text, pri: composerPriority });
+  submitComposerJob({ mode: composerMode, text, pri: composerPriority });
+}
+
+function submitComposerJob(job) {
+  if (job.mode === 'inbox') addInboxFromComposer(job);
+  else if (job.mode === 'memo') addMemoFromComposer(job);
+  else addFromComposer(job);
+}
+
+// 실패한 입력을 같은 묶음끼리 모아 한 번에 알린다
+function reportComposerFailure(job, e) {
+  composerFailed.jobs.push(job);
+  composerFailed.err = e;
+  clearTimeout(composerFailed.timer);
+  composerFailed.timer = setTimeout(() => {
+    const jobs = composerFailed.jobs.splice(0);
+    renderCurrent();
+    onComposerFailed(jobs, composerFailed.err);
+  }, 0);
+}
+
+function addInboxFromComposer(job) {
+  const pr = inboxStore.apply(opInboxAppend([job.text]), { msg: `inbox: add ${job.text}` });
+  if (currentTab === 'inbox') renderInbox(); else renderCurrent();
+  pr.catch((e) => reportComposerFailure(job, e));
+}
+
+// 새 메모는 보드 맨 앞(1열 맨 위)에 200ms 페이드인
+function addMemoFromComposer(job) {
+  const inCol0 = state.memos.filter((m) => Math.min(MEMO_MAX_COLS - 1, Math.max(0, memoCol(m))) === 0);
+  const minOrder = inCol0.length ? Math.min(...inCol0.map(memoOrder)) : 1;
+  const memo = {
+    id: Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
+    text: job.text,
+    col: 0,
+    order: minOrder - 1,
+  };
+  const pr = memosStore.apply(opMemoAdd(memo), { msg: 'memo: add' });
+  if (currentTab === 'memo') {
+    drawMemos();
+    document.querySelector(`.memo[data-id="${memo.id}"]`)?.classList.add('fade-in');
+  }
+  pr.catch((e) => reportComposerFailure(job, e));
 }
 
 // 즉시 반영(B9): 행을 바로 그리고 저장은 뒤에서. 실패하면 행을 거두고 글을 입력창으로(A1)
@@ -3757,17 +3770,7 @@ function addFromComposer(job) {
   renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
   const inp = $('#composer-input');
   if (inp && currentTab === 'active' && document.activeElement !== inp) inp.focus();
-  pr.catch((e) => {
-    // 같은 묶음에서 여러 개가 실패하면 한 번에 알린다
-    composerFailed.jobs.push(job);
-    composerFailed.err = e;
-    clearTimeout(composerFailed.timer);
-    composerFailed.timer = setTimeout(() => {
-      const jobs = composerFailed.jobs.splice(0);
-      renderApp();
-      onComposerFailed(jobs, composerFailed.err);
-    }, 0);
-  });
+  pr.catch((e) => reportComposerFailure(job, e));
 }
 
 // 입력창 추가 실패(A1): 쓴 글을 입력창에 되돌리고 "다시 시도"를 준다. 글은 절대 버리지 않는다.
@@ -3776,14 +3779,16 @@ function onComposerFailed(failed, err) {
   const input = $('#composer-input');
   const first = failed[0];
   let restored = null;
-  // 그 사이 새 글을 쓰고 있으면 덮어쓰지 않는다
-  if (input.value.trim() === '') {
+  // 같은 입력창(탭)이 열려 있고, 그 사이 새 글을 쓰고 있지 않을 때만 되돌려 넣는다
+  if (composerMode === first.mode && input.value.trim() === '') {
     input.value = first.text;
-    composerPriority = first.pri;
-    updateComposerPriBtn();
+    if (first.mode === 'active') { composerPriority = first.pri; updateComposerPriBtn(); }
     $('#composer-send').disabled = false;
+    autoGrowComposer();
     try { input.setSelectionRange(first.text.length, first.text.length); } catch (e) {}
     restored = first.text;
+  } else if (!composerDrafts[first.mode]) {
+    composerDrafts[first.mode] = first.text; // 다른 탭에 있으면 그 탭 입력창에 남겨 둔다
   }
   const msg = failed.length > 1 ? `${failed.length}개를 저장하지 못했어요` : friendlyError(err, '저장하지 못했어요');
   notify.error(msg, {
@@ -3794,7 +3799,7 @@ function onComposerFailed(failed, err) {
         if (input.value === restored) { input.value = ''; $('#composer-send').disabled = true; }
         else jobs = failed.slice(1);
       }
-      jobs.forEach(addFromComposer);
+      jobs.forEach(submitComposerJob);
     },
   });
 }
@@ -3802,11 +3807,6 @@ function onComposerFailed(failed, err) {
 // ============ Init ============
 function init() {
   updateThemeColorMeta();
-  $('#fab').addEventListener('click', () => {
-    if (currentTab === 'memo') onAddMemo();
-    else if (currentTab === 'inbox' || currentTab === 'archive') openInboxSheet();
-    else openAddSheet();
-  });
 
   bindBarEvents();
   $('#archive-bar-select-all')?.addEventListener('click', () => {
@@ -3842,9 +3842,15 @@ function init() {
     if (e.key !== 'Enter') return;
     // 조합 중 Enter는 한글 확정용이므로 추가하지 않는다 (keyCode 229 = IME 처리 중)
     if (composerIme.composing || e.isComposing || e.keyCode === 229) return;
+    // 메모: Shift+Enter = 줄바꿈. 터치 기기(키보드에 줄바꿈 키뿐)에서는 Enter = 줄바꿈, 추가는 + 버튼
+    if (composerMode === 'memo') {
+      const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (e.shiftKey || touch) return;
+    } else if (e.shiftKey) { e.preventDefault(); return; }
     e.preventDefault();
     quickAdd();
   });
+  composerInput.addEventListener('input', autoGrowComposer);
 
   // 토스트: 올라가 있는 동안 시간 멈춤, Cmd/Ctrl+Z = 되돌리기
   const toastEl = $('#toast');
