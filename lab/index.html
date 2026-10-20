@@ -4039,7 +4039,12 @@ function onDragMove(e) {
     if (dragCtx.intoEl) { dragCtx.intoEl.classList.remove('drop-into'); dragCtx.intoEl = null; }
   };
 
-  if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
+  if (taskUnder && card.contains(taskUnder) && isOwnBlock(taskUnder)) {
+    // 자기 블록 위 = 제자리(B-3): 놓으면 아무 일도 없음
+    clearInto();
+    indicator.remove();
+    dragCtx.target = null;
+  } else if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
     const r = taskUnder.getBoundingClientRect();
     const y = e.clientY - r.top;
     // 하위로 넣기는 오른쪽으로 24px 이상 끌었을 때만(B7). 그 외에는 행의 위·아래 절반으로 순서만 바꾼다
@@ -4129,6 +4134,10 @@ function onDragEnd(e) {
   const lines = state.content.split('\n');
   const ref = (n) => (n == null ? null : { lineIndex: n, raw: lines[n] });
   const t = { sectionKey: target.sectionKey, indent: target.indent, beforeItem: ref(target.beforeLine), intoItem: ref(target.intoLine) };
+  // 옮겨도 내용이 그대로면(제자리·바로 위아래 틈) 저장하지 않음(B-3 — 섹션 끝으로 가던 문제)
+  try {
+    if (opMove(srcItem || ref(srcLine), t)(state.content) === state.content) { renderApp(); return; }
+  } catch (e) { /* 아래 safeMutate가 알림 */ }
   return safeMutate(
     opMove(srcItem || ref(srcLine), t),
     `move: ${SECTION_KEYS[target.sectionKey]}`,
