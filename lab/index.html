@@ -158,8 +158,8 @@
 
   .section { margin-bottom: 22px; }
   .section-title {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-    color: var(--text); margin: 0 0 8px 0; text-transform: uppercase;
+    font-size: 13px; font-weight: 600; letter-spacing: 0;
+    color: var(--text); margin: 0 0 8px 0;
     display: flex; align-items: center; gap: 8px; padding-left: 4px;
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -657,7 +657,7 @@
 
 <div class="wrap" id="app"></div>
 
-<button class="fab" id="fab" aria-label="Add task" hidden>+</button>
+<button class="fab" id="fab" aria-label="추가" hidden>+</button>
 
 <!-- 플로팅 컴포저 (Task 탭 전용) -->
 <div class="composer" id="composer" hidden>
@@ -683,7 +683,7 @@
   </div>
   <div class="field">
     <label>내용</label>
-    <input type="text" id="sheet-text" placeholder="할 일을 입력하세요" autocomplete="off">
+    <input type="text" id="sheet-text" placeholder="할 일을 적어 주세요" autocomplete="off">
   </div>
   <div class="sheet-err" id="sheet-err" role="alert" hidden></div>
   <div class="actions">
@@ -1204,7 +1204,7 @@ const opArchiveAdd = (entries) => (list) => [...list, ...entries.filter((e) => !
 const opArchiveRemove = (ids) => (list) => list.filter((x) => !ids.includes(x.id));
 const opMemoReplace = (fn) => (list) => fn(list);
 const memoGone = () => {
-  const msg = '메모가 이미 바뀌었어요 — 새로고침 후 다시 해 주세요';
+  const msg = '메모가 이미 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
   return Object.assign(new Error(msg), { userMessage: msg, gone: true });
 };
 const opMemoEdit = (id, text) => (list) => {
@@ -1505,7 +1505,7 @@ function resolveLineIndex(item, lines) {
     if (before >= 0 && normLine(ls[before]) === want) return before;
     if (after < ls.length && normLine(ls[after]) === want) return after;
   }
-  const msg = '목록이 바뀌었어요 — 새로고침 후 다시 시도해주세요';
+  const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
   throw Object.assign(new Error(msg), { userMessage: msg, gone: true });
 }
 
@@ -1513,7 +1513,7 @@ function resolveLineIndex(item, lines) {
 function assertItemLine(lines, idx) {
   const l = lines[idx];
   if (l == null || /^##\s/.test(l) || l.trim() === '') {
-    const msg = '대상 줄을 찾지 못했어요 — 새로고침 후 다시 시도해주세요';
+    const msg = '항목을 찾지 못했어요. 새로 불러온 뒤 다시 해 주세요';
     throw Object.assign(new Error(msg), { userMessage: msg, gone: true });
   }
 }
@@ -1744,7 +1744,7 @@ function renderInboxItem(item) {
     <button class="pri-mini h" title="High로 보내기" aria-label="High로 보내기">🍅</button>
     <button class="pri-mini m" title="Medium으로 보내기" aria-label="Medium으로 보내기">🍋</button>
     <button class="pri-mini l" title="Low로 보내기" aria-label="Low로 보내기">🥝</button>
-    <button class="row-btn danger" title="삭제">×</button>
+    <button class="row-btn danger" title="보관함으로 옮기기" aria-label="보관함으로 옮기기">×</button>
   `;
   actions.querySelectorAll('.pri-mini').forEach((btn) => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); onMoveToActive(item, btn.classList.contains('h') ? 'high' : btn.classList.contains('m') ? 'medium' : 'low'); });
@@ -1811,7 +1811,7 @@ function renderArchiveItem(entry) {
     meta.title = `Task · ${p.label}`;
   } else {
     meta.textContent = '🥚';
-    meta.title = 'Inbox';
+    meta.title = 'Inbox에서 보관함';
   }
 
   const text = document.createElement('div');
@@ -1828,12 +1828,14 @@ function renderArchiveItem(entry) {
   actions.className = 'inbox-actions';
   const restore = document.createElement('button');
   restore.className = 'row-btn';
-  restore.title = '복구';
+  restore.title = '되살리기';
+  restore.setAttribute('aria-label', '되살리기');
   restore.innerHTML = '↺';
   restore.addEventListener('click', (e) => { e.stopPropagation(); onRestore(entry); });
   const del = document.createElement('button');
   del.className = 'row-btn danger';
-  del.title = '영구 삭제';
+  del.title = '완전히 지우기';
+  del.setAttribute('aria-label', '완전히 지우기');
   del.innerHTML = '×';
   del.addEventListener('click', (e) => { e.stopPropagation(); onPurge(entry); });
   actions.appendChild(restore);
@@ -2032,7 +2034,8 @@ function renderMemoEl(m) {
   const del = document.createElement('button');
   del.className = 'memo-del';
   del.innerHTML = '×';
-  del.title = '삭제';
+  del.title = '메모 지우기';
+  del.setAttribute('aria-label', '메모 지우기');
   del.addEventListener('pointerdown', (e) => e.stopPropagation());
   del.addEventListener('click', (e) => { e.stopPropagation(); onDeleteMemo(m.id); });
   div.appendChild(del);
@@ -2726,7 +2729,7 @@ function openMoreMenu(btn) {
   rows.push(`<div class="menu-sep"></div>`);
   const isDark = effectiveTheme() === 'dark';
   rows.push(`<button class="menu-item" role="menuitem" id="menu-theme"><span class="mi-ic">${isDark ? '☀️' : '🌙'}</span>${isDark ? '라이트 모드' : '다크 모드'}</button>`);
-  rows.push(`<button class="menu-item" role="menuitem" id="menu-token"><span class="mi-ic">🔑</span>토큰 재입력</button>`);
+  rows.push(`<button class="menu-item" role="menuitem" id="menu-token"><span class="mi-ic">🔑</span>토큰 다시 입력</button>`);
   menu.innerHTML = rows.join('');
   menu.classList.add('show');
   btn.setAttribute('aria-expanded', 'true');
@@ -2955,7 +2958,7 @@ function renderTask(item, key, opts = {}) {
     badge.title = `숨겨진 하위 항목 ${hiddenCount}개`;
     span.appendChild(badge);
   }
-  span.title = '탭하여 편집';
+  span.title = '눌러서 고치기';
   span.addEventListener('click', (e) => {
     if (e.target.tagName === 'INPUT') return;
     openEditSheet(item);
@@ -2966,8 +2969,8 @@ function renderTask(item, key, opts = {}) {
 
   const handle = document.createElement('button');
   handle.className = 'row-btn drag-handle';
-  handle.title = '드래그하여 이동';
-  handle.setAttribute('aria-label', '드래그하여 이동');
+  handle.title = '끌어서 옮기기';
+  handle.setAttribute('aria-label', '끌어서 옮기기');
   handle.innerHTML = '⋮⋮';
   handle.addEventListener('pointerdown', (e) => onDragStart(e, item, key, t));
   handle.addEventListener('click', (e) => e.stopPropagation());
@@ -2975,8 +2978,8 @@ function renderTask(item, key, opts = {}) {
 
   const del = document.createElement('button');
   del.className = 'row-btn danger';
-  del.title = '보관함으로 이동';
-  del.setAttribute('aria-label', `보관함으로 이동: ${item.text}`);
+  del.title = '보관함으로 옮기기';
+  del.setAttribute('aria-label', `보관함으로 옮기기: ${item.text}`);
   del.innerHTML = '×';
   del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
   actions.appendChild(del);
@@ -3028,8 +3031,8 @@ async function onSetupSave() {
     renderApp();
   } catch (e) {
     state.token = null;
-    if (e.code === 401) errEl.textContent = '토큰이 유효하지 않습니다.';
-    else if (e.code === 404) errEl.textContent = `repo 또는 ${FILE} 파일을 찾을 수 없습니다.`;
+    if (e.code === 401) errEl.textContent = '토큰이 맞지 않아요. 다시 확인해 주세요.';
+    else if (e.code === 404) errEl.textContent = `저장소나 ${FILE} 파일을 찾지 못했어요. 토큰 권한을 확인해 주세요.`;
     else { console.error(e); errEl.textContent = friendlyError(e, '연결하지 못했어요. 잠시 뒤 다시 해 주세요.'); }
   }
 }
@@ -3127,7 +3130,7 @@ function onDragStart(e, item, key, taskEl) {
   if (e.button != null && e.button !== 0) return;
   // 화면의 줄 번호가 최신 내용과 어긋났으면(그 사이 다른 저장이 끝남) 드래그하지 않고 다시 그린다
   try {
-    if (resolveLineIndex(item) !== item.lineIndex) throw new Error('목록이 바뀌었어요 — 다시 시도해주세요');
+    if (resolveLineIndex(item) !== item.lineIndex) throw new Error('목록이 바뀌었어요. 다시 해 주세요');
   } catch (err) {
     renderApp();
     toast(err.message);
@@ -3278,7 +3281,7 @@ function onDragEnd() {
   // 드래그 중 화면이 그려진 뒤 줄이 밀렸다면(다른 기기 변경 재적용 등) 목표 위치도 어긋난다 → 다시 그림
   let stillValid = true;
   try { if (srcItem && resolveLineIndex(srcItem) !== srcLine) stillValid = false; } catch (e) { stillValid = false; }
-  if (!stillValid) { renderApp(); toast('목록이 바뀌었어요 — 다시 시도해주세요'); return; }
+  if (!stillValid) { renderApp(); toast('목록이 바뀌었어요. 다시 해 주세요'); return; }
   // 드롭 시점의 원문 줄로 출발·목표를 기억해 두고, 저장 직전에 다시 찾는다(그 사이 줄이 밀려도 안전)
   const lines = state.content.split('\n');
   const ref = (n) => (n == null ? null : { lineIndex: n, raw: lines[n] });
@@ -3755,7 +3758,7 @@ function handleUnauthorized() {
   state.token = null;
   renderSetup();
   const err = document.querySelector('#setup-err');
-  if (err) err.textContent = '토큰이 만료되었거나 권한이 변경되었습니다. 다시 입력해주세요.';
+  if (err) err.textContent = '토큰이 만료됐거나 권한이 바뀌었어요. 다시 입력해 주세요.';
 }
 
 async function refresh() {
@@ -3779,7 +3782,7 @@ async function refresh() {
 }
 
 function openSettings() {
-  if (confirm('토큰을 재입력하시겠습니까?\n(기존 토큰은 로컬에서 삭제됩니다)')) {
+  if (confirm('토큰을 다시 입력할까요?\n이 기기에 저장된 토큰은 지워져요.')) {
     localStorage.removeItem('gh_pat');
     state.token = null;
     renderSetup();
