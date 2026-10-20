@@ -3981,6 +3981,34 @@ function quickAdd() {
   submitComposerJob({ mode: composerMode, text, pri: composerPriority });
 }
 
+// 새 항목이 어디 들어갔는지 보여 주기(B14): 화면 밖이면 300ms 부드럽게 스크롤 + 600ms 깜빡임,
+// 화면 안이면 깜빡임만. 토스트는 띄우지 않는다.
+function revealNewRow(row) {
+  if (!row) return;
+  const r = row.getBoundingClientRect();
+  const tabs = document.querySelector('.tabs')?.getBoundingClientRect();
+  const topLimit = (tabs ? tabs.bottom : 0) + 8;
+  const composer = $('#composer');
+  const bottomLimit = window.innerHeight - (composer && !composer.hidden ? composer.offsetHeight + 8 : 16);
+  let dy = 0;
+  if (r.bottom > bottomLimit) dy = r.bottom - bottomLimit;
+  else if (r.top < topLimit) dy = r.top - topLimit;
+  if (dy) smoothScrollBy(dy, 300);
+  flashEl(row);
+}
+function smoothScrollBy(dy, ms) {
+  if (prefersReducedMotion()) { window.scrollBy(0, dy); return; }
+  const start = window.scrollY, t0 = performance.now();
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  // rAF는 백그라운드에서 멈출 수 있어 16ms 타이머로 진행(300ms 동안 약 19프레임)
+  const step = () => {
+    const t = Math.min(1, (performance.now() - t0) / ms);
+    window.scrollTo(0, start + dy * ease(t));
+    if (t < 1) setTimeout(step, 16);
+  };
+  step();
+}
+
 function submitComposerJob(job) {
   if (job.mode === 'inbox') addInboxFromComposer(job);
   else if (job.mode === 'memo') addMemoFromComposer(job);
@@ -4001,7 +4029,11 @@ function reportComposerFailure(job, e) {
 
 function addInboxFromComposer(job) {
   const pr = inboxStore.apply(opInboxAppend([job.text]), { msg: `inbox: add ${job.text}` });
-  if (currentTab === 'inbox') renderInbox(); else renderCurrent();
+  if (currentTab === 'inbox') {
+    renderInbox();
+    revealNewRow([...document.querySelectorAll('#inbox-list .inbox-item')]
+      .filter((r) => r.querySelector('.inbox-text')?.textContent === job.text).pop());
+  } else renderCurrent();
   pr.catch((e) => reportComposerFailure(job, e));
 }
 
@@ -4028,6 +4060,8 @@ const composerFailed = { jobs: [], err: null, timer: null };
 function addFromComposer(job) {
   const pr = activeStore.apply(opAppend(job.pri, job.text), { msg: `add: ${job.text}` });
   renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
+  revealNewRow([...document.querySelectorAll(`#sections .pri-${job.pri === 'medium' ? 'med' : job.pri} .task`)]
+    .filter((r) => r.querySelector('.task-text')?.textContent === job.text).pop());
   const inp = $('#composer-input');
   if (inp && currentTab === 'active' && document.activeElement !== inp) inp.focus();
   pr.catch((e) => reportComposerFailure(job, e));
