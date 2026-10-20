@@ -104,7 +104,7 @@
   //   __takoMockFail = { file, method, times, status, offline }
   //   __takoMockFail = [ 규칙, 규칙 … ]               → 첫 번째로 맞는 규칙 적용
   //   file 생략 = 모든 파일, method 생략 = 'PUT', times 생략 = 무제한(숫자면 그 횟수만 실패 후 해제)
-  //   offline: true 이면 응답 대신 네트워크 오류(TypeError)
+  //   offline: true 이면 응답 대신 네트워크 오류(TypeError) + 그동안 navigator.onLine = false
   //   lost: true 이면 PUT을 실제로 반영한 뒤 응답 대신 네트워크 오류(결과를 알 수 없는 실패)
   function matchFailRule(file, method) {
     var f = window.__takoMockFail;
@@ -124,6 +124,29 @@
     }
     return null;
   }
+
+  // offline 규칙이 켜져 있는 동안은 기기도 오프라인인 것처럼 navigator.onLine = false(실제 비행기 모드와 같게).
+  // lost(응답만 끊김)는 온라인 그대로 → 앱이 "인터넷 연결 확인"과 "저장됐는지 확인 중"을 구분하는지 볼 수 있다
+  var mockOfflineUntil = 0;
+  try {
+    var onLineDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+    Object.defineProperty(navigator, 'onLine', {
+      configurable: true,
+      get: function () {
+        var f = window.__takoMockFail;
+        var rules = !f || f === true ? [] : (Array.isArray(f) ? f : [f]);
+        var off = rules.some(function (r) { return r && r.offline && (typeof r.times !== 'number' || r.times > 0); });
+        if (off || Date.now() < mockOfflineUntil) return false;
+        return onLineDesc ? onLineDesc.get.call(navigator) : true;
+      },
+    });
+    // 바뀌면 실제처럼 online/offline 이벤트를 보낸다(헤더 "오프라인" 표시·다시 연결 뒤 자동 저장 확인용)
+    var lastOnLine = navigator.onLine;
+    setInterval(function () {
+      var now = navigator.onLine;
+      if (now !== lastOnLine) { lastOnLine = now; window.dispatchEvent(new Event(now ? 'online' : 'offline')); }
+    }, 200);
+  } catch (e) {}
 
   var realFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
@@ -145,6 +168,7 @@
     }
     if (rule) {
       if (rule.offline) {
+        mockOfflineUntil = Date.now() + LATENCY + 200; // 이 실패가 앱에 도착할 때까지는 navigator.onLine = false
         return new Promise(function (res, rej) { setTimeout(function () { rej(new TypeError('Failed to fetch')); }, LATENCY); });
       }
       return respond(rule.status || 500, { message: 'mock: forced failure' });

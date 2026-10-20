@@ -1072,10 +1072,14 @@ function friendlyError(e, fallback = '저장하지 못했어요') {
 const notify = {
   info: (msg, ms) => showToast(msg, { kind: 'info', ms }),
   undo: (msg, onUndo) => showToast(msg, { kind: 'undo', action: { label: '되돌리기', onClick: onUndo } }),
-  error: (msg, { retry, label = '다시 시도', ms } = {}) =>
-    showToast(msg, { kind: 'error', ms, action: retry ? { label, onClick: retry } : null }),
+  // "다시 시도"는 화면마다 다른 자리(토스트 버튼·알약)에 있지 않게 헤더 알약 하나로(D10①·사용성 2차):
+  // 토스트는 무엇이 안 됐는지만 알리고, 다시 시도 동작은 알약에 등록한다. 다른 이름의 버튼(되돌리기·새로 불러오기 등)은 토스트에
+  error: (msg, { retry, label = '다시 시도', ms } = {}) => {
+    if (retry && label === '다시 시도') { registerRetry(retry); return showToast(msg, { kind: 'error', ms }); }
+    return showToast(msg, { kind: 'error', ms, action: retry ? { label, onClick: retry } : null });
+  },
 };
-// 오류 객체를 받아 쉬운 말로 알린다(retry가 있으면 "다시 시도" 버튼)
+// 오류 객체를 받아 쉬운 말로 알린다(retry가 있으면 헤더 알약 "저장 안 됨 · 다시 시도"에 등록)
 function notifyError(e, { fallback, retry } = {}) {
   if (e) console.error(e);
   notify.error(friendlyError(e, fallback), { retry });
@@ -1125,7 +1129,8 @@ async function netFetch(url, init) {
   try {
     return await fetch(url, init);
   } catch (e) {
-    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { network: true });
+    // offline: 보내는 순간 기기가 오프라인이었음 → 요청이 서버에 닿지 않았다고 본다(결과 모름이 아님, 사용성 2차)
+    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { network: true, offline: isOffline() });
   }
 }
 async function ghGet(url) {
@@ -1286,7 +1291,7 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
               }
             } catch (e2) { /* 아직 연결 안 됨 */ }
             // 다시 받아 보지도 못했거나 판정이 애매 → 반영됐는지 모름. 저널이 원격 sha 변화를 보도록 보낸 기준 sha를 남김(S7)
-            if (!applied && (!reloaded || doubtful)) { e.uncertain = true; e.baseSha = sentSha; }
+            if (!applied && !e.offline && (!reloaded || doubtful)) { e.uncertain = true; e.baseSha = sentSha; }
             if (applied) {
               s.gen++;
               s.pending = s.pending.filter((p) => !batch.includes(p));
@@ -1737,10 +1742,14 @@ async function runJournal() {
 }
 
 // 이동 실패 알림(디자이너 스펙 A4)
+// 오프라인(아무것도 안 됨)과 결과 모름(응답만 끊김)을 다른 말로(사용성 2차)
 function notifyTransferError(e, retry) {
   console.error(e && e.cause ? e.cause : e);
+  const off = isOffline() || !!(e && (e.offline || (e.cause && e.cause.offline)));
+  const net = off || !!(e && (e.network || (e.cause && e.cause.network)));
   if (e && e.uncertain && e.journaled) {
-    notify.error('연결이 끊겨 저장됐는지 확인하지 못했어요. 연결되면 정리할게요', { label: '다시 확인', retry: () => refresh() });
+    notify.error(off ? '인터넷 연결을 확인해 주세요. 연결되면 정리할게요' : '연결이 끊겨 저장됐는지 확인 중이에요. 연결되면 정리할게요',
+      { label: '다시 확인', retry: () => refresh() });
   } else if (e && e.partial && e.journaled) {
     notify.error('일부만 저장됐어요. 연결되면 마저 정리할게요', { label: '지금 다시', retry: () => runJournal().then(refresh) });
   } else if (e && e.partial) {
@@ -1750,7 +1759,9 @@ function notifyTransferError(e, retry) {
     notify.error(e.cause.userMessage || '목록이 바뀌었어요');
     refresh();
   } else if (e && e.rolledBack) {
-    notify.error('옮기지 못했어요. 원래 자리에 그대로 있어요', { retry });
+    notify.error(net ? '옮기지 못했어요. 인터넷 연결을 확인해 주세요' : '옮기지 못했어요. 원래 자리에 그대로 있어요', { retry });
+  } else if (e && net && !e.uncertain) {
+    notify.error('옮기지 못했어요. 인터넷 연결을 확인해 주세요', { retry });
   } else {
     notify.error(friendlyError(e), { retry });
   }
@@ -3549,18 +3560,39 @@ const syncStatus = {
   get hasError() { return this.loadError || Object.keys(this.errors).length > 0; },
 };
 
-async function retryFailedSaves() {
-  if (syncStatus.loadError) { await initialLoad(); return; }
-  const files = Object.keys(syncStatus.errors);
-  const fns = files.map((f) => syncStatus.retry[f]).filter(Boolean);
+// 실패한 동작(옮기기·보관·추가 등)의 "다시 시도"를 알약에 등록(한 번 누르면 실행하고 지움, 최근 5개까지)
+let retrySeq = 0;
+function registerRetry(fn) {
+  const k = `act:${++retrySeq}`;
+  syncStatus.retry[k] = fn;
+  syncStatus.errors[k] = true;
+  const acts = Object.keys(syncStatus.errors).filter((x) => x.startsWith('act:'));
+  acts.slice(0, Math.max(0, acts.length - 5)).forEach((x) => { delete syncStatus.errors[x]; delete syncStatus.retry[x]; });
+  renderSync();
+}
+// auto: 연결이 돌아왔을 때 자동으로 — 남은 저장(체크 등)만 다시 보내고, 동작 다시 시도는 사용자가 누를 때만
+async function retryFailedSaves({ auto = false } = {}) {
+  if (syncStatus.loadError) { await initialLoad(); afterRecover(); return; }
+  const files = Object.keys(syncStatus.errors).filter((f) => !(auto && f.startsWith('act:')));
+  const fns = files.map((f) => {
+    const fn = syncStatus.retry[f];
+    if (f.startsWith('act:')) { delete syncStatus.errors[f]; delete syncStatus.retry[f]; }
+    return fn;
+  }).filter(Boolean);
   if (fns.length) {
+    renderSync();
     await Promise.all(fns.map((fn) => Promise.resolve().then(fn).catch(() => {})));
-  } else {
+  } else if (files.length) {
     // 다시 보낼 변경이 따로 남아 있지 않으면 저장소 기준으로 새로 불러와 화면을 맞춘다
     files.forEach((f) => delete syncStatus.errors[f]);
     await refresh();
   }
   renderSync();
+  afterRecover();
+}
+// 알약으로 복구가 끝나면 남아 있던 실패 토스트를 바로 닫는다(성공했는데 실패 문구가 남지 않게)
+function afterRecover() {
+  if (!syncStatus.hasError && toastState.kind === 'error' && $('#toast').classList.contains('show')) hideToast();
 }
 
 function syncPillHTML() {
@@ -5245,7 +5277,7 @@ function init() {
   window.addEventListener('offline', renderSync);
   window.addEventListener('online', () => {
     renderSync();
-    if (syncStatus.hasError) retryFailedSaves();
+    if (syncStatus.hasError) retryFailedSaves({ auto: true });
     // 저장 대기분을 보내고 다시 불러온 뒤에 저널 확인(S7 — 오프라인 동안 바뀐 것을 모르는 state로 판정하지 않게)
     if (state.token) refresh();
   });
