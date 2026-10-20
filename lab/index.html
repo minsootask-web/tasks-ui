@@ -627,6 +627,7 @@
 
   /* Archive */
   .archive-parent { margin-left: 0; font-size: 12px; }
+  .archive-when { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .archive-badge {
     display: inline-flex; align-items: center; justify-content: center;
     width: 22px; height: 22px; flex-shrink: 0;
@@ -1937,6 +1938,12 @@ function renderArchiveItem(entry) {
     + (entry.parent ? `<div class="meta-inline archive-parent">↳ ${esc(entry.parent)}</div>` : '');
   cb.setAttribute('aria-label', `선택: ${firstLine}`);
 
+  // 보관한 날짜(B14): 오늘 / 어제 / n일 전 / 7일 넘으면 10/12
+  const when = document.createElement('span');
+  when.className = 'archive-when';
+  when.textContent = relativeDay(entry.deletedAt);
+  if (entry.deletedAt) when.title = new Date(entry.deletedAt).toLocaleString('ko-KR');
+
   const actions = document.createElement('div');
   actions.className = 'inbox-actions';
   const restore = document.createElement('button');
@@ -1958,8 +1965,21 @@ function renderArchiveItem(entry) {
   div.appendChild(cb);
   div.appendChild(meta);
   div.appendChild(text);
+  div.appendChild(when);
   div.appendChild(actions);
   return div;
+}
+
+function relativeDay(iso, now = new Date()) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 864e5);
+  if (diff <= 0) return '오늘';
+  if (diff === 1) return '어제';
+  if (diff <= 7) return `${diff}일 전`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 function toggleArchiveSelect(id, div, cb) {
