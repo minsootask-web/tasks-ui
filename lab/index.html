@@ -729,18 +729,15 @@ function getMemoCols() { return window.innerWidth <= 600 ? 2 : 3; }
 const MEMO_MAX_COLS = 3;
 
 // ============ State ============
+// content/sections·inboxContent/inboxItems·archiveItems·memos는 각 파일 스토어의 view를 비춘 값(F3).
+// 직접 대입하지 말고 스토어 연산(apply/commit)으로 바꾼다.
 const state = {
   token: localStorage.getItem('gh_pat') || null,
   content: '',
-  sha: '',
   sections: [],
   inboxContent: '',
-  inboxSha: '',
   inboxItems: [],
-  archiveContent: '',
-  archiveSha: '',
   archiveItems: [],
-  memosSha: '',
   memos: [],
 };
 
@@ -913,158 +910,6 @@ function base64ToUtf8(b64) {
 }
 
 // ============ GitHub API ============
-async function ghLoadInbox() {
-  const res = await fetch(INBOX_API, {
-    headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
-    cache: 'no-cache',
-  });
-  if (!res.ok) return;
-  const data = await res.json();
-  state.inboxSha = data.sha;
-  state.inboxContent = base64ToUtf8(data.content);
-  state.inboxItems = parseInbox(state.inboxContent);
-}
-
-async function ghLoadArchive() {
-  const res = await fetch(ARCHIVE_API, {
-    headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
-    cache: 'no-cache',
-  });
-  if (res.status === 404) {
-    await ghCreateArchive();
-    return ghLoadArchive();
-  }
-  if (!res.ok) return;
-  const data = await res.json();
-  state.archiveSha = data.sha;
-  state.archiveContent = base64ToUtf8(data.content);
-  try { state.archiveItems = JSON.parse(state.archiveContent) || []; }
-  catch { state.archiveItems = []; }
-}
-
-async function ghCreateArchive() {
-  const res = await fetch(ARCHIVE_API, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message: 'init: archive', content: utf8ToBase64('[]\n') }),
-  });
-  if (!res.ok) throw new Error(`create archive ${res.status}`);
-}
-
-async function ghSaveArchive(newItems, message) {
-  syncStatus.start('archive');
-  try {
-    const content = JSON.stringify(newItems, null, 2) + '\n';
-    const res = await fetch(ARCHIVE_API, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${state.token}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.archiveSha }),
-    });
-    if (!res.ok) throw new Error(`PUT archive ${res.status}`);
-    const data = await res.json();
-    state.archiveSha = data.content.sha;
-    state.archiveContent = content;
-    state.archiveItems = newItems;
-    syncStatus.ok('archive');
-  } catch (e) {
-    if (/ 409$/.test(e.message)) syncStatus.end('archive');
-    else syncStatus.fail('archive');
-    throw e;
-  }
-}
-
-async function ghLoadMemos() {
-  const res = await fetch(MEMOS_API, {
-    headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
-    cache: 'no-cache',
-  });
-  if (res.status === 404) {
-    await ghCreateMemos();
-    return ghLoadMemos();
-  }
-  if (!res.ok) return;
-  const data = await res.json();
-  state.memosSha = data.sha;
-  // 다시 불러와도 쓰는 중인 초안 메모는 남긴다
-  const drafts = state.memos.filter((x) => x._draft);
-  let loaded;
-  try { loaded = JSON.parse(base64ToUtf8(data.content)) || []; }
-  catch { loaded = []; }
-  state.memos = [...drafts, ...loaded.filter((x) => !drafts.some((d) => d.id === x.id))];
-}
-
-async function ghCreateMemos() {
-  const res = await fetch(MEMOS_API, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${state.token}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message: 'init: memos', content: utf8ToBase64('[]\n') }),
-  });
-  if (!res.ok) throw new Error(`create memos ${res.status}`);
-}
-
-async function ghSaveMemos(newMemos, message) {
-  syncStatus.start('memos');
-  try {
-    // 화면에만 있는 초안 메모(_draft)는 저장하지 않는다(A10)
-    const content = JSON.stringify(newMemos.filter((x) => !x._draft), null, 2) + '\n';
-    const res = await fetch(MEMOS_API, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${state.token}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ message, content: utf8ToBase64(content), sha: state.memosSha }),
-    });
-    if (!res.ok) throw new Error(`PUT memos ${res.status}`);
-    const data = await res.json();
-    state.memosSha = data.content.sha;
-    state.memos = newMemos;
-    syncStatus.ok('memos');
-  } catch (e) {
-    if (/ 409$/.test(e.message)) syncStatus.end('memos');
-    else syncStatus.fail('memos');
-    throw e;
-  }
-}
-
-async function ghSaveInbox(newContent, message) {
-  syncStatus.start('inbox');
-  try {
-    const res = await fetch(INBOX_API, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${state.token}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ message, content: utf8ToBase64(newContent), sha: state.inboxSha }),
-    });
-    if (!res.ok) throw new Error(`PUT inbox ${res.status}`);
-    const data = await res.json();
-    state.inboxSha = data.content.sha;
-    state.inboxContent = newContent;
-    state.inboxItems = parseInbox(newContent);
-    syncStatus.ok('inbox');
-  } catch (e) {
-    if (/ 409$/.test(e.message)) syncStatus.end('inbox');
-    else syncStatus.fail('inbox');
-    throw e;
-  }
-}
-
 // ============ 파일 스토어 (F3) ============
 // 파일 하나 = 스토어 하나. 화면은 늘 view(= base + 아직 저장 안 된 연산 pending)로 그린다.
 //  - base/sha: 마지막으로 확인된 원격본
@@ -1113,7 +958,7 @@ async function ghPut(url, content, sha, message, { keepalive = false } = {}) {
   return data.content.sha;
 }
 
-function createStore({ file, url, parse, serialize, onChange, onRebase }) {
+function createStore({ file, url, parse, serialize, onChange, onRebase, missing }) {
   const s = {
     file, base: null, sha: '', pending: [], view: null, loaded: false,
     queue: Promise.resolve(), timer: null, flushing: false,
@@ -1221,7 +1066,16 @@ function createStore({ file, url, parse, serialize, onChange, onRebase }) {
     }
   };
   s.reloadBase = async () => {
-    const r = await ghGet(url);
+    let r;
+    try {
+      r = await ghGet(url);
+    } catch (e) {
+      if (e.code !== 404 || missing == null) throw e;
+      // 파일이 아직 없으면 빈 파일로 만든다(archive.json·memos.json 첫 사용)
+      if (missing === false) { s.sha = undefined; s.base = parse(''); s.loaded = true; return; }
+      await ghPut(url, missing, undefined, `init: ${file}`);
+      r = await ghGet(url);
+    }
     s.sha = r.sha;
     s.base = parse(r.content);
     s.loaded = true;
@@ -1259,6 +1113,101 @@ const activeStore = createStore({
 
 // 원격 active.md 불러오기(미저장 변경은 유지)
 function ghLoad() { return activeStore.reload(); }
+
+const parseJsonList = (c) => { try { const v = JSON.parse(c); return Array.isArray(v) ? v : []; } catch { return []; } };
+const rebaseNotice = () => {
+  notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+  if (isEditingUI() || dragCtx.active) deferredRender = true;
+  else renderCurrent();
+};
+
+// ---- inbox.md 스토어 (봇이 끝에 줄을 추가하므로 409가 가장 잦은 파일) ----
+const inboxStore = createStore({
+  file: 'inbox',
+  url: INBOX_API,
+  parse: (c) => c,
+  serialize: (c) => c,
+  missing: false,
+  onChange: (view) => {
+    state.inboxContent = view;
+    state.inboxItems = parseInbox(view);
+  },
+  onRebase: rebaseNotice,
+});
+
+// ---- archive.json 스토어 ----
+const archiveStore = createStore({
+  file: 'archive',
+  url: ARCHIVE_API,
+  parse: parseJsonList,
+  serialize: (list) => JSON.stringify(list, null, 2) + '\n',
+  missing: '[]\n',
+  onChange: (view) => { state.archiveItems = view; },
+  onRebase: rebaseNotice,
+});
+
+// ---- memos.json 스토어 (봇이 메모를 넣을 수 있음). 초안 메모는 스토어 밖(memoDrafts)에만 둔다 ----
+let memoDrafts = [];
+const memosStore = createStore({
+  file: 'memos',
+  url: MEMOS_API,
+  parse: parseJsonList,
+  serialize: (list) => JSON.stringify(list.filter((x) => !x._draft), null, 2) + '\n',
+  missing: '[]\n',
+  onChange: (view) => {
+    state.memos = [...memoDrafts, ...view.filter((x) => !memoDrafts.some((d) => d.id === x.id))];
+  },
+  onRebase: () => {
+    notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+    if (isEditingUI() || memoDragCtx.div) deferredRender = true;
+    else if (currentTab === 'memo') drawMemos();
+  },
+});
+function syncMemoView() {
+  state.memos = [...memoDrafts, ...(memosStore.view || []).filter((x) => !memoDrafts.some((d) => d.id === x.id))];
+}
+
+const ALL_STORES = () => [activeStore, inboxStore, archiveStore, memosStore];
+function ghLoadInbox() { return inboxStore.reload(); }
+function ghLoadArchive() { return archiveStore.reload(); }
+function ghLoadMemos() { return memosStore.reload(); }
+
+// ---- inbox / archive / memos 연산 ----
+const opInboxAppend = (texts) => (c) => {
+  let out = c || '';
+  if (out && !out.endsWith('\n')) out += '\n';
+  texts.forEach((t) => { out += `- ${t}\n`; });
+  return out;
+};
+const opInboxRemove = (items) => (c) => removeInboxLines(items, c);
+const opArchiveAdd = (entries) => (list) => [...list, ...entries.filter((e) => !list.some((x) => x.id === e.id))];
+const opArchiveRemove = (ids) => (list) => list.filter((x) => !ids.includes(x.id));
+const opMemoReplace = (fn) => (list) => fn(list);
+const memoGone = () => {
+  const msg = '메모가 이미 바뀌었어요 — 새로고침 후 다시 해 주세요';
+  return Object.assign(new Error(msg), { userMessage: msg, gone: true });
+};
+const opMemoEdit = (id, text) => (list) => {
+  if (!list.some((x) => x.id === id)) throw memoGone();
+  return list.map((x) => (x.id === id ? { ...x, text } : x));
+};
+const opMemoAdd = (memo) => (list) => (list.some((x) => x.id === memo.id) ? list : [memo, ...list]);
+const opMemoDelete = (id) => (list) => list.filter((x) => x.id !== id);
+const opMemoMove = (m, targetCol, targetIdx, cols, { aboveId, belowId } = {}) => (list) => {
+  if (!list.some((x) => x.id === m.id)) throw memoGone();
+  // 이웃 메모 기준으로 위치를 다시 계산(그 사이 다른 메모가 끼어들어도 같은 자리)
+  const colList = list
+    .filter((x) => x.id !== m.id && Math.min(cols - 1, Math.max(0, memoCol(x))) === targetCol)
+    .sort((a, b) => memoOrder(a) - memoOrder(b));
+  let idx = targetIdx;
+  const bi = belowId ? colList.findIndex((x) => x.id === belowId) : -1;
+  const ai = aboveId ? colList.findIndex((x) => x.id === aboveId) : -1;
+  if (bi !== -1) idx = bi;
+  else if (ai !== -1) idx = ai + 1;
+  else if (!belowId && aboveId == null) idx = Math.min(targetIdx, colList.length);
+  else if (!belowId) idx = colList.length;
+  return memosAfterMove(list, list.find((x) => x.id === m.id), targetCol, idx, cols);
+};
 
 // ---- active.md 연산 (모두 content → content) ----
 // 렌더 시점 item(raw·lineIndex)으로 현재 줄을 다시 찾는다.
@@ -1818,15 +1767,10 @@ async function onBulkRestore() {
 
     const inboxEntries = entries.filter((e) => e.source === 'inbox');
     if (inboxEntries.length) {
-      await ghLoadInbox();
-      let c = state.inboxContent;
-      if (c && !c.endsWith('\n')) c += '\n';
-      inboxEntries.forEach((e) => { c += `- ${e.text}\n`; });
-      await ghSaveInbox(c, `restore ${inboxEntries.length} from archive`);
+      await inboxStore.commit(opInboxAppend(inboxEntries.map((e) => e.text)), { msg: `restore ${inboxEntries.length} from archive` });
     }
 
-    await ghLoadArchive();
-    await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `restore done: ${ids.length}`);
+    await archiveStore.commit(opArchiveRemove(ids), { msg: `restore done: ${ids.length}` });
     selectedArchive.clear();
     toast(`${ids.length}개 복구됨`);
     renderArchive();
@@ -1838,8 +1782,7 @@ async function onBulkPurge() {
   if (!ids.length) return;
   if (!confirm(`${ids.length}개를 영구 삭제할까요?`)) return;
   try {
-    await ghLoadArchive();
-    await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `purge ${ids.length} from archive`);
+    await archiveStore.commit(opArchiveRemove(ids), { msg: `purge ${ids.length} from archive` });
     selectedArchive.clear();
     toast(`${ids.length}개 영구 삭제됨`);
     renderArchive();
@@ -1873,8 +1816,7 @@ async function archiveActiveTask(item) {
       if (m && getLineIndent(lines[i]) < baseIndent) { entry.parent = m[2]; break; }
     }
   }
-  await ghLoadArchive();
-  await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
+  await archiveStore.commit(opArchiveAdd([entry]), { msg: `archive: ${item.text}` });
   // archive.json을 저장하는 사이 active.md가 바뀌었을 수 있으니 원문 줄로 위치를 다시 찾는다
   await activeStore.commit(opDeleteBlock({ lineIndex, raw: block[0] }), { msg: `archive (from active): ${item.text}` });
 }
@@ -1886,9 +1828,8 @@ async function archiveInboxItem(item) {
     source: 'inbox',
     text: item.text,
   };
-  await ghLoadArchive();
-  await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
-  await ghSaveInbox(removeInboxLine(item), `archive (from inbox): ${item.text}`);
+  await archiveStore.commit(opArchiveAdd([entry]), { msg: `archive: ${item.text}` });
+  await inboxStore.commit(opInboxRemove([item]), { msg: `archive (from inbox): ${item.text}` });
 }
 
 async function onRestore(entry) {
@@ -1896,14 +1837,9 @@ async function onRestore(entry) {
     if (entry.source === 'active') {
       await activeStore.commit(opRestore([entry]), { msg: `restore: ${entry.block[0]}` });
     } else if (entry.source === 'inbox') {
-      await ghLoadInbox();
-      let c = state.inboxContent;
-      if (c && !c.endsWith('\n')) c += '\n';
-      c += `- ${entry.text}\n`;
-      await ghSaveInbox(c, `restore: ${entry.text}`);
+      await inboxStore.commit(opInboxAppend([entry.text]), { msg: `restore: ${entry.text}` });
     }
-    await ghLoadArchive();
-    await ghSaveArchive(state.archiveItems.filter((i) => i.id !== entry.id), `restore done`);
+    await archiveStore.commit(opArchiveRemove([entry.id]), { msg: 'restore done' });
     toast('복구됨');
     renderArchive();
   } catch (e) { notifyError(e); }
@@ -1912,8 +1848,7 @@ async function onRestore(entry) {
 async function onPurge(entry) {
   if (!confirm('영구 삭제할까요?')) return;
   try {
-    await ghLoadArchive();
-    await ghSaveArchive(state.archiveItems.filter((i) => i.id !== entry.id), `purge: archive`);
+    await archiveStore.commit(opArchiveRemove([entry.id]), { msg: 'purge: archive' });
     toast('영구 삭제됨');
     renderArchive();
   } catch (e) { notifyError(e); }
@@ -2093,6 +2028,7 @@ async function onMemoDragEnd() {
   ghost?.remove();
   placeholder?.remove();
   div?.classList.remove('dragging');
+  memoDragCtx.div = null; // 드래그 끝 — 미뤄 둔 다시 그리기를 막지 않게
 
   if (targetIdx < 0) return;
 
@@ -2101,8 +2037,17 @@ async function onMemoDragEnd() {
   if (sameMemos(newMemos, state.memos)) return;
 
   try {
-    await ghSaveMemos(newMemos, `memo: move`);
+    // 화면은 바로 바뀌고(낙관적), 실패하면 원래 자리로 돌아온다
+    // 다른 기기 변경을 다시 적용할 때도 같은 이웃 사이에 놓이도록 바로 아래 메모 id를 기억한다
+    const cols = getMemoCols();
+    const colList = state.memos
+      .filter((x) => x.id !== m.id && Math.min(cols - 1, Math.max(0, memoCol(x))) === targetCol)
+      .sort((a, b) => memoOrder(a) - memoOrder(b));
+    const belowId = colList[targetIdx]?.id || null;
+    const aboveId = colList[targetIdx - 1]?.id || null;
+    const pr = memosStore.commit(opMemoMove(m, targetCol, targetIdx, cols, { aboveId, belowId }), { msg: 'memo: move' });
     drawMemos();
+    await pr;
   } catch (e) { notifyError(e); drawMemos(); }
 }
 
@@ -2206,7 +2151,8 @@ function startEditMemo(div, m) {
 
 // 초안 메모 제거 — 150ms 동안 흐려지며 사라짐(저장은 하지 않음)
 function removeDraftMemo(div, id) {
-  state.memos = state.memos.filter((x) => x.id !== id);
+  memoDrafts = memoDrafts.filter((x) => x.id !== id);
+  syncMemoView();
   if (div) {
     div.style.transition = 'opacity 150ms ease-out';
     div.style.opacity = '0';
@@ -2216,31 +2162,45 @@ function removeDraftMemo(div, id) {
 
 // 메모 글 저장(새 메모 추가 포함). 실패해도 쓴 글은 화면에 남기고 "다시 시도"를 준다.
 async function saveMemoText(id, text, isNew) {
-  const newMemos = state.memos.map((x) => (x.id === id ? { ...x, text, _draft: isNew ? true : undefined } : x));
-  // 저장 실패 시에도 글이 남도록 먼저 로컬에 반영
-  state.memos = newMemos;
-  const toSave = newMemos.map((x) => {
-    if (x.id !== id) return x;
-    const u = { ...x }; delete u._draft; return u;
-  });
+  if (isNew) {
+    const draft = memoDrafts.find((x) => x.id === id) || { id, col: 0, order: 0 };
+    const memo = { ...draft, text };
+    delete memo._draft;
+    memoDrafts = memoDrafts.filter((x) => x.id !== id);
+    try {
+      const pr = memosStore.commit(opMemoAdd(memo), { msg: 'memo: add' });
+      drawMemos();
+      await pr;
+    } catch (e) {
+      // 저장 못 한 새 메모는 초안으로 되돌려 글을 지킨다
+      memoDrafts = [{ ...memo, _draft: true }, ...memoDrafts];
+      syncMemoView();
+      drawMemos();
+      notifyError(e, { retry: () => saveMemoText(id, text, true) });
+    }
+    return;
+  }
+  // 기존 메모 수정은 실패해도 화면의 글을 유지(저장 안 됨 · 다시 시도)
   try {
-    await ghSaveMemos(toSave, isNew ? 'memo: add' : 'memo: edit');
+    await memosStore.apply(opMemoEdit(id, text), { msg: 'memo: edit', onFail: 'keep' });
   } catch (e) {
-    drawMemos();
-    notifyError(e, { retry: () => saveMemoText(id, text, isNew) });
+    if (e && e.gone) { notifyError(e); drawMemos(); return; }
+    notifyError(e, { retry: () => memosStore.flush() });
   }
 }
 
 // 기존 메모를 지우고 되돌리기를 준다(원래 col/order 그대로 복원)
 async function deleteMemoWithUndo(memo) {
   try {
-    await ghSaveMemos(state.memos.filter((x) => x.id !== memo.id), 'memo: delete');
+    const pr = memosStore.commit(opMemoDelete(memo.id), { msg: 'memo: delete' });
     drawMemos();
+    await pr;
     notify.undo('메모를 지웠어요', async () => {
       try {
-        await ghSaveMemos([...state.memos, memo], 'memo: undo delete');
+        const pr2 = memosStore.commit(opMemoAdd(memo), { msg: 'memo: undo delete' });
         drawMemos();
-      } catch (e) { notifyError(e); }
+        await pr2;
+      } catch (e) { drawMemos(); notifyError(e); }
     });
   } catch (e) { drawMemos(); notifyError(e); }
 }
@@ -2267,7 +2227,8 @@ async function onAddMemo() {
     order: minOrder - 1,
     _draft: true,
   };
-  state.memos = [newMemo, ...state.memos];
+  memoDrafts = [newMemo, ...memoDrafts];
+  syncMemoView();
   drawMemos();
   const el = document.querySelector(`.memo[data-id="${newMemo.id}"]`);
   if (el) startEditMemo(el, newMemo);
@@ -2277,10 +2238,12 @@ async function onDeleteMemo(id) {
   const m = state.memos.find((x) => x.id === id);
   if (!m) return;
   if (m.text && !confirm(`메모를 삭제할까요?\n\n"${m.text.slice(0, 40)}"`)) return;
+  if (m._draft) { removeDraftMemo(null, id); return; }
   try {
-    await ghSaveMemos(state.memos.filter((x) => x.id !== id), `memo: delete`);
+    const pr = memosStore.commit(opMemoDelete(id), { msg: 'memo: delete' });
     drawMemos();
-  } catch (e) { notifyError(e); }
+    await pr;
+  } catch (e) { drawMemos(); notifyError(e); }
 }
 
 function bindBarEvents() {
@@ -2303,7 +2266,7 @@ function onMoveToActive(item, priority) {
   return withInboxLock([item], async () => {
   try {
     await activeStore.commit(opAppend(priority, item.text), { msg: `inbox → active: ${item.text}` });
-    await ghSaveInbox(removeInboxLine(item), `remove from inbox: ${item.text}`);
+    await inboxStore.commit(opInboxRemove([item]), { msg: `remove from inbox: ${item.text}` });
     selectedInbox.clear();
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
     renderInbox();
@@ -2318,7 +2281,7 @@ function onBulkMove(priority) {
   try {
     await activeStore.commit((c) => items.reduce((acc, it) => appendToSection(priority, it.text, acc), c),
       { msg: `inbox → active (${items.length}개)` });
-    await ghSaveInbox(removeInboxLines(items), `remove ${items.length} from inbox`);
+    await inboxStore.commit(opInboxRemove(items), { msg: `remove ${items.length} from inbox` });
     selectedInbox.clear();
     toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
     renderInbox();
@@ -2333,15 +2296,14 @@ async function onBulkDelete() {
   if (!confirm(`${items.length}개를 보관함으로 옮길까요?`)) return;
   return withInboxLock(items, async () => {
   try {
-    await ghLoadArchive();
     const entries = items.map((i) => ({
       id: genArchiveId(),
       deletedAt: new Date().toISOString(),
       source: 'inbox',
       text: i.text,
     }));
-    await ghSaveArchive([...state.archiveItems, ...entries], `archive ${items.length} from inbox`);
-    await ghSaveInbox(removeInboxLines(items), `archive ${items.length} from inbox`);
+    await archiveStore.commit(opArchiveAdd(entries), { msg: `archive ${items.length} from inbox` });
+    await inboxStore.commit(opInboxRemove(items), { msg: `archive ${items.length} from inbox` });
     selectedInbox.clear();
     toast(`${items.length}개 보관됨`);
     renderInbox();
@@ -2573,8 +2535,7 @@ async function onBulkArchiveDone() {
         block: lines.slice(start, end + 1),
       };
     });
-    await ghLoadArchive();
-    await ghSaveArchive([...state.archiveItems, ...entries], `archive ${entries.length} done tasks`);
+    await archiveStore.commit(opArchiveAdd(entries), { msg: `archive ${entries.length} done tasks` });
     // 보관 저장 사이 active.md가 바뀌었을 수 있으니 원문 줄로 다시 찾아 지운다(뒤에서부터)
     await activeStore.commit(opDeleteBlocks(targets), { msg: `archive ${entries.length} done tasks (from active)` });
     renderApp();
@@ -2587,8 +2548,7 @@ async function undoArchive(entries) {
   const ids = entries.map((e) => e.id);
   try {
     await activeStore.commit(opRestore(entries), { msg: `undo archive: restore ${entries.length}` });
-    await ghLoadArchive();
-    await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `undo archive: ${entries.length}`);
+    await archiveStore.commit(opArchiveRemove(ids), { msg: `undo archive: ${entries.length}` });
     currentTab = 'active';
     renderApp();
     toast(`${entries.length}개 복원됨`);
@@ -2853,26 +2813,17 @@ function onEdit(item, text, opts) {
   return safeMutate(opEdit(item, text), `edit: ${text}`, '수정됨', opts);
 }
 
-// archive.json 저장 순서 지키기(스토어로 옮기기 전 임시 — F3-2에서 archiveStore가 대신함)
-let archiveQueue = Promise.resolve();
-function archiveChain(fn) {
-  const run = archiveQueue.then(fn, fn);
-  archiveQueue = run.then(() => {}, () => {});
-  return run;
-}
-
 async function onDelete(item) {
   // 상위·하위 모두 보관함으로(하위만 영구 삭제되던 문제 A6)
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
-  return archiveChain(async () => {
-    try {
-      await archiveActiveTask(item);
-      renderApp();
-      toast('보관됨');
-    } catch (e) {
-      notifyError(e);
-    }
-  });
+  try {
+    await archiveActiveTask(item);
+    renderApp();
+    toast('보관됨');
+  } catch (e) {
+    renderApp();
+    notifyError(e);
+  }
 }
 
 // ============ Drag & Drop ============
@@ -3208,11 +3159,7 @@ async function runSheetSave(text, pri) {
 
 async function onAddToInbox(text, { quiet = false } = {}) {
   try {
-    await ghLoadInbox();
-    let c = state.inboxContent;
-    if (c && !c.endsWith('\n')) c += '\n';
-    c += `- ${text}\n`;
-    await ghSaveInbox(c, `inbox: add ${text}`);
+    await inboxStore.commit(opInboxAppend([text]), { msg: `inbox: add ${text}` });
     toast('Inbox에 추가됨');
     // 어느 탭에서 추가했든 탭 줄의 Inbox 배지까지 다시 그린다(A9)
     renderCurrent();
@@ -3452,7 +3399,9 @@ function init() {
 
   // Refresh on visibility
   // 앱을 벗어날 때: 디바운스를 기다리지 않고 바로 저장(keepalive — 페이지가 멈춰도 요청 유지)(A3)
-  const flushOnLeave = () => { if (activeStore.hasPending()) activeStore.flush({ keepalive: true }); };
+  const flushOnLeave = () => {
+    ALL_STORES().forEach((st) => { if (st.hasPending()) st.flush({ keepalive: true }); });
+  };
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { flushOnLeave(); return; }
     if (state.token) refresh();
@@ -3515,7 +3464,7 @@ function handleUnauthorized() {
 async function refresh() {
   if (!state.token) return;
   // 앱으로 돌아왔을 때: 아직 저장 안 된 변경을 먼저 저장하고(실패해도 지우지 않음) 불러온다(A3)
-  await activeStore.flushAll().catch(() => {});
+  await Promise.all(ALL_STORES().map((st) => st.flushAll().catch(() => {})));
   try {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
     syncStatus.loadError = false;
