@@ -355,6 +355,7 @@
   .sheet.show { transform: translateY(0); }
   .sheet h2 { font-size: 17px; margin: 0 0 14px 0; font-weight: 600; }
   .sheet h2:focus { outline: none; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
   .field input[type="text"], .field input[type="password"], .field textarea {
@@ -752,6 +753,8 @@
 <body>
 
 <div class="wrap" id="app"></div>
+<!-- 스크린리더용 저장 상태 알림(화면에는 안 보임, R17) -->
+<div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
 
 
 <!-- 하단 입력창 — Task·Inbox·Memo 공용(B5). Archive에는 없음 -->
@@ -2208,11 +2211,13 @@ function renderInboxItem(item) {
 
   const actions = document.createElement('div');
   actions.className = 'inbox-actions';
+  // 버튼 이름에 항목 글을 넣어 스크린리더에서 어느 항목인지 알 수 있게(R17)
+  const t = escAttr(item.text);
   actions.innerHTML = `
-    <button class="pri-mini h" title="High로 보내기" aria-label="High로 보내기">🍅</button>
-    <button class="pri-mini m" title="Medium으로 보내기" aria-label="Medium으로 보내기">🍋</button>
-    <button class="pri-mini l" title="Low로 보내기" aria-label="Low로 보내기">🥝</button>
-    <button class="row-btn" title="보관함으로 옮기기" aria-label="보관함으로 옮기기">📥</button>
+    <button class="pri-mini h" title="High로 보내기" aria-label="High로 보내기: ${t}">🍅</button>
+    <button class="pri-mini m" title="Medium으로 보내기" aria-label="Medium으로 보내기: ${t}">🍋</button>
+    <button class="pri-mini l" title="Low로 보내기" aria-label="Low로 보내기: ${t}">🥝</button>
+    <button class="row-btn" title="보관함으로 옮기기" aria-label="보관함으로 옮기기: ${t}">📥</button>
   `;
   actions.querySelectorAll('.pri-mini').forEach((btn) => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); onMoveToActive(item, btn.classList.contains('h') ? 'high' : btn.classList.contains('m') ? 'medium' : 'low'); });
@@ -2302,13 +2307,13 @@ function renderArchiveItem(entry) {
   const restore = document.createElement('button');
   restore.className = 'row-btn';
   restore.title = '되살리기';
-  restore.setAttribute('aria-label', '되살리기');
+  restore.setAttribute('aria-label', `되살리기: ${firstLine}`);
   restore.innerHTML = '↺';
   restore.addEventListener('click', (e) => { e.stopPropagation(); onRestore(entry); });
   const del = document.createElement('button');
   del.className = 'row-btn danger';
   del.title = '완전히 지우기';
-  del.setAttribute('aria-label', '완전히 지우기');
+  del.setAttribute('aria-label', `완전히 지우기: ${firstLine}`);
   del.innerHTML = '🗑';
   del.addEventListener('click', (e) => { e.stopPropagation(); onPurge(entry); });
   actions.appendChild(restore);
@@ -3186,14 +3191,24 @@ async function onDeleteFromInbox(item) {
 
 function bindTabEvents() {
   renderSync(); // 헤더가 새로 그려졌으니 저장 표시를 현재 상태로
-  // 탭 목록: ←→로 이동(roving tabindex, D3)
-  document.querySelector('.tabs')?.addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  // 탭 본문을 tabpanel로 연결(R17)
+  const tabsEl = document.querySelector('.tabs');
+  const panel = tabsEl && tabsEl.nextElementSibling;
+  if (panel) {
+    panel.id = panel.id || 'tabpanel';
+    panel.setAttribute('role', 'tabpanel');
+    const active = tabsEl.querySelector('.tab.active');
+    if (active) { panel.setAttribute('aria-labelledby', active.id); tabsEl.querySelectorAll('.tab').forEach((b) => b.setAttribute('aria-controls', panel.id)); }
+  }
+  // 탭 목록: ←→·Home·End로 이동(roving tabindex, D3·R17)
+  tabsEl?.addEventListener('keydown', (e) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
     const tabs = [...document.querySelectorAll('.tabs .tab')];
     const i = tabs.indexOf(document.activeElement);
     if (i === -1) return;
     e.preventDefault();
-    const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    const next = e.key === 'Home' ? tabs[0] : e.key === 'End' ? tabs[tabs.length - 1]
+      : tabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
     next.click();
     document.getElementById(next.id)?.focus();
   });
@@ -3215,7 +3230,7 @@ function renderShell(tab, { meta = '', sort = false } = {}) {
   const tabsHtml = TABS.map(([id, label]) => {
     const badge = id === 'inbox' && inboxCount ? ` <span class="badge">${inboxCount}</span>` : '';
     const on = id === tab;
-    return `<button class="tab${on ? ' active' : ''}" id="tab-${id}" role="tab" aria-selected="${on}" tabindex="${on ? 0 : -1}">${label}${badge}</button>`;
+    return `<button class="tab${on ? ' active' : ''}" id="tab-${id}" role="tab" aria-selected="${on}" aria-controls="tabpanel" tabindex="${on ? 0 : -1}">${label}${badge}</button>`;
   }).join('');
   return `
     <header>
@@ -3281,7 +3296,15 @@ async function retryFailedSaves() {
 }
 
 function syncPillHTML() {
-  return `<span class="sync-pill" id="sync-pill" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span></span></span>`;
+  return `<span class="sync-pill" id="sync-pill"><span class="dot" aria-hidden="true"></span><span></span></span>`;
+}
+// 저장 상태 알림은 #app 밖 고정 영역 하나로 읽힌다(R17 — 렌더마다 새로 만들어지는 live 영역은 알림이 빠질 수 있었다)
+let lastAnnounced = '';
+function announce(text) {
+  const el = document.getElementById('sr-status');
+  if (!el || text === lastAnnounced) return;
+  lastAnnounced = text;
+  el.textContent = text;
 }
 const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
@@ -3313,6 +3336,7 @@ function renderSync() {
     label.textContent = syncStatus.saving ? '저장 중' : '';
     if (syncStatus.saving) el.classList.add('saving');
   }
+  announce(el.classList.contains('show') ? label.textContent : '');
 }
 
 // 첫 로딩 스켈레톤 — 섹션마다 회색 줄 3개
