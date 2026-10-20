@@ -2369,15 +2369,19 @@ function restoreBlockInto(lines, entry) {
     }
   }
   if (entry.parent) {
+    // 부모는 섹션 안에서 그 글의 줄이 정확히 하나일 때만(같은 글 부모가 둘이면 고르지 않고 섹션 끝 상위로 — locate 원칙)
     const headerIdx = ensureSectionHeader(lines, entry.priority);
+    const parents = [];
     for (let i = headerIdx + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
       const m = lines[i].match(/^(\s*)- \[[ xX]\] (.*)$/);
-      if (m && m[2] === entry.parent) {
-        const at = childInsertIndex(lines, i);
-        const indented = adjustBlockIndent(block, getLineIndent(lines[i]) + 1 - getLineIndent(block[0]));
-        lines.splice(at, 0, ...indented);
-        return at;
-      }
+      if (m && m[2] === entry.parent) parents.push(i);
+    }
+    if (parents.length === 1) {
+      const i = parents[0];
+      const at = childInsertIndex(lines, i);
+      const indented = adjustBlockIndent(block, getLineIndent(lines[i]) + 1 - getLineIndent(block[0]));
+      lines.splice(at, 0, ...indented);
+      return at;
     }
   }
   return insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));

@@ -514,6 +514,10 @@ test('보관·복구: 하위 항목은 부모 아래로 복구(A6), 부모가 �
   const l2 = md('## 🔥 High', '- [ ] 남', '').split('\n');
   T.restoreBlockInto(l2, { priority: 'high', parent: '없는 부모', block: ['- [ ] 고아'] });
   eq(sectionLines(l2.join('\n'), 'high'), ['- [ ] 남', '- [ ] 고아']);
+  // 같은 글 부모가 둘이면 고르지 않고 상위로(섹션 끝)
+  const l3 = md('## 🔥 High', '- [ ] 부모', '- [ ] 부모', '').split('\n');
+  T.restoreBlockInto(l3, { priority: 'high', parent: '부모', block: ['- [ ] 하위'] });
+  eq(sectionLines(l3.join('\n'), 'high'), ['- [ ] 부모', '- [ ] 부모', '- [ ] 하위']);
   const parent = items(c, '🔥 High')[0];
   eq(sectionLines(T.opDeleteBlock(parent)(c), 'high'), []);
 });
