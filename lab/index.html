@@ -464,6 +464,9 @@
   }
   .inbox-item:hover { background: var(--hover); }
   .inbox-item.selected { background: var(--accent-soft); }
+  .inbox-item.flash { animation: row-flash 600ms ease-out; }
+  @keyframes row-flash { 0%, 40% { background: var(--accent-soft); } 100% { background: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .inbox-item.flash { animation-duration: 120ms; } }
   .inbox-cb {
     appearance: none; -webkit-appearance: none;
     width: 20px; height: 20px; flex-shrink: 0; margin: 0;
@@ -1191,6 +1194,98 @@ const opMemoEdit = (id, text) => (list) => {
   if (!list.some((x) => x.id === id)) throw memoGone();
   return list.map((x) => (x.id === id ? { ...x, text } : x));
 };
+// ---- 두 파일 이동 (F4) ----
+// 원칙: "추가 먼저, 제거 나중" — 중간에 실패해도 유실이 아니라 중복이 된다. 그 위에 보상을 얹는다.
+//  adds: [{ store, op, undo, msg }] 차례로 저장. 하나라도 실패하면 앞서 저장한 추가를 거꾸로 되돌림
+//  remove: { store, op, msg } 마지막에 저장. 실패하면 모든 추가를 되돌림 → 항목은 원래 자리에만 남음
+//  되돌리기마저 실패하면 e.partial = true (두 곳에 있을 수 있음 → "일부만 저장됐어요 · 새로 불러오기")
+async function runTransfer({ adds, remove }) {
+  const done = [];
+  const rollback = async (cause) => {
+    for (const a of done.reverse()) {
+      try {
+        await a.store.commit(a.undo, { msg: `rollback: ${a.msg}` });
+      } catch (e3) {
+        console.error('rollback failed', e3);
+        throw Object.assign(new Error('partial'), { partial: true, cause });
+      }
+    }
+    throw Object.assign(new Error('rolled back'), { rolledBack: true, cause, offline: cause && cause.name === 'TypeError' });
+  };
+  for (const a of adds) {
+    try {
+      await a.store.commit(a.op, { msg: a.msg });
+      done.push(a);
+    } catch (e) {
+      if (!done.length) throw e; // 아무것도 바뀌지 않음
+      await rollback(e);
+    }
+  }
+  try {
+    await remove.store.commit(remove.op, { msg: remove.msg });
+  } catch (e2) {
+    await rollback(e2);
+  }
+}
+
+// 이동 실패 알림(디자이너 스펙 A4)
+function notifyTransferError(e, retry) {
+  console.error(e && e.cause ? e.cause : e);
+  if (e && e.partial) {
+    notify.error('일부만 저장됐어요', { label: '새로 불러오기', retry: refresh });
+  } else if (e && e.rolledBack) {
+    notify.error('옮기지 못했어요. 원래 자리에 그대로 있어요', { retry });
+  } else {
+    notify.error(friendlyError(e), { retry });
+  }
+}
+
+// 되돌리기용 연산: 방금 섹션 끝에 넣은 줄(들)을 그 섹션 안에서 뒤에서부터 찾아 지운다
+const opActiveRemoveAppended = (key, texts) => (c) => {
+  const lines = c.split('\n');
+  texts.forEach((t) => {
+    const header = sectionHeaderIndex(lines, key);
+    if (header === -1) return;
+    let end = lines.length;
+    for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
+    for (let i = end - 1; i > header; i--) {
+      if (lines[i] === `- [ ] ${t}`) { lines.splice(i, 1); break; }
+    }
+  });
+  return lines.join('\n');
+};
+// 되돌리기용: 복구해 넣은 블록을 첫 줄 글로 찾아(섹션 안 뒤에서부터) 지운다
+const opActiveRemoveRestored = (entries) => (c) => {
+  const lines = c.split('\n');
+  entries.forEach((entry) => {
+    const first = (entry.block || [])[0];
+    if (!first) return;
+    const want = normLine(first.trim());
+    const header = sectionHeaderIndex(lines, entry.priority);
+    if (header === -1) return;
+    let end = lines.length;
+    for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
+    for (let i = end - 1; i > header; i--) {
+      if (normLine(lines[i].trim()) === want) {
+        const r = extractBlock(lines, i);
+        lines.splice(r.start, r.end - r.start + 1);
+        break;
+      }
+    }
+  });
+  return lines.join('\n');
+};
+// 되돌리기용: inbox 끝에 넣은 줄(들)을 뒤에서부터 지운다
+const opInboxRemoveLast = (texts) => (c) => {
+  const lines = c.split('\n');
+  texts.forEach((t) => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/^-\s+\S/.test(lines[i]) && lines[i].replace(/^-\s+/, '').trim() === t) { lines.splice(i, 1); break; }
+    }
+  });
+  return lines.join('\n');
+};
+
 const opMemoAdd = (memo) => (list) => (list.some((x) => x.id === memo.id) ? list : [memo, ...list]);
 const opMemoDelete = (id) => (list) => list.filter((x) => x.id !== id);
 const opMemoMove = (m, targetCol, targetIdx, cols, { aboveId, belowId } = {}) => (list) => {
@@ -1760,21 +1855,30 @@ async function onBulkRestore() {
   const entries = state.archiveItems.filter((i) => selectedArchive.has(i.id));
   if (!entries.length) return;
   try {
-    const activeEntries = entries.filter((e) => e.source === 'active');
-    if (activeEntries.length) {
-      await activeStore.commit(opRestore(activeEntries), { msg: `restore ${activeEntries.length} from archive` });
-    }
-
-    const inboxEntries = entries.filter((e) => e.source === 'inbox');
-    if (inboxEntries.length) {
-      await inboxStore.commit(opInboxAppend(inboxEntries.map((e) => e.text)), { msg: `restore ${inboxEntries.length} from archive` });
-    }
-
-    await archiveStore.commit(opArchiveRemove(ids), { msg: `restore done: ${ids.length}` });
+    await runTransfer({
+      adds: restoreAdds(entries),
+      remove: { store: archiveStore, op: opArchiveRemove(ids), msg: `restore done: ${ids.length}` },
+    });
     selectedArchive.clear();
     toast(`${ids.length}개 복구됨`);
     renderArchive();
-  } catch (e) { notifyError(e); }
+  } catch (e) { renderArchive(); notifyTransferError(e, onBulkRestore); }
+}
+
+// 보관함 항목 복구의 "추가" 단계들(Task·Inbox 각각)
+function restoreAdds(entries) {
+  const adds = [];
+  const activeEntries = entries.filter((e) => e.source === 'active');
+  if (activeEntries.length) {
+    adds.push({ store: activeStore, op: opRestore(activeEntries), undo: opActiveRemoveRestored(activeEntries),
+      msg: `restore ${activeEntries.length} from archive` });
+  }
+  const inboxTexts = entries.filter((e) => e.source === 'inbox').map((e) => e.text);
+  if (inboxTexts.length) {
+    adds.push({ store: inboxStore, op: opInboxAppend(inboxTexts), undo: opInboxRemoveLast(inboxTexts),
+      msg: `restore ${inboxTexts.length} from archive` });
+  }
+  return adds;
 }
 
 async function onBulkPurge() {
@@ -1816,33 +1920,23 @@ async function archiveActiveTask(item) {
       if (m && getLineIndent(lines[i]) < baseIndent) { entry.parent = m[2]; break; }
     }
   }
-  await archiveStore.commit(opArchiveAdd([entry]), { msg: `archive: ${item.text}` });
-  // archive.json을 저장하는 사이 active.md가 바뀌었을 수 있으니 원문 줄로 위치를 다시 찾는다
-  await activeStore.commit(opDeleteBlock({ lineIndex, raw: block[0] }), { msg: `archive (from active): ${item.text}` });
+  // 보관함에 먼저 넣고 Task에서 뺀다. 뺄 때 실패하면 보관함에서 다시 빼서 한 곳에만 남긴다(A4)
+  await runTransfer({
+    adds: [{ store: archiveStore, op: opArchiveAdd([entry]), undo: opArchiveRemove([entry.id]), msg: `archive: ${item.text}` }],
+    remove: { store: activeStore, op: opDeleteBlock({ lineIndex, raw: block[0] }), msg: `archive (from active): ${item.text}` },
+  });
 }
 
-async function archiveInboxItem(item) {
-  const entry = {
-    id: genArchiveId(),
-    deletedAt: new Date().toISOString(),
-    source: 'inbox',
-    text: item.text,
-  };
-  await archiveStore.commit(opArchiveAdd([entry]), { msg: `archive: ${item.text}` });
-  await inboxStore.commit(opInboxRemove([item]), { msg: `archive (from inbox): ${item.text}` });
-}
 
 async function onRestore(entry) {
   try {
-    if (entry.source === 'active') {
-      await activeStore.commit(opRestore([entry]), { msg: `restore: ${entry.block[0]}` });
-    } else if (entry.source === 'inbox') {
-      await inboxStore.commit(opInboxAppend([entry.text]), { msg: `restore: ${entry.text}` });
-    }
-    await archiveStore.commit(opArchiveRemove([entry.id]), { msg: 'restore done' });
+    await runTransfer({
+      adds: restoreAdds([entry]),
+      remove: { store: archiveStore, op: opArchiveRemove([entry.id]), msg: 'restore done' },
+    });
     toast('복구됨');
     renderArchive();
-  } catch (e) { notifyError(e); }
+  } catch (e) { renderArchive(); notifyTransferError(e, () => onRestore(entry)); }
 }
 
 async function onPurge(entry) {
@@ -2265,12 +2359,15 @@ function bindBarEvents() {
 function onMoveToActive(item, priority) {
   return withInboxLock([item], async () => {
   try {
-    await activeStore.commit(opAppend(priority, item.text), { msg: `inbox → active: ${item.text}` });
-    await inboxStore.commit(opInboxRemove([item]), { msg: `remove from inbox: ${item.text}` });
+    await moveInboxToActive([item], priority);
     selectedInbox.clear();
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
     renderInbox();
-  } catch (e) { notifyError(e); }
+  } catch (e) {
+    renderInbox();
+    flashInboxRows([item]);
+    notifyTransferError(e, () => onMoveToActive(item, priority));
+  }
   });
 }
 
@@ -2279,13 +2376,56 @@ function onBulkMove(priority) {
   if (!items.length) return;
   return withInboxLock(items, async () => {
   try {
-    await activeStore.commit((c) => items.reduce((acc, it) => appendToSection(priority, it.text, acc), c),
-      { msg: `inbox → active (${items.length}개)` });
-    await inboxStore.commit(opInboxRemove(items), { msg: `remove ${items.length} from inbox` });
+    await moveInboxToActive(items, priority);
     selectedInbox.clear();
     toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
     renderInbox();
-  } catch (e) { notifyError(e); }
+  } catch (e) {
+    renderInbox();
+    flashInboxRows(items);
+    notifyTransferError(e, () => { items.forEach((i) => selectedInbox.add(i.lineIdx)); onBulkMove(priority); });
+  }
+  });
+}
+
+// Inbox → Task: Task에 먼저 넣고 Inbox에서 뺀다. 뺄 때 실패하면 Task에서 다시 빼서
+// 항목은 Inbox 한 곳에만 남는다(A4)
+function moveInboxToActive(items, priority) {
+  const texts = items.map((i) => i.text);
+  return runTransfer({
+    adds: [{
+      store: activeStore,
+      op: (c) => texts.reduce((acc, t) => appendToSection(priority, t, acc), c),
+      undo: opActiveRemoveAppended(priority, texts),
+      msg: items.length === 1 ? `inbox → active: ${texts[0]}` : `inbox → active (${items.length}개)`,
+    }],
+    remove: { store: inboxStore, op: opInboxRemove(items), msg: `remove ${items.length} from inbox` },
+  });
+}
+
+// 실패 후 원래 자리로 돌아온 Inbox 행을 600ms 깜빡여 알려 준다
+function flashInboxRows(items) {
+  const texts = new Set(items.map((i) => i.text));
+  document.querySelectorAll('#inbox-list .inbox-item').forEach((row) => {
+    if (texts.has(row.querySelector('.inbox-text')?.textContent)) {
+      row.classList.remove('flash');
+      void row.offsetWidth;
+      row.classList.add('flash');
+    }
+  });
+}
+
+function archiveInboxItems(items) {
+  const entries = items.map((i) => ({
+    id: genArchiveId(),
+    deletedAt: new Date().toISOString(),
+    source: 'inbox',
+    text: i.text,
+  }));
+  return runTransfer({
+    adds: [{ store: archiveStore, op: opArchiveAdd(entries), undo: opArchiveRemove(entries.map((e) => e.id)),
+      msg: `archive ${items.length} from inbox` }],
+    remove: { store: inboxStore, op: opInboxRemove(items), msg: `archive ${items.length} from inbox` },
   });
 }
 
@@ -2294,34 +2434,37 @@ async function onBulkDelete() {
   if (!items.length) return;
   if (items.some((i) => inboxBusy.has(i.text))) return;
   if (!confirm(`${items.length}개를 보관함으로 옮길까요?`)) return;
-  return withInboxLock(items, async () => {
-  try {
-    const entries = items.map((i) => ({
-      id: genArchiveId(),
-      deletedAt: new Date().toISOString(),
-      source: 'inbox',
-      text: i.text,
-    }));
-    await archiveStore.commit(opArchiveAdd(entries), { msg: `archive ${items.length} from inbox` });
-    await inboxStore.commit(opInboxRemove(items), { msg: `archive ${items.length} from inbox` });
-    selectedInbox.clear();
-    toast(`${items.length}개 보관됨`);
-    renderInbox();
-  } catch (e) { notifyError(e); }
+  const run = () => withInboxLock(items, async () => {
+    try {
+      await archiveInboxItems(items);
+      selectedInbox.clear();
+      toast(`${items.length}개 보관됨`);
+      renderInbox();
+    } catch (e) {
+      renderInbox();
+      flashInboxRows(items);
+      notifyTransferError(e, run);
+    }
   });
+  return run();
 }
 
 async function onDeleteFromInbox(item) {
   if (inboxBusy.has(item.text)) return;
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
-  return withInboxLock([item], async () => {
-  try {
-    await archiveInboxItem(item);
-    selectedInbox.clear();
-    toast('보관됨');
-    renderInbox();
-  } catch (e) { notifyError(e); }
+  const run = () => withInboxLock([item], async () => {
+    try {
+      await archiveInboxItems([item]);
+      selectedInbox.clear();
+      toast('보관됨');
+      renderInbox();
+    } catch (e) {
+      renderInbox();
+      flashInboxRows([item]);
+      notifyTransferError(e, run);
+    }
   });
+  return run();
 }
 
 function bindTabEvents() {
@@ -2535,24 +2678,29 @@ async function onBulkArchiveDone() {
         block: lines.slice(start, end + 1),
       };
     });
-    await archiveStore.commit(opArchiveAdd(entries), { msg: `archive ${entries.length} done tasks` });
-    // 보관 저장 사이 active.md가 바뀌었을 수 있으니 원문 줄로 다시 찾아 지운다(뒤에서부터)
-    await activeStore.commit(opDeleteBlocks(targets), { msg: `archive ${entries.length} done tasks (from active)` });
+    // 보관함에 먼저 넣고, Task에서는 원문 줄로 다시 찾아 지운다(뒤에서부터). 실패하면 보관함에서 다시 뺌(A4)
+    await runTransfer({
+      adds: [{ store: archiveStore, op: opArchiveAdd(entries), undo: opArchiveRemove(entries.map((e) => e.id)),
+        msg: `archive ${entries.length} done tasks` }],
+      remove: { store: activeStore, op: opDeleteBlocks(targets), msg: `archive ${entries.length} done tasks (from active)` },
+    });
     renderApp();
     notify.undo(`${entries.length}개를 보관함으로 옮겼어요`, () => undoArchive(entries));
-  } catch (e) { notifyError(e); }
+  } catch (e) { renderApp(); notifyTransferError(e, onBulkArchiveDone); }
 }
 
 // 직전 일괄 보관을 취소 — 보관한 항목들을 Task 탭으로 되돌리고 보관함에서 제거
 async function undoArchive(entries) {
   const ids = entries.map((e) => e.id);
   try {
-    await activeStore.commit(opRestore(entries), { msg: `undo archive: restore ${entries.length}` });
-    await archiveStore.commit(opArchiveRemove(ids), { msg: `undo archive: ${entries.length}` });
+    await runTransfer({
+      adds: restoreAdds(entries),
+      remove: { store: archiveStore, op: opArchiveRemove(ids), msg: `undo archive: ${entries.length}` },
+    });
     currentTab = 'active';
     renderApp();
     toast(`${entries.length}개 복원됨`);
-  } catch (e) { notifyError(e); }
+  } catch (e) { renderApp(); notifyTransferError(e, () => undoArchive(entries)); }
 }
 
 function renderApp() {
@@ -2816,14 +2964,17 @@ function onEdit(item, text, opts) {
 async function onDelete(item) {
   // 상위·하위 모두 보관함으로(하위만 영구 삭제되던 문제 A6)
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
-  try {
-    await archiveActiveTask(item);
-    renderApp();
-    toast('보관됨');
-  } catch (e) {
-    renderApp();
-    notifyError(e);
-  }
+  const run = async () => {
+    try {
+      await archiveActiveTask(item);
+      renderApp();
+      toast('보관됨');
+    } catch (e) {
+      renderApp();
+      notifyTransferError(e, run);
+    }
+  };
+  return run();
 }
 
 // ============ Drag & Drop ============
