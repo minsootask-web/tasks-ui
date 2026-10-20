@@ -235,6 +235,8 @@
     word-break: break-word; padding: 1px 0;
   }
   .task-text:focus { outline: none; }
+  .task-link { color: var(--accent-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; word-break: break-all; }
+  .task.done .task-link { color: inherit; }
   .task.done .task-text { color: var(--muted); text-decoration: line-through; }
   .meta-inline { color: var(--muted); font-size: 12px; margin-left: 6px; font-variant-numeric: tabular-nums; }
   .task-actions {
@@ -904,7 +906,36 @@ const fmtDate = (d) => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} (${days[d.getDay()]})`;
 };
 const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const highlightMeta = (s) => esc(s).replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>');
+// URL 자동 링크(B14): http(s)만. 긴 주소는 "도메인/…"으로 줄여 보여 주고 전체 주소는 툴팁.
+// 파일 원문은 그대로(표시만). 이스케이프한 글 위에서 만들기 때문에 다른 HTML은 들어갈 수 없다.
+function linkHTML(url) {
+  const m = url.match(/^https?:\/\/([^/?#]+)([^]*)$/);
+  const host = m ? m[1].replace(/^www\./, '') : url;
+  const label = m && m[2] && m[2] !== '/' ? `${host}/…` : host;
+  return `<a class="task-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${url}">${label}</a>`;
+}
+// 이스케이프한 글을 URL과 나머지로 나눠, URL은 링크로·나머지는 plain()으로 처리
+function linkify(escaped, plain = (t) => t) {
+  const out = [];
+  const re = /https?:\/\/[^\s<>"']+/g;
+  let last = 0, m;
+  while ((m = re.exec(escaped))) {
+    let url = m[0], tail = '';
+    // 문장 끝 구두점·괄호 닫기는 링크에서 뺀다(괄호가 짝이 맞으면 유지)
+    while (/[.,;:!?)\]]$/.test(url)) {
+      const ch = url.slice(-1);
+      if (ch === ')' && (url.match(/\(/g) || []).length >= (url.match(/\)/g) || []).length) break;
+      tail = ch + tail;
+      url = url.slice(0, -1);
+    }
+    out.push(plain(escaped.slice(last, m.index)), linkHTML(url));
+    last = m.index + url.length;
+    re.lastIndex = last;
+  }
+  out.push(plain(escaped.slice(last)));
+  return out.join('');
+}
+const highlightMeta = (s) => linkify(esc(s), (t) => t.replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>'));
 
 // ============ 공용 토스트 (F1) ============
 // 규칙: 한 번에 하나만(새 것이 오면 이전 것은 그대로 확정되고 교체), 용도는 되돌리기·다시 시도·짧은 안내.
@@ -3183,6 +3214,7 @@ function renderTask(item, key, opts = {}) {
     });
   });
   span.addEventListener('click', (e) => {
+    if (e.target.closest('a')) { e.stopPropagation(); return; } // 링크는 열기만, 편집 안 함
     if (Date.now() < suppressTaskClickUntil) return;
     if (e.target.tagName === 'INPUT') return;
     openEditSheet(item);
