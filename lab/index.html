@@ -4061,7 +4061,9 @@ function onDragMove(e) {
       clearInto();
       card.insertBefore(indicator, taskUnder.nextSibling);
       let next = taskUnder.nextElementSibling;
-      while (next && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
+      // "완료 n개" 접기 행에서 멈춘다(R10 — 펼친 완료 행을 기준으로 잡으면 파일상 미완료 행들 사이에 들어갔다)
+      while (next && !next.classList.contains('done-fold') && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
+      if (next && next.classList.contains('done-fold')) next = null;
       const underIndent = +taskUnder.dataset.indent || 0;
       const nextIndent = next ? (+next.dataset.indent || 0) : 0;
       if (nextIndent < underIndent) {
