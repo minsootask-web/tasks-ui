@@ -1559,6 +1559,21 @@ function parseSections(text) {
       });
     }
   });
+  // 같은 글의 줄이 여럿일 때 구분할 단서(Q2): 섹션, 부모 줄, 파일 안에서 같은 글 중 몇 번째인지
+  const same = new Map();
+  lines.forEach((l, i) => { const k = normLine(l); if (!same.has(k)) same.set(k, []); same.get(k).push(i); });
+  sections.forEach((sec) => {
+    const stack = [];
+    sec.items.forEach((it) => {
+      while (stack.length && stack[stack.length - 1].indent >= it.indent) stack.pop();
+      it.section = sec.title;
+      it.parentRaw = stack.length ? stack[stack.length - 1].raw : null;
+      const list = same.get(normLine(it.raw)) || [];
+      it.ordinal = list.indexOf(it.lineIndex);
+      it.sameCount = list.length;
+      stack.push(it);
+    });
+  });
   return sections;
 }
 
@@ -1612,19 +1627,64 @@ function normLine(l) {
   return l == null ? null : l.replace(/- \[[xX]\]/, '- [ ]');
 }
 
-function resolveLineIndex(item, lines) {
+// 줄이 속한 섹션 제목과 부모 줄(원문)
+function lineContext(ls, idx) {
+  const ind = getLineIndent(ls[idx] || '');
+  let parent = null, section = null;
+  for (let i = idx - 1; i >= 0; i--) {
+    const l = ls[i];
+    const hd = l.match(/^##\s+(.+)$/);
+    if (hd) { section = hd[1].trim(); break; }
+    if (parent == null && l.trim() !== '' && /^\s*- /.test(l) && getLineIndent(l) < ind) parent = l;
+  }
+  return { section, parent };
+}
+
+// 줄 위치 다시 찾기. 원래 자리에 그대로 있으면 그 줄, 아니면 같은 글의 줄을 찾는다.
+// 같은 글의 줄이 여럿이면(Q2) 섹션 → 부모 줄 → "같은 글 중 몇 번째"(개수가 그대로일 때) 순서로 좁히고,
+// 그래도 하나로 정해지지 않으면 추측하지 않고 gone 예외(엉뚱한 줄을 지우거나 옮기지 않게).
+// exclude: 이미 다른 대상으로 잡힌 줄(Q1, 여러 대상을 한 번에 찾을 때)
+// 렌더 정보가 없는 위치 기준(드래그 목표·되돌리기 기준 줄)은 예전처럼 가장 가까운 줄.
+function resolveLineIndex(item, lines, { exclude = null } = {}) {
   const ls = lines || state.content.split('\n');
   const want = normLine(item.raw);
   if (want == null) return item.lineIndex;
-  if (normLine(ls[item.lineIndex]) === want) return item.lineIndex;
-  for (let d = 1; d < ls.length; d++) {
-    const before = item.lineIndex - d;
-    const after = item.lineIndex + d;
-    if (before >= 0 && normLine(ls[before]) === want) return before;
-    if (after < ls.length && normLine(ls[after]) === want) return after;
+  const free = (i) => !(exclude && exclude.has(i));
+  // 맥락(섹션·부모)이 같은지 — 원래 자리에 같은 글이 있어도 다른 섹션·다른 부모의 줄일 수 있다
+  const sameContext = (i) => {
+    if (item.section === undefined) return true;
+    const ctx = lineContext(ls, i);
+    if (ctx.section !== item.section) return false;
+    if (item.parentRaw === undefined) return true;
+    return (ctx.parent == null ? null : normLine(ctx.parent)) === (item.parentRaw == null ? null : normLine(item.parentRaw));
+  };
+  if (free(item.lineIndex) && normLine(ls[item.lineIndex]) === want && sameContext(item.lineIndex)) return item.lineIndex;
+  const all = [];
+  ls.forEach((l, i) => { if (normLine(l) === want) all.push(i); });
+  let cands = all.filter(free);
+  const gone = () => {
+    const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
+    return Object.assign(new Error(msg), { userMessage: msg, gone: true });
+  };
+  if (!cands.length) throw gone();
+  if (cands.length === 1) return cands[0];
+  if (item.section === undefined) {
+    // 맥락 정보가 없는 기준 줄: 가장 가까운 줄
+    return cands.reduce((a, b) => (Math.abs(b - item.lineIndex) < Math.abs(a - item.lineIndex) ? b : a));
   }
-  const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
-  throw Object.assign(new Error(msg), { userMessage: msg, gone: true });
+  let c = cands.filter((i) => lineContext(ls, i).section === item.section);
+  if (!c.length) c = cands;
+  if (item.parentRaw !== undefined) {
+    const wantParent = item.parentRaw == null ? null : normLine(item.parentRaw);
+    const c2 = c.filter((i) => { const p = lineContext(ls, i).parent; return (p == null ? null : normLine(p)) === wantParent; });
+    if (c2.length) c = c2;
+  }
+  if (c.length === 1) return c[0];
+  if (item.ordinal != null && item.ordinal >= 0 && all.length === item.sameCount) {
+    const byOrder = all[item.ordinal];
+    if (c.includes(byOrder)) return byOrder;
+  }
+  throw gone();
 }
 
 // 헤더·빈 줄은 항목 조작 대상이 될 수 없다. 마지막 안전장치.
@@ -2084,7 +2144,7 @@ function archiveActiveTask(item) {
   // 보관함에 먼저 넣고 Task에서 뺀다. 뺄 때 실패하면 보관함에서 다시 빼서 한 곳에만 남긴다(A4)
   const work = runTransfer({
     adds: [{ store: archiveStore, op: opArchiveAdd([entry]), undo: opArchiveRemove([entry.id]), msg: `archive: ${item.text}` }],
-    remove: { store: activeStore, op: opDeleteBlock({ lineIndex, raw: block[0] }), msg: `archive (from active): ${item.text}` },
+    remove: { store: activeStore, op: opDeleteBlock({ ...item, lineIndex, raw: block[0] }), msg: `archive (from active): ${item.text}` },
   });
   // 되돌리기용 원래 자리: 블록 바로 위 줄(원문)과 원래 들여쓰기 블록
   return { work, entry, pos: { block, after: { lineIndex: start - 1, raw: lines[start - 1] } } };
