@@ -368,6 +368,20 @@
 
   .actions { display: flex; gap: 8px; margin-top: 16px; }
   .sheet-err { color: var(--danger); font-size: 13px; margin-top: 12px; }
+  .text-btn {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--muted); min-height: 44px; padding: 0 2px; text-align: left;
+  }
+  .text-btn:hover { color: var(--text); }
+  .text-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .sub-field[hidden], .sub-input[hidden] { display: none; }
+  .sub-list { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--muted); }
+  .sub-list li { padding: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub-list li.done { text-decoration: line-through; }
+  .sub-field .sub-input {
+    width: 100%; padding: 8px 10px; font-size: 14px; margin-top: 4px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-family: inherit;
+  }
   .sheet-err[hidden] { display: none; }
   .actions .btn { flex: 1; } /* 취소/저장 버튼 가로폭 동일 */
   .btn {
@@ -698,6 +712,12 @@
   <div class="field">
     <label>내용</label>
     <input type="text" id="sheet-text" placeholder="할 일을 적어 주세요" autocomplete="off">
+  </div>
+  <!-- 하위 할 일(B7) — 상위 항목 편집에서만 -->
+  <div class="field sub-field" id="sub-field" hidden>
+    <ul class="sub-list" id="sub-list"></ul>
+    <input type="text" class="sub-input" id="sub-input" placeholder="하위 할 일" autocomplete="off" enterkeyhint="done" aria-label="하위 할 일" hidden>
+    <button type="button" class="text-btn" id="sub-add">+ 하위 할 일 추가</button>
   </div>
   <div class="sheet-err" id="sheet-err" role="alert" hidden></div>
   <div class="actions">
@@ -3233,6 +3253,7 @@ function onDragStart(e, item, key, taskEl) {
   dragCtx.ghost = ghost;
   dragCtx.indicator = indicator;
   dragCtx.offsetX = e.clientX - rect.left;
+  dragCtx.startX = e.clientX;
   dragCtx.offsetY = e.clientY - rect.top;
   dragCtx.target = null;
   dragCtx.lastSection = null;
@@ -3285,10 +3306,11 @@ function onDragMove(e) {
   if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
     const r = taskUnder.getBoundingClientRect();
     const y = e.clientY - r.top;
-    const zoneTop = r.height * 0.25;
-    const zoneBottom = r.height * 0.75;
+    // 하위로 넣기는 오른쪽으로 24px 이상 끌었을 때만(B7). 그 외에는 행의 위·아래 절반으로 순서만 바꾼다
+    const zoneTop = r.height * 0.5;
+    const intoByX = (e.clientX - dragCtx.startX) >= 24;
 
-    if (y >= zoneTop && y <= zoneBottom) {
+    if (intoByX) {
       indicator.remove();
       if (dragCtx.intoEl && dragCtx.intoEl !== taskUnder) dragCtx.intoEl.classList.remove('drop-into');
       taskUnder.classList.add('drop-into');
@@ -3382,6 +3404,7 @@ function openAddSheet() {
   editingIsSub = false;
   $('#pri-picker').closest('.field').hidden = false;
   $('#sheet-title').textContent = '새 할 일';
+  $('#sub-field').hidden = true;
   $('#sheet-text').value = '';
   selectPriority('medium');
   showSheet();
@@ -3397,11 +3420,77 @@ function selectPriority(pri) {
   });
 }
 
+// ---- 편집 시트의 하위 할 일(B7) ----
+function childrenOf(item) {
+  const sec = state.sections.find((s) => s.items.some((i) => i.raw === item.raw || i.lineIndex === item.lineIndex));
+  if (!sec) return [];
+  let idx;
+  try { idx = resolveLineIndex(item); } catch (e) { return []; }
+  const pos = sec.items.findIndex((i) => i.lineIndex === idx);
+  const out = [];
+  for (let k = pos + 1; k < sec.items.length && sec.items[k].indent > sec.items[pos].indent; k++) {
+    if (sec.items[k].indent === sec.items[pos].indent + 1) out.push(sec.items[k]);
+  }
+  return out;
+}
+function renderSubList(item) {
+  const list = $('#sub-list');
+  const kids = childrenOf(item);
+  const shown = kids.slice(0, 5);
+  list.innerHTML = shown.map((k) => `<li class="${k.checked ? 'done' : ''}">${esc(k.text)}</li>`).join('')
+    + (kids.length > 5 ? `<li>외 ${kids.length - 5}개</li>` : '');
+}
+function openSubInput() {
+  const inp = $('#sub-input');
+  inp.hidden = false;
+  inp.value = '';
+  $('#sub-add').hidden = true;
+  inp.focus();
+}
+function closeSubInput() {
+  const inp = $('#sub-input');
+  inp.hidden = true;
+  inp.value = '';
+  $('#sub-add').hidden = false;
+}
+// 부모의 마지막 하위로 한 줄 추가 — 즉시 반영, 실패하면 글을 입력란으로 되돌림
+const opAddChild = (parent, text) => (c) => {
+  const lines = c.split('\n');
+  const idx = resolveLineIndex(parent, lines);
+  const at = childInsertIndex(lines, idx);
+  lines.splice(at, 0, `${'  '.repeat(getLineIndent(lines[idx]) + 1)}- [ ] ${text}`);
+  return lines.join('\n');
+};
+function addSubFromSheet() {
+  const inp = $('#sub-input');
+  const text = inp.value.trim();
+  if (!text) { closeSubInput(); return; }
+  const parent = editingItem;
+  if (!parent) return;
+  // 시트를 닫으면 부모가 펼쳐진 채 새 하위가 보이도록
+  collapsedSet.delete(collapseKeyOf(parent));
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedSet])); } catch (e) {}
+  inp.value = '';
+  const pr = activeStore.apply(opAddChild(parent, text), { msg: `add sub: ${text}` });
+  renderApp();
+  renderSubList(parent);
+  pr.catch((e) => {
+    renderApp();
+    if ($('#sheet').classList.contains('show') && editingItem === parent) {
+      renderSubList(parent);
+      if (inp.hidden) openSubInput();
+      if (!inp.value) inp.value = text;
+    }
+    notifyError(e, { retry: () => { inp.value = text; addSubFromSheet(); } });
+  });
+}
+
 function openInboxSheet() {
   sheetMode = 'inbox';
   editingLine = -1;
   editingItem = null;
   $('#sheet-title').textContent = 'Inbox에 추가';
+  $('#sub-field').hidden = true;
   $('#sheet-text').value = '';
   $('#pri-picker').closest('.field').hidden = true;
   showSheet();
@@ -3414,6 +3503,10 @@ function openEditSheet(item) {
   editingIsSub = item.indent > 0;
   $('#sheet-title').textContent = editingIsSub ? '하위 할 일 편집' : '편집';
   $('#sheet-text').value = item.text;
+  // 상위 항목만 "+ 하위 할 일 추가"(하위는 1단계까지)
+  $('#sub-field').hidden = editingIsSub;
+  closeSubInput();
+  if (!editingIsSub) renderSubList(item);
   // 하위 할 일은 우선순위(섹션) 개념이 없으므로 우선순위 선택을 숨긴다
   const priField = $('#pri-picker').closest('.field');
   if (editingIsSub) {
@@ -3695,6 +3788,18 @@ function init() {
 
   $('#scrim').addEventListener('click', hideSheet);
   $('#sheet-cancel').addEventListener('click', hideSheet);
+  $('#sub-add').addEventListener('click', openSubInput);
+  $('#sub-input').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (e.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter는 확정용
+    e.preventDefault();
+    e.stopPropagation();
+    addSubFromSheet();
+  });
+  $('#sub-input').addEventListener('blur', () => {
+    // 바깥을 누르면 닫힘(쓴 글이 있으면 먼저 추가)
+    setTimeout(() => { if (document.activeElement !== $('#sub-input')) { if ($('#sub-input').value.trim()) addSubFromSheet(); closeSubInput(); } }, 0);
+  });
   $('#sheet-save').addEventListener('click', sheetSave);
   $('#sheet').addEventListener('keydown', trapSheetFocus);
   $('#sheet-text').addEventListener('keydown', (e) => {
