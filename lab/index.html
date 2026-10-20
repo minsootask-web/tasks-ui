@@ -242,6 +242,20 @@
   .row-btn:hover { background: var(--surface-2); color: var(--text); }
   .row-btn.danger:hover { background: var(--danger); color: white; }
 
+  /* 완료 접기 행(B3) — 높이 36px, 체크박스 줄에 맞춘 들여쓰기 */
+  .done-fold {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent;
+    width: 100%; min-height: 36px; padding: 0 10px 0 38px; text-align: left; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--muted); border-radius: var(--radius-sm);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .done-fold:hover { background: var(--hover); color: var(--text); }
+  .done-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .done-fold .done-n { display: inline-block; font-variant-numeric: tabular-nums; }
+  .done-fold .done-n.bump { animation: done-bump 120ms ease-out; }
+  @keyframes done-bump { 50% { transform: scale(1.15); } }
+  .task.leaving { opacity: 0; max-height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden;
+    transition: opacity 200ms cubic-bezier(.2,.8,.2,1), max-height 200ms cubic-bezier(.2,.8,.2,1), padding 200ms; }
   .bullet { padding: 4px 10px 4px 40px; color: var(--muted); font-size: 13px; }
   .indent-1 { padding-left: 36px; }
   .indent-2 { padding-left: 60px; }
@@ -761,7 +775,6 @@ let sheetMode = 'add'; // 'add' | 'edit'
 let editingLine = -1;
 let editingItem = null; // 편집 대상 항목 — 저장 직전 줄 위치를 다시 찾는 데 쓴다
 let editingIsSub = false; // 편집 대상이 하위 할 일인지
-let sortIncompleteFirst = false;
 
 // 하위 항목 접기 상태 — 부모 할 일의 텍스트를 키로 저장(재정렬·재조회에도 유지)
 const COLLAPSE_KEY = 'tasks_collapsed';
@@ -2568,31 +2581,6 @@ function bindTabEvents() {
   $('#tab-archive')?.addEventListener('click', () => { currentTab = 'archive'; clearAll(); renderArchive(); });
 }
 
-// ============ Sort ============
-function sortItemsIncompleteFirst(items) {
-  // Group items into blocks: each top-level task + its indented descendants
-  const blocks = [];
-  let cur = null;
-  for (const item of items) {
-    // Start a new block on a top-level item, OR on any leading/orphaned indented
-    // item that has no parent block yet — otherwise it would be silently dropped
-    // (the cause of items vanishing when a section starts with an indented line).
-    if (item.indent === 0 || !cur) {
-      cur = { root: item, children: [] };
-      blocks.push(cur);
-    } else {
-      cur.children.push(item);
-    }
-  }
-  // Sort: incomplete (root not checked) first, complete last
-  blocks.sort((a, b) => {
-    const aD = a.root.type === 'task' && a.root.checked ? 1 : 0;
-    const bD = b.root.type === 'task' && b.root.checked ? 1 : 0;
-    return aD - bD;
-  });
-  return blocks.flatMap((b) => [b.root, ...b.children]);
-}
-
 // ============ Rendering ============
 // 네 탭이 공유하는 헤더·탭 줄. 탭 이름·배지·저장 표시는 여기 한 곳만 고친다.
 const TABS = [['active', 'Task'], ['inbox', 'Inbox'], ['memo', 'Memo'], ['archive', 'Archive']];
@@ -2701,7 +2689,6 @@ function skeletonHTML() {
 // 헤더 우측 액션(정렬 + 더보기). sort=true인 Task 화면에만 정렬 버튼 노출.
 function headerActions({ sort = false } = {}) {
   return `
-        ${sort ? `<button class="icon-btn${sortIncompleteFirst ? ' sort-active' : ''}" id="sort-btn" aria-label="미완료 순 정렬" title="미완료 항목 먼저">⇅</button>` : ''}
         <div class="menu-wrap">
           <button class="icon-btn" id="more-btn" aria-label="더보기" aria-haspopup="true" aria-expanded="false" title="더보기">⋯</button>
           <div class="menu" id="more-menu" role="menu"></div>
@@ -2844,7 +2831,6 @@ function renderApp() {
   app.innerHTML = `
     ${renderShell('active', {
       meta: `${fmtDate(new Date())} · ${totalLine ? `${doneLine}/${totalLine} 완료` : ''}`,
-      sort: true,
     })}
     <div id="sections"></div>
   `;
@@ -2882,30 +2868,32 @@ function renderApp() {
       e.textContent = '비어 있음';
       card.appendChild(e);
     } else {
-      const displayItemsRaw = sortIncompleteFirst ? sortItemsIncompleteFirst(sec.items.filter((i) => i.text.trim())) : sec.items;
-      const rows = displayItemsRaw.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim());
-      let collapseAtIndent = null; // 접힌 조상의 indent (그보다 깊은 항목은 숨김)
-      rows.forEach((item, idx) => {
-        // 접힘 범위를 벗어나면 해제
-        if (collapseAtIndent !== null && item.indent <= collapseAtIndent) collapseAtIndent = null;
-        if (collapseAtIndent !== null) return; // 접힌 조상 아래 → 렌더 생략
-        const next = rows[idx + 1];
-        const hasChildren = !!next && next.indent > item.indent;
-        const collapsedNow = hasChildren && isCollapsed(item);
-        if (item.type === 'task') {
-          let hiddenCount = 0;
-          if (collapsedNow) {
-            for (let j = idx + 1; j < rows.length && rows[j].indent > item.indent; j++) hiddenCount++;
-          }
-          card.appendChild(renderTask(item, key, { hasChildren, collapsed: collapsedNow, hiddenCount }));
-        } else {
-          const b = document.createElement('div');
-          b.className = `bullet indent-${Math.min(item.indent, 3)}`;
-          b.textContent = '• ' + item.text;
-          card.appendChild(b);
-        }
-        if (collapsedNow) collapseAtIndent = item.indent;
-      });
+      // 완료된 상위 할 일(하위 포함)은 섹션 아래 "완료 n개" 접기 행으로 모은다(B3).
+      // 방금 체크한 항목은 800ms 동안 제자리에 머문다(lingering)
+      const blocks = splitBlocks(sec.items.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim()));
+      const isDoneBlock = (b) => b.root.type === 'task' && b.root.checked && !doneLinger.has(lingerKey(b.root));
+      const open = blocks.filter((b) => !isDoneBlock(b));
+      const done = blocks.filter(isDoneBlock);
+      appendRows(card, open.flatMap((b) => [b.root, ...b.children]), key);
+      if (done.length) {
+        // 드래그 "섹션 끝"은 미완료 마지막 블록 바로 뒤로. 그 다음 줄이 (완료) 항목이면 그 앞에 넣는다
+        const lastOpen = open[open.length - 1];
+        const lastLine = lastOpen ? (lastOpen.children.length ? lastOpen.children[lastOpen.children.length - 1] : lastOpen.root).lineIndex : null;
+        const nextItem = lastLine == null ? done[0].root : sec.items.find((i) => i.lineIndex === lastLine + 1);
+        if (nextItem) div.dataset.firstDone = nextItem.lineIndex;
+        const expanded = isDoneOpen(key);
+        const fold = document.createElement('button');
+        fold.type = 'button';
+        fold.className = 'done-fold';
+        fold.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        const prev = lastDoneCount[key];
+        fold.innerHTML = `완료 <span class="done-n">${done.length}</span>개 <span aria-hidden="true">${expanded ? '⌄' : '›'}</span>`;
+        if (prev != null && done.length > prev) fold.querySelector('.done-n').classList.add('bump');
+        fold.addEventListener('click', () => { setDoneOpen(key, !expanded); renderApp(); });
+        card.appendChild(fold);
+        if (expanded) appendRows(card, done.flatMap((b) => [b.root, ...b.children]), key);
+      }
+      lastDoneCount[key] = done.length;
     }
     root.appendChild(div);
   });
@@ -2915,12 +2903,89 @@ function renderApp() {
   updateComposerPriBtn();
 }
 
+// 상위 항목 + 그 하위들을 한 블록으로 묶는다(섹션이 들여쓴 줄로 시작해도 버리지 않음)
+function splitBlocks(items) {
+  const blocks = [];
+  let cur = null;
+  for (const item of items) {
+    if (item.indent === 0 || !cur) { cur = { root: item, children: [] }; blocks.push(cur); }
+    else cur.children.push(item);
+  }
+  return blocks;
+}
+
+// 행 그리기(접힌 부모 아래는 생략)
+function appendRows(card, rows, key) {
+  let collapseAtIndent = null; // 접힌 조상의 indent (그보다 깊은 항목은 숨김)
+  rows.forEach((item, idx) => {
+    if (collapseAtIndent !== null && item.indent <= collapseAtIndent) collapseAtIndent = null;
+    if (collapseAtIndent !== null) return;
+    const next = rows[idx + 1];
+    const hasChildren = !!next && next.indent > item.indent;
+    const collapsedNow = hasChildren && isCollapsed(item);
+    if (item.type === 'task') {
+      let hiddenCount = 0;
+      if (collapsedNow) {
+        for (let j = idx + 1; j < rows.length && rows[j].indent > item.indent; j++) hiddenCount++;
+      }
+      card.appendChild(renderTask(item, key, { hasChildren, collapsed: collapsedNow, hiddenCount }));
+    } else {
+      const b = document.createElement('div');
+      b.className = `bullet indent-${Math.min(item.indent, 3)}`;
+      b.textContent = '• ' + item.text;
+      card.appendChild(b);
+    }
+    if (collapsedNow) collapseAtIndent = item.indent;
+  });
+}
+
+// ---- 완료 접기(B3) ----
+const DONE_OPEN_KEY = 'tako_done_open';
+let doneOpen = {};
+try { doneOpen = JSON.parse(localStorage.getItem(DONE_OPEN_KEY) || '{}') || {}; } catch (e) { doneOpen = {}; }
+function isDoneOpen(key) { return !!doneOpen[key]; } // 기본 접힘
+function setDoneOpen(key, v) {
+  doneOpen[key] = v;
+  try { localStorage.setItem(DONE_OPEN_KEY, JSON.stringify(doneOpen)); } catch (e) {}
+}
+const lastDoneCount = {};
+// 체크 후 800ms 머무름: 그동안 다시 누르면 아무 일도 없던 것처럼(취소)
+const DONE_LINGER_MS = 800;
+const doneLinger = new Map(); // key → timer
+const lingerKey = (item) => item.text.trim();
+function startLinger(item) {
+  const k = lingerKey(item);
+  clearTimeout(doneLinger.get(k));
+  doneLinger.set(k, setTimeout(() => {
+    // 200ms에 접히며 들어감 → 다시 그림
+    const row = [...document.querySelectorAll('#sections .task')].find((r) => r.dataset.key === k);
+    if (row && !prefersReducedMotion()) {
+      row.style.maxHeight = row.offsetHeight + 'px';
+      void row.offsetHeight;
+      row.classList.add('leaving');
+      setTimeout(() => { doneLinger.delete(k); if (currentTab === 'active' && !dragCtx.active) renderApp(); }, 200);
+    } else {
+      doneLinger.delete(k);
+      if (currentTab === 'active' && !dragCtx.active) renderApp();
+    }
+  }, DONE_LINGER_MS));
+}
+function cancelLinger(item) {
+  const k = lingerKey(item);
+  clearTimeout(doneLinger.get(k));
+  doneLinger.delete(k);
+}
+function prefersReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
 function renderTask(item, key, opts = {}) {
   const { hasChildren = false, collapsed = false, hiddenCount = 0 } = opts;
   const t = document.createElement('div');
   t.className = `task indent-${Math.min(item.indent, 3)}` + (item.checked ? ' done' : '');
   t.dataset.line = item.lineIndex;
   t.dataset.indent = item.indent;
+  t.dataset.key = lingerKey(item);
 
   // 접기/펼치기 토글 — 자식 있는 항목만 화살표, 나머지는 정렬용 빈 자리
   const toggle = document.createElement('button');
@@ -3085,6 +3150,11 @@ function onToggle(item, checked, el, cb) {
     return;
   }
   el.classList.toggle('done', checked);
+  // 상위 항목을 체크하면 800ms 머문 뒤 "완료 n개"로 들어감. 머무는 동안 다시 누르면 취소
+  if (item.indent === 0) {
+    if (checked) startLinger(item);
+    else cancelLinger(item);
+  }
   activeStore.apply(opToggle(item, checked), { msg: 'toggle tasks', debounce: 400, onFail: 'keep' })
     .then(() => {
       // 다른 저장이 남아 있지 않을 때만 다시 그림(줄 번호 정리). 남아 있으면 다음 저장이 처리
@@ -3245,18 +3315,28 @@ function onDragMove(e) {
         const lvl = Math.round((e.clientX - cardLeft - 12) / 24);
         const chosenIndent = Math.max(nextIndent, Math.min(underIndent, lvl));
         indicator.style.marginLeft = (8 + chosenIndent * 24) + 'px';
-        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null, indent: chosenIndent };
+        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : sectionEndLine(section, taskUnder), indent: chosenIndent };
       } else {
         indicator.style.marginLeft = '';
-        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : null };
+        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : sectionEndLine(section, taskUnder) };
       }
     }
   } else {
     clearInto();
     indicator.style.marginLeft = '';
-    card.appendChild(indicator);
-    dragCtx.target = { sectionKey, beforeLine: null };
+    const fold = card.querySelector('.done-fold');
+    if (fold) card.insertBefore(indicator, fold); else card.appendChild(indicator);
+    dragCtx.target = { sectionKey, beforeLine: sectionEndLine(section, null) };
   }
+}
+
+// "섹션 끝"에 놓을 때의 기준 줄: 완료 항목이 있으면 미완료 마지막 뒤, 펼친 완료 영역 안이면 진짜 끝(B3)
+function sectionEndLine(section, taskUnder) {
+  const first = section.dataset.firstDone;
+  if (first == null || first === '') return null;
+  const fold = section.querySelector('.done-fold');
+  if (taskUnder && fold && (fold.compareDocumentPosition(taskUnder) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+  return +first;
 }
 
 function onDragEnd() {
@@ -3649,7 +3729,6 @@ function init() {
   });
 
   document.addEventListener('click', (e) => {
-    if (e.target.closest('#sort-btn')) { sortIncompleteFirst = !sortIncompleteFirst; renderApp(); return; }
 
     const moreBtn = e.target.closest('#more-btn');
     if (moreBtn) {
