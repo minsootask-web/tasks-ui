@@ -1271,6 +1271,14 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
 }
 
 // ---- active.md 스토어 ----
+// 다른 기기 변경을 다시 적용했다는 안내. 되돌리기·다시 시도 토스트가 떠 있으면 그것을 지우지 않게
+// 띄우지 않는다(Q11 — 토스트는 한 번에 하나라 안내가 되돌리기 버튼을 덮어 버렸다)
+function notifyRebased() {
+  const t = $('#toast');
+  if (t && t.classList.contains('show') && (toastState.kind === 'undo' || toastState.kind === 'error')) return;
+  notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+}
+
 const activeStore = createStore({
   file: 'active',
   url: API,
@@ -1281,7 +1289,7 @@ const activeStore = createStore({
     state.sections = parseSections(view);
   },
   onRebase: () => {
-    notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+    notifyRebased();
     if (isEditingUI() || dragCtx.active) deferredRender = true;
     else renderCurrent();
   },
@@ -1292,7 +1300,7 @@ function ghLoad() { return activeStore.reload(); }
 
 const parseJsonList = (c) => { try { const v = JSON.parse(c); return Array.isArray(v) ? v : []; } catch { return []; } };
 const rebaseNotice = () => {
-  notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+  notifyRebased();
   if (isEditingUI() || dragCtx.active) deferredRender = true;
   else renderCurrent();
 };
@@ -1339,7 +1347,7 @@ const memosStore = createStore({
     state.memos = [...memoDrafts, ...view.filter((x) => !memoDrafts.some((d) => d.id === x.id))];
   },
   onRebase: () => {
-    notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+    notifyRebased();
     if (isEditingUI() || memoDragCtx.div) deferredRender = true;
     else if (currentTab === 'memo') drawMemos();
   },
