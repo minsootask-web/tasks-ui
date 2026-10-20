@@ -3773,10 +3773,11 @@ function renderTask(item, key, opts = {}) {
   actions.appendChild(handle);
 
   const del = document.createElement('button');
-  del.className = 'row-btn danger';
+  // PC hover의 빨간 채움은 영구 삭제(보관함 🗑)에만 — 보관은 회색 📥(다듬기, C7과 같은 기호)
+  del.className = 'row-btn';
   del.title = '보관함으로 옮기기';
   del.setAttribute('aria-label', `보관함으로 옮기기: ${item.text}`);
-  del.innerHTML = '×';
+  del.innerHTML = '📥';
   del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
   actions.appendChild(del);
 
