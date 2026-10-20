@@ -548,13 +548,24 @@
   /* 터치 타깃 확대 — 시각 크기는 유지하고 히트 영역을 최소 44px 높이로 넓힌다.
      행이 세로로 쌓이므로 세로 확장은 인접 버튼과 겹치지 않아 안전하다. */
   @media (pointer: coarse) {
-    .task-toggle { position: relative; }
-    .row-btn::before, .pri-mini::before, .task-toggle::before,
-    .inbox-cb::before, .task input[type="checkbox"]::before {
+    .row-btn::before, .pri-mini::before, .inbox-cb::before {
       content: ""; position: absolute; top: 50%; left: 50%;
       width: 100%; min-width: 32px; height: 44px;
       transform: translate(-50%, -50%);
     }
+  }
+  /* 체크 누르는 영역(B14): 보이는 원은 20px 그대로, 감싼 label이 44×44px.
+     오른쪽은 글 영역과 4px 떨어지게(글자를 누르면 편집, 원 근처를 누르면 체크 — 오조작 감소).
+     input의 ::before는 Safari에서 안 그려지므로 label로 넓힌다 */
+  .cb-hit {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 44px; height: 44px; margin: -11px -6px -13px -12px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* 펼침 화살표 누르는 영역 44×44(왼쪽으로 넓힘, 체크 영역과 겹치지 않게) */
+  .task-toggle { position: relative; }
+  .task-toggle:not(.leaf)::before {
+    content: ""; position: absolute; top: 50%; right: 0; width: 44px; height: 44px; transform: translateY(-50%);
   }
 
   /* Bulk action bar */
@@ -3163,7 +3174,7 @@ function renderTask(item, key, opts = {}) {
   // 터치: 행을 길게 눌러 옮기기(B2). 체크박스·펼침 화살표는 제외
   t.addEventListener('pointerdown', (e) => {
     if (!e.pointerType || e.pointerType === 'mouse') return;
-    if (e.target.closest('input, .task-toggle, a, .task-actions')) return;
+    if (e.target.closest('input, .cb-hit, .task-toggle, a, .task-actions')) return;
     longPress(e, t, {
       onStart: (ev) => {
         suppressTaskClickUntil = Date.now() + 600; // 놓은 뒤 따라오는 클릭이 편집 시트를 열지 않게
@@ -3197,8 +3208,11 @@ function renderTask(item, key, opts = {}) {
   del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item); });
   actions.appendChild(del);
 
+  const hit = document.createElement('label');
+  hit.className = 'cb-hit';
+  hit.appendChild(cb);
   t.appendChild(toggle);
-  t.appendChild(cb);
+  t.appendChild(hit);
   t.appendChild(span);
   t.appendChild(actions);
   return t;
