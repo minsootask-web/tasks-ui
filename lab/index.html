@@ -1860,7 +1860,6 @@ async function onBulkRestore() {
       remove: { store: archiveStore, op: opArchiveRemove(ids), msg: `restore done: ${ids.length}` },
     });
     selectedArchive.clear();
-    toast(`${ids.length}개 복구됨`);
     renderArchive();
   } catch (e) { renderArchive(); notifyTransferError(e, onBulkRestore); }
 }
@@ -1884,11 +1883,10 @@ function restoreAdds(entries) {
 async function onBulkPurge() {
   const ids = [...selectedArchive];
   if (!ids.length) return;
-  if (!confirm(`${ids.length}개를 영구 삭제할까요?`)) return;
+  if (!confirm(`${ids.length}개를 완전히 지울까요?\n지우면 다시 살릴 수 없어요.`)) return;
   try {
     await archiveStore.commit(opArchiveRemove(ids), { msg: `purge ${ids.length} from archive` });
     selectedArchive.clear();
-    toast(`${ids.length}개 영구 삭제됨`);
     renderArchive();
   } catch (e) { notifyError(e); }
 }
@@ -1925,6 +1923,8 @@ async function archiveActiveTask(item) {
     adds: [{ store: archiveStore, op: opArchiveAdd([entry]), undo: opArchiveRemove([entry.id]), msg: `archive: ${item.text}` }],
     remove: { store: activeStore, op: opDeleteBlock({ lineIndex, raw: block[0] }), msg: `archive (from active): ${item.text}` },
   });
+  // 되돌리기용 원래 자리: 블록 바로 위 줄(원문)과 원래 들여쓰기 블록
+  return { entry, pos: { block, after: { lineIndex: start - 1, raw: lines[start - 1] } } };
 }
 
 
@@ -1934,16 +1934,14 @@ async function onRestore(entry) {
       adds: restoreAdds([entry]),
       remove: { store: archiveStore, op: opArchiveRemove([entry.id]), msg: 'restore done' },
     });
-    toast('복구됨');
     renderArchive();
   } catch (e) { renderArchive(); notifyTransferError(e, () => onRestore(entry)); }
 }
 
 async function onPurge(entry) {
-  if (!confirm('영구 삭제할까요?')) return;
+  if (!confirm('완전히 지울까요?\n지우면 다시 살릴 수 없어요.')) return;
   try {
     await archiveStore.commit(opArchiveRemove([entry.id]), { msg: 'purge: archive' });
-    toast('영구 삭제됨');
     renderArchive();
   } catch (e) { notifyError(e); }
 }
@@ -2331,13 +2329,8 @@ async function onAddMemo() {
 async function onDeleteMemo(id) {
   const m = state.memos.find((x) => x.id === id);
   if (!m) return;
-  if (m.text && !confirm(`메모를 삭제할까요?\n\n"${m.text.slice(0, 40)}"`)) return;
   if (m._draft) { removeDraftMemo(null, id); return; }
-  try {
-    const pr = memosStore.commit(opMemoDelete(id), { msg: 'memo: delete' });
-    drawMemos();
-    await pr;
-  } catch (e) { drawMemos(); notifyError(e); }
+  return deleteMemoWithUndo(m);
 }
 
 function bindBarEvents() {
@@ -2359,10 +2352,11 @@ function bindBarEvents() {
 function onMoveToActive(item, priority) {
   return withInboxLock([item], async () => {
   try {
-    await moveInboxToActive([item], priority);
+    const work = moveInboxToActive([item], priority);
+    await work;
     selectedInbox.clear();
-    toast(`${SECTION_KEYS[priority]} 에 추가됨`);
     renderInbox();
+    offerUndo(`${PRI_TO[priority]} 보냈어요`, work, () => undoMoveToActive([item], priority));
   } catch (e) {
     renderInbox();
     flashInboxRows([item]);
@@ -2376,10 +2370,11 @@ function onBulkMove(priority) {
   if (!items.length) return;
   return withInboxLock(items, async () => {
   try {
-    await moveInboxToActive(items, priority);
+    const work = moveInboxToActive(items, priority);
+    await work;
     selectedInbox.clear();
-    toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
     renderInbox();
+    offerUndo(`${items.length}개를 ${PRI_TO[priority]} 보냈어요`, work, () => undoMoveToActive(items, priority));
   } catch (e) {
     renderInbox();
     flashInboxRows(items);
@@ -2426,6 +2421,55 @@ function archiveInboxItems(items) {
     adds: [{ store: archiveStore, op: opArchiveAdd(entries), undo: opArchiveRemove(entries.map((e) => e.id)),
       msg: `archive ${items.length} from inbox` }],
     remove: { store: inboxStore, op: opInboxRemove(items), msg: `archive ${items.length} from inbox` },
+  }).then(() => entries);
+}
+
+// ---- 되돌리기 (B1) ----
+// 보관·분류·메모 삭제는 확인창 없이 바로 저장하고, 되돌리기는 "반대 연산"을 다시 저장한다
+// (지연 저장이 아니라서 그 사이 앱을 닫아도 유실이 없다). 확인창은 영구 삭제·토큰 재입력만.
+const PRI_TO = { high: 'High로', medium: 'Medium으로', low: 'Low로' };
+
+// Inbox 항목을 원래 줄 위치 근처로 되돌려 넣기(lineIdx 순서대로)
+const opInboxInsert = (items) => (c) => {
+  const lines = (c || '').split('\n');
+  [...items].sort((a, b) => a.lineIdx - b.lineIdx).forEach((it) => {
+    const at = Math.max(0, Math.min(it.lineIdx, lines.length));
+    lines.splice(at, 0, `- ${it.text}`);
+  });
+  let out = lines.join('\n');
+  if (!out.endsWith('\n')) out += '\n';
+  return out;
+};
+
+// Inbox → Task 분류 되돌리기: Inbox 원래 자리에 다시 넣고 Task에서 뺀다
+function undoMoveToActive(items, priority) {
+  const texts = items.map((i) => i.text);
+  return runTransfer({
+    adds: [{ store: inboxStore, op: opInboxInsert(items), undo: opInboxRemoveLast(texts), msg: `undo inbox → active (${items.length})` }],
+    remove: { store: activeStore, op: opActiveRemoveAppended(priority, texts), msg: `undo inbox → active (${items.length})` },
+  });
+}
+
+// Inbox 보관 되돌리기: Inbox 원래 자리에 다시 넣고 보관함에서 뺀다
+function undoArchiveInbox(items, entries) {
+  return runTransfer({
+    adds: [{ store: inboxStore, op: opInboxInsert(items), undo: opInboxRemoveLast(items.map((i) => i.text)), msg: `undo archive (${items.length})` }],
+    remove: { store: archiveStore, op: opArchiveRemove(entries.map((e) => e.id)), msg: `undo archive (${items.length})` },
+  });
+}
+
+// 되돌리기 토스트. 원래 동작(work)이 끝난 뒤에만 반대 연산을 실행한다
+// (원래 동작이 실패해 이미 원위치됐으면 아무것도 하지 않음 → 중복 방지)
+function offerUndo(msg, work, inverse) {
+  notify.undo(msg, async () => {
+    try { await work; } catch (e) { return; }
+    try {
+      await inverse();
+      renderCurrent();
+    } catch (e) {
+      renderCurrent();
+      notifyTransferError(e, () => inverse().then(renderCurrent));
+    }
   });
 }
 
@@ -2433,13 +2477,13 @@ async function onBulkDelete() {
   const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
   if (!items.length) return;
   if (items.some((i) => inboxBusy.has(i.text))) return;
-  if (!confirm(`${items.length}개를 보관함으로 옮길까요?`)) return;
   const run = () => withInboxLock(items, async () => {
     try {
-      await archiveInboxItems(items);
+      const work = archiveInboxItems(items);
+      const entries = await work;
       selectedInbox.clear();
-      toast(`${items.length}개 보관됨`);
       renderInbox();
+      offerUndo(`${items.length}개를 보관함으로 옮겼어요`, work, () => undoArchiveInbox(items, entries));
     } catch (e) {
       renderInbox();
       flashInboxRows(items);
@@ -2451,13 +2495,13 @@ async function onBulkDelete() {
 
 async function onDeleteFromInbox(item) {
   if (inboxBusy.has(item.text)) return;
-  if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
   const run = () => withInboxLock([item], async () => {
     try {
-      await archiveInboxItems([item]);
+      const work = archiveInboxItems([item]);
+      const entries = await work;
       selectedInbox.clear();
-      toast('보관됨');
       renderInbox();
+      offerUndo('보관함으로 옮겼어요', work, () => undoArchiveInbox([item], entries));
     } catch (e) {
       renderInbox();
       flashInboxRows([item]);
@@ -2664,12 +2708,13 @@ async function onBulkArchiveDone() {
       }
     });
   });
-  if (!targets.length) { toast('완료된 항목이 없습니다'); return; }
-  if (!confirm(`완료된 ${targets.length}개 항목을 보관함으로 옮길까요?`)) return;
+  if (!targets.length) return;
   try {
     const lines = state.content.split('\n');
+    const positions = [];
     const entries = targets.map((t) => {
       const { start, end } = extractBlock(lines, t.lineIndex);
+      positions.push({ start, block: lines.slice(start, end + 1), after: { lineIndex: start - 1, raw: lines[start - 1] } });
       return {
         id: genArchiveId(),
         deletedAt: new Date().toISOString(),
@@ -2685,23 +2730,60 @@ async function onBulkArchiveDone() {
       remove: { store: activeStore, op: opDeleteBlocks(targets), msg: `archive ${entries.length} done tasks (from active)` },
     });
     renderApp();
-    notify.undo(`${entries.length}개를 보관함으로 옮겼어요`, () => undoArchive(entries));
+    // 되돌리면 각 항목을 원래 자리로(위에서부터 차례로 넣어 앞 항목이 다음 항목의 기준 줄이 됨)
+    notify.undo(`${entries.length}개를 보관함으로 옮겼어요`, () => undoBulkArchive(entries, positions));
+    return entries;
   } catch (e) { renderApp(); notifyTransferError(e, onBulkArchiveDone); }
 }
 
-// 직전 일괄 보관을 취소 — 보관한 항목들을 Task 탭으로 되돌리고 보관함에서 제거
-async function undoArchive(entries) {
-  const ids = entries.map((e) => e.id);
+// Task 보관 되돌리기: 원래 줄 바로 아래(같은 들여쓰기)로 다시 넣는다. 위 줄을 못 찾으면 일반 복구 규칙
+const opActiveReinsert = (entry, pos) => (c) => {
+  const lines = c.split('\n');
+  let at = -1;
+  if (pos.after && pos.after.raw != null && !/^##\s/.test(pos.after.raw) && pos.after.raw.trim() !== '') {
+    try { at = resolveLineIndex(pos.after, lines) + 1; } catch (e) { at = -1; }
+  } else if (pos.after && pos.after.raw != null && /^##\s/.test(pos.after.raw)) {
+    at = lines.findIndex((l) => l === pos.after.raw) + 1 || -1;
+  }
+  if (at > 0) {
+    // 위 줄 = 보관 직전 블록 바로 앞 줄이므로, 그 다음이 정확히 원래 자리
+    lines.splice(at, 0, ...pos.block);
+    return lines.join('\n');
+  }
+  restoreBlockInto(lines, entry);
+  return lines.join('\n');
+};
+async function undoBulkArchive(entries, positions) {
+  const order = entries.map((e, i) => ({ e, p: positions[i] })).sort((a, b) => a.p.start - b.p.start);
   try {
     await runTransfer({
-      adds: restoreAdds(entries),
-      remove: { store: archiveStore, op: opArchiveRemove(ids), msg: `undo archive: ${entries.length}` },
+      adds: [{
+        store: activeStore,
+        op: (c) => order.reduce((acc, { e, p }) => opActiveReinsert(e, p)(acc), c),
+        undo: opActiveRemoveRestored(entries),
+        msg: `undo archive: restore ${entries.length}`,
+      }],
+      remove: { store: archiveStore, op: opArchiveRemove(entries.map((e) => e.id)), msg: `undo archive: ${entries.length}` },
     });
-    currentTab = 'active';
-    renderApp();
-    toast(`${entries.length}개 복원됨`);
-  } catch (e) { renderApp(); notifyTransferError(e, () => undoArchive(entries)); }
+    renderCurrent();
+  } catch (e) { renderCurrent(); notifyTransferError(e, () => undoBulkArchive(entries, positions)); }
 }
+
+function undoArchiveTask(entry, pos) {
+  return runTransfer({
+    adds: [{ store: activeStore, op: opActiveReinsert(entry, pos), undo: opActiveRemoveRestored([entry]), msg: 'undo archive' }],
+    remove: { store: archiveStore, op: opArchiveRemove([entry.id]), msg: 'undo archive' },
+  });
+}
+
+// 보관함 항목을 원래 자리로 되돌리고 보관함에서 뺀다(복구·되돌리기 공용)
+function restoreEntries(entries) {
+  return runTransfer({
+    adds: restoreAdds(entries),
+    remove: { store: archiveStore, op: opArchiveRemove(entries.map((e) => e.id)), msg: `restore ${entries.length}` },
+  });
+}
+
 
 function renderApp() {
   if (!state.token) { renderSetup(); return; }
@@ -2901,7 +2983,6 @@ async function onSetupSave() {
     await ghLoad();
     localStorage.setItem('gh_pat', tok);
     renderApp();
-    toast('연결됨');
   } catch (e) {
     state.token = null;
     if (e.code === 401) errEl.textContent = '토큰이 유효하지 않습니다.';
@@ -2918,7 +2999,6 @@ async function safeMutate(op, msg, label, { quiet = false } = {}) {
   try {
     await activeStore.commit(op, { msg });
     renderApp();
-    if (label) toast(label);
     return true;
   } catch (e) {
     lastMutateError = e;
@@ -2963,12 +3043,12 @@ function onEdit(item, text, opts) {
 
 async function onDelete(item) {
   // 상위·하위 모두 보관함으로(하위만 영구 삭제되던 문제 A6)
-  if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
   const run = async () => {
     try {
-      await archiveActiveTask(item);
+      const work = archiveActiveTask(item);
+      const { entry, pos } = await work;
       renderApp();
-      toast('보관됨');
+      offerUndo('보관함으로 옮겼어요', work, () => undoArchiveTask(entry, pos));
     } catch (e) {
       renderApp();
       notifyTransferError(e, run);
@@ -3311,7 +3391,6 @@ async function runSheetSave(text, pri) {
 async function onAddToInbox(text, { quiet = false } = {}) {
   try {
     await inboxStore.commit(opInboxAppend([text]), { msg: `inbox: add ${text}` });
-    toast('Inbox에 추가됨');
     // 어느 탭에서 추가했든 탭 줄의 Inbox 배지까지 다시 그린다(A9)
     renderCurrent();
     return true;
