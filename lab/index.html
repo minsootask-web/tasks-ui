@@ -486,7 +486,7 @@
   .pri-mini {
     appearance: none; -webkit-appearance: none;
     border: 1.5px solid var(--border); background: var(--surface-2); color: var(--muted);
-    font-size: 11px; font-weight: 700; width: 32px; height: 32px; border-radius: 6px;
+    font-size: 16px; line-height: 1; width: 28px; height: 28px; border-radius: 6px; padding: 0;
     cursor: pointer; transition: all 0.12s; position: relative;
     display: inline-flex; align-items: center; justify-content: center;
   }
@@ -527,6 +527,7 @@
   .bar-btn.h:hover { border-color: var(--high); color: var(--high); }
   .bar-btn.m:hover { border-color: var(--med); color: var(--med); }
   .bar-btn.l:hover { border-color: var(--low); color: var(--low); }
+  .bar-btn.h, .bar-btn.m, .bar-btn.l { font-size: 16px; line-height: 1; padding: 5px 10px; }
   .bar-btn.danger { border-color: transparent; }
   .bar-btn.danger:hover { background: var(--danger); border-color: var(--danger); color: white; }
   .bar-btn.ghost { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
@@ -675,9 +676,9 @@
   <div class="field">
     <label id="pri-label">우선순위</label>
     <div class="pri-picker" id="pri-picker" role="radiogroup" aria-labelledby="pri-label">
-      <div class="pri-pill pri-high" data-pri="high" role="radio" aria-checked="false" tabindex="-1"><span class="dot"></span>High</div>
-      <div class="pri-pill pri-med selected" data-pri="medium" role="radio" aria-checked="true" tabindex="0"><span class="dot"></span>Medium</div>
-      <div class="pri-pill pri-low" data-pri="low" role="radio" aria-checked="false" tabindex="-1"><span class="dot"></span>Low</div>
+      <div class="pri-pill pri-high" data-pri="high" role="radio" aria-checked="false" tabindex="-1"><span class="pri-ic" aria-hidden="true">🍅</span>High</div>
+      <div class="pri-pill pri-med selected" data-pri="medium" role="radio" aria-checked="true" tabindex="0"><span class="pri-ic" aria-hidden="true">🍋</span>Medium</div>
+      <div class="pri-pill pri-low" data-pri="low" role="radio" aria-checked="false" tabindex="-1"><span class="pri-ic" aria-hidden="true">🥝</span>Low</div>
     </div>
   </div>
   <div class="field">
@@ -697,9 +698,9 @@
 <div class="inbox-bar" id="inbox-bar">
   <span class="inbox-bar-label" id="inbox-bar-label"></span>
   <button class="bar-btn ghost" id="bar-select-all">전체선택</button>
-  <button class="bar-btn h" id="bar-high">H</button>
-  <button class="bar-btn m" id="bar-med">M</button>
-  <button class="bar-btn l" id="bar-low">L</button>
+  <button class="bar-btn h" id="bar-high" aria-label="High로 보내기" title="High로 보내기">🍅</button>
+  <button class="bar-btn m" id="bar-med" aria-label="Medium으로 보내기" title="Medium으로 보내기">🍋</button>
+  <button class="bar-btn l" id="bar-low" aria-label="Low로 보내기" title="Low로 보내기">🥝</button>
   <button class="bar-btn danger" id="bar-delete">🗑</button>
 </div>
 
@@ -727,7 +728,15 @@ const API   = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`;
 const INBOX_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${INBOX_FILE}`;
 const ARCHIVE_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ARCHIVE_FILE}`;
 const MEMOS_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${MEMOS_FILE}`;
+// 파일(active.md)의 섹션 헤더 — 봇·Skill이 쓰므로 절대 바꾸지 않는다
 const SECTION_KEYS = { high: '🔥 High', medium: '🟡 Medium', low: '🟢 Low' };
+// 화면에 보이는 우선순위 표기는 이것 하나로 통일(B10). 🥚(보관함의 Inbox 출처)는 우선순위가 아니라 별도
+const PRI = {
+  high: { icon: '🍅', label: 'High', to: 'High로' },
+  medium: { icon: '🍋', label: 'Medium', to: 'Medium으로' },
+  low: { icon: '🥝', label: 'Low', to: 'Low로' },
+};
+const PRI_ORDER = ['high', 'medium', 'low'];
 function getMemoCols() { return window.innerWidth <= 600 ? 2 : 3; }
 const MEMO_MAX_COLS = 3;
 
@@ -1732,9 +1741,9 @@ function renderInboxItem(item) {
   const actions = document.createElement('div');
   actions.className = 'inbox-actions';
   actions.innerHTML = `
-    <button class="pri-mini h" title="High로 추가">H</button>
-    <button class="pri-mini m" title="Medium으로 추가">M</button>
-    <button class="pri-mini l" title="Low로 추가">L</button>
+    <button class="pri-mini h" title="High로 보내기" aria-label="High로 보내기">🍅</button>
+    <button class="pri-mini m" title="Medium으로 보내기" aria-label="Medium으로 보내기">🍋</button>
+    <button class="pri-mini l" title="Low로 보내기" aria-label="Low로 보내기">🥝</button>
     <button class="row-btn danger" title="삭제">×</button>
   `;
   actions.querySelectorAll('.pri-mini').forEach((btn) => {
@@ -1797,9 +1806,9 @@ function renderArchiveItem(entry) {
   meta.className = 'archive-badge';
   if (entry.source === 'active') {
     meta.classList.add('pri-' + entry.priority);
-    const dot = entry.priority === 'high' ? '🍅' : entry.priority === 'medium' ? '🍋' : '🥝';
-    meta.textContent = dot;
-    meta.title = `Task / ${entry.priority}`;
+    const p = PRI[entry.priority] || PRI.medium;
+    meta.textContent = p.icon;
+    meta.title = `Task · ${p.label}`;
   } else {
     meta.textContent = '🥚';
     meta.title = 'Inbox';
@@ -2368,7 +2377,7 @@ function onMoveToActive(item, priority) {
   const work = moveInboxToActive([item], priority);
   selectedInbox.clear();
   renderInbox();
-  offerUndo(`${PRI_TO[priority]} 보냈어요`, work, () => undoMoveToActive([item], priority));
+  offerUndo(`${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive([item], priority));
   try {
     await work;
   } catch (e) {
@@ -2386,7 +2395,7 @@ function onBulkMove(priority) {
   const work = moveInboxToActive(items, priority);
   selectedInbox.clear();
   renderInbox();
-  offerUndo(`${items.length}개를 ${PRI_TO[priority]} 보냈어요`, work, () => undoMoveToActive(items, priority));
+  offerUndo(`${items.length}개를 ${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive(items, priority));
   try {
     await work;
   } catch (e) {
@@ -2461,7 +2470,6 @@ function archiveInboxItems(items) {
 // ---- 되돌리기 (B1) ----
 // 보관·분류·메모 삭제는 확인창 없이 바로 저장하고, 되돌리기는 "반대 연산"을 다시 저장한다
 // (지연 저장이 아니라서 그 사이 앱을 닫아도 유실이 없다). 확인창은 영구 삭제·토큰 재입력만.
-const PRI_TO = { high: 'High로', medium: 'Medium으로', low: 'Low로' };
 
 // Inbox 항목을 원래 줄 위치 근처로 되돌려 넣기(lineIdx 순서대로)
 const opInboxInsert = (items) => (c) => {
@@ -2856,10 +2864,10 @@ function renderApp() {
 
     const div = document.createElement('div');
     div.className = `section ${cls}`;
-    const secIcon = key === 'high' ? '🍅' : key === 'medium' ? '🍋' : '🥝';
+    const secIcon = PRI[key].icon;
     div.innerHTML = `
       <div class="section-title">
-        <span class="sec-ic">${secIcon}</span>${esc(sec.title.replace(/[🔥🟡🟢]/g, '').trim())}
+        <span class="sec-ic" aria-hidden="true">${secIcon}</span>${PRI[key].label}
         ${taskCount ? `<span class="count">${taskCount}</span>` : ''}
       </div>
       <div class="card"></div>
@@ -3458,14 +3466,15 @@ async function onAddToInbox(text, { quiet = false } = {}) {
 }
 
 // ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
-const COMPOSER_PRI_ICON = { high: '🍅', medium: '🍋', low: '🥝' };
-const COMPOSER_PRI_ORDER = ['high', 'medium', 'low'];
+const COMPOSER_PRI_ORDER = PRI_ORDER;
 
 function updateComposerPriBtn() {
   const btn = $('#composer-pri');
   if (!btn) return;
-  btn.textContent = COMPOSER_PRI_ICON[composerPriority];
-  btn.title = `우선순위: ${composerPriority} (눌러서 변경)`;
+  const p = PRI[composerPriority];
+  btn.textContent = p.icon;
+  btn.title = `우선순위: ${p.icon} ${p.label} (누르면 바뀜)`;
+  btn.setAttribute('aria-label', btn.title);
 }
 
 function cycleComposerPriority() {
