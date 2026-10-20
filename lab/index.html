@@ -1852,9 +1852,14 @@ function resolveLineIndex(item, lines, { exclude = null } = {}) {
     if (item.parentRaw === undefined) return true;
     return (ctx.parent == null ? null : normLine(ctx.parent)) === (item.parentRaw == null ? null : normLine(item.parentRaw));
   };
-  if (free(item.lineIndex) && normLine(ls[item.lineIndex]) === want && sameContext(item.lineIndex)) return item.lineIndex;
   const all = [];
   ls.forEach((l, i) => { if (normLine(l) === want) all.push(i); });
+  // 원래 자리 그대로 쓰기(빠른 경로)는 같은 글이 하나뿐이거나, 같은 글 개수가 그대로이고 순번도 이 줄일 때만(R2).
+  // 같은 글이 여럿인데 개수가 바뀌었으면 원래 번호 자리에 다른 쪽 줄이 와 있을 수 있다
+  if (free(item.lineIndex) && normLine(ls[item.lineIndex]) === want && sameContext(item.lineIndex)) {
+    if (item.section === undefined || all.length === 1) return item.lineIndex;
+    if (item.sameCount === all.length && all[item.ordinal] === item.lineIndex) return item.lineIndex;
+  }
   let cands = all.filter(free);
   const gone = () => {
     const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
