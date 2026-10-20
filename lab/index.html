@@ -642,6 +642,7 @@
 
   /* Archive */
   .archive-parent { margin-left: 0; font-size: 12px; }
+  .archive-badge.from-inbox { width: auto; min-width: 22px; font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0; }
   .archive-when { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .archive-badge {
     display: inline-flex; align-items: center; justify-content: center;
@@ -2283,8 +2284,10 @@ function renderArchiveItem(entry) {
     meta.textContent = p.icon;
     meta.title = `Task · ${p.label}`;
   } else {
-    meta.textContent = '🥚';
-    meta.title = 'Inbox에서 보관함';
+    // 과일 아이콘은 우선순위 전용 — Inbox 출신은 11px 회색 글자 "Inbox"(D5, 이전 🥚는 뜻이 안 보였다)
+    meta.textContent = 'Inbox';
+    meta.classList.add('from-inbox');
+    meta.title = 'Inbox에서 보관함으로 옮긴 항목';
   }
 
   const text = document.createElement('div');
