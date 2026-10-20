@@ -353,6 +353,8 @@
   .pri-pill .dot { width: 10px; height: 10px; }
 
   .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .sheet-err { color: var(--danger); font-size: 13px; margin-top: 12px; }
+  .sheet-err[hidden] { display: none; }
   .actions .btn { flex: 1; } /* 취소/저장 버튼 가로폭 동일 */
   .btn {
     appearance: none; -webkit-appearance: none;
@@ -677,6 +679,7 @@
     <label>내용</label>
     <input type="text" id="sheet-text" placeholder="할 일을 입력하세요" autocomplete="off">
   </div>
+  <div class="sheet-err" id="sheet-err" role="alert" hidden></div>
   <div class="actions">
     <button class="btn btn-ghost" id="sheet-cancel">취소</button>
     <button class="btn btn-primary" id="sheet-save">저장</button>
@@ -1343,8 +1346,8 @@ function restoreBlockInto(lines, entry) {
   insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));
 }
 
-function moveLineToSection(lineIndex, targetKey) {
-  const lines = state.content.split('\n');
+function moveLineToSection(lineIndex, targetKey, content = state.content) {
+  const lines = content.split('\n');
   const { start, end } = extractBlock(lines, lineIndex);
   const block = lines.splice(start, end - start + 1);
   insertIntoSection(lines, targetKey, block);
@@ -2522,22 +2525,29 @@ async function onSetupSave() {
 }
 
 // ============ Event handlers (CRUD) ============
-async function safeMutate(producer, msg, label) {
+// 반환값: 성공 true / 실패 false. quiet이면 오류를 토스트로 알리지 않고 호출자(시트)가 보여준다.
+async function safeMutate(producer, msg, label, { quiet = false } = {}) {
   try {
     const newContent = producer();
     await ghSave(newContent, msg);
     renderApp();
-    toast(label);
+    if (label) toast(label);
+    return true;
   } catch (e) {
     if (e.code === 409) {
       // Conflict: state.content was refreshed by ghSave. Re-render and notify.
       renderApp();
-      notify.info('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 해 주세요');
-    } else {
+      if (!quiet) notify.info('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 해 주세요');
+    } else if (!quiet) {
       notifyError(e);
+    } else {
+      console.error(e);
     }
+    lastMutateError = e;
+    return false;
   }
 }
+let lastMutateError = null;
 
 // 토글 저장 큐 — UI는 즉시 반영(낙관적 업데이트)하고, 저장은 디바운스해
 // 배경에서 한 번에 처리한다. 연속 체크/언체크 시 마지막 상태만 저장하므로
@@ -2588,19 +2598,21 @@ async function flushToggles() {
   }
 }
 
-function onAdd(priority, text) {
+function onAdd(priority, text, opts) {
   return safeMutate(
     () => appendToSection(priority, text),
     `add: ${text}`,
-    '추가됨'
+    '추가됨',
+    opts
   );
 }
 
-function onEdit(lineIndex, text) {
+function onEdit(lineIndex, text, opts) {
   return safeMutate(
     () => editLine(lineIndex, text),
     `edit: ${text}`,
-    '수정됨'
+    '수정됨',
+    opts
   );
 }
 
@@ -2858,6 +2870,8 @@ function showSheet() {
   setTimeout(() => $('#sheet-text').focus(), 100);
 }
 function hideSheet() {
+  if (sheetSaving) return; // 저장 중에는 닫지 않는다(글 보호)
+  setSheetError('');
   const sheet = $('#sheet');
   $('#scrim').classList.remove('show');
   sheet.classList.remove('show');
@@ -2891,54 +2905,73 @@ function trapSheetFocus(e) {
   }
 }
 
-function sheetSave() {
+// 시트 저장(A2): 저장이 끝난 뒤에 닫는다. 실패하면 시트를 연 채로 두고 시트 안에 한 줄로 알린다.
+let sheetSaving = false;
+function setSheetError(msg) {
+  const el = $('#sheet-err');
+  el.textContent = msg || '';
+  el.hidden = !msg;
+}
+async function sheetSave() {
+  if (sheetSaving) return;
   const text = $('#sheet-text').value.trim();
   if (!text) return;
   const pri = $('#pri-picker .pri-pill.selected')?.dataset.pri || 'medium';
-  hideSheet();
-  if (sheetMode === 'inbox') {
-    onAddToInbox(text);
-    return;
+  const btn = $('#sheet-save');
+  setSheetError('');
+  sheetSaving = true;
+  btn.disabled = true;
+  btn.textContent = '저장 중…';
+  let ok = false;
+  try {
+    ok = await runSheetSave(text, pri);
+  } finally {
+    sheetSaving = false;
+    btn.disabled = false;
+    btn.textContent = '저장';
   }
-  if (sheetMode === 'add') {
-    onAdd(pri, text);
-    return;
-  }
+  if (ok) { hideSheet(); return; }
+  const e = lastMutateError;
+  if (e && e.code === 409) setSheetError('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 눌러 주세요.');
+  else if (e && e.userMessage) setSheetError(e.userMessage);
+  else if (e && friendlyError(e) !== '저장하지 못했어요') setSheetError(friendlyError(e));
+  else setSheetError('저장하지 못했어요. 한 번 더 눌러 주세요.');
+}
+
+async function runSheetSave(text, pri) {
+  lastMutateError = null;
+  const quiet = { quiet: true };
+  if (sheetMode === 'inbox') return onAddToInbox(text, quiet);
+  if (sheetMode === 'add') return onAdd(pri, text, quiet);
   // 편집: 시트를 열어둔 사이 다른 저장이 끝났을 수 있으니 줄 위치를 다시 찾는다
   let line;
   try {
     line = editingItem ? resolveLineIndex(editingItem) : editingLine;
   } catch (e) {
-    toast(e.message);
+    lastMutateError = { userMessage: e.message };
     renderApp();
-    return;
+    return false;
   }
   if (editingIsSub) {
     // 하위 할 일: 우선순위(섹션) 개념이 없으므로 텍스트만 수정
-    onEdit(line, text);
-    return;
+    return onEdit(line, text, quiet);
   }
   // Edit: if priority changed, also move
   const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === line));
   const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
   if (curKey !== pri) {
-    // Edit then move — do as two saves to keep mutations simple
-    safeMutate(
-      () => {
-        const c1 = editLine(line, text);
-        state.content = c1;
-        state.sections = parseSections(c1);
-        return moveLineToSection(line, pri);
-      },
+    // 글 수정 + 섹션 이동을 한 번에 저장. 실패해도 로컬 상태를 바꿔 두지 않는다.
+    return safeMutate(
+      () => moveLineToSection(line, pri, editLine(line, text)),
       `edit+move: ${text}`,
-      '수정됨'
+      '수정됨',
+      quiet
     );
-  } else {
-    onEdit(line, text);
   }
+  return onEdit(line, text, quiet);
 }
 
-async function onAddToInbox(text) {
+async function onAddToInbox(text, { quiet = false } = {}) {
   try {
     await ghLoadInbox();
     let c = state.inboxContent;
@@ -2948,7 +2981,12 @@ async function onAddToInbox(text) {
     toast('Inbox에 추가됨');
     // 어느 탭에서 추가했든 탭 줄의 Inbox 배지까지 다시 그린다(A9)
     renderCurrent();
-  } catch (e) { notifyError(e); }
+    return true;
+  } catch (e) {
+    lastMutateError = e;
+    if (quiet) console.error(e); else notifyError(e);
+    return false;
+  }
 }
 
 // ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
