@@ -1065,63 +1065,233 @@ async function ghSaveInbox(newContent, message) {
   }
 }
 
-async function ghLoad() {
-  const res = await fetch(API, {
+// ============ 파일 스토어 (F3) ============
+// 파일 하나 = 스토어 하나. 화면은 늘 view(= base + 아직 저장 안 된 연산 pending)로 그린다.
+//  - base/sha: 마지막으로 확인된 원격본
+//  - apply(op): 연산을 pending에 쌓고 view를 즉시 갱신(낙관적). 저장은 파일당 하나의 큐에서만.
+//  - 저장 내용은 "base 위에 pending 연산을 다시 적용한 결과" → 저장 중에 생긴 변경이 덮이지 않음(A3b)
+//  - 409(다른 기기·봇이 먼저 씀): 최신본을 받아 같은 연산을 다시 적용하고 재시도(최대 2번)
+//  - reload(): base만 바꾸고 pending은 그 위에 다시 적용 → 불러오기가 미저장 변경을 지우지 않음(A3·A3c)
+//  - 연산은 (content) => content 순수 함수. 대상은 줄 번호가 아니라 원문 줄·글·id로 찾는다.
+//    대상을 못 찾으면 예외 → 그 연산만 버림(userMessage로 알림)
+//  - 저장 실패 시: onFail 'keep'(체크 등)은 pending에 남겨 "저장 안 됨 · 다시 시도"로 재시도,
+//    'drop'(추가·이동·보관 등)은 버리고 view를 되돌린 뒤 호출자에게 실패를 알림(글 복원·토스트는 호출자)
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((a, b) => { resolve = a; reject = b; });
+  promise.catch(() => {}); // 호출자가 기다리지 않아도 미처리 거부 경고를 내지 않게
+  return { promise, resolve, reject };
+}
+
+async function ghGet(url) {
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
     cache: 'no-cache',
   });
   if (!res.ok) {
     if (res.status === 401) throw Object.assign(new Error('unauthorized'), { code: 401 });
     if (res.status === 404) throw Object.assign(new Error('not-found'), { code: 404 });
-    throw new Error(`HTTP ${res.status}`);
+    throw Object.assign(new Error(`HTTP ${res.status}`), { code: res.status });
   }
   const data = await res.json();
-  state.sha = data.sha;
-  state.content = base64ToUtf8(data.content);
-  state.sections = parseSections(state.content);
+  return { sha: data.sha, content: base64ToUtf8(data.content) };
 }
 
-async function ghSave(newContent, message, opts = {}) {
-  syncStatus.start('active');
-  try {
-    let attempt = 0;
-    let mutated = newContent;
-    while (true) {
-      const res = await fetch(API, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${state.token}`,
-          Accept: 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message, content: utf8ToBase64(mutated), sha: state.sha }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        state.sha = data.content.sha;
-        // keepLocalState: 낙관적 업데이트로 state.content가 이미 더 최신일 수 있으므로
-        // 저장한 스냅샷으로 되돌리지 않는다 (sha만 갱신).
-        if (!opts.keepLocalState) {
-          state.content = mutated;
-          state.sections = parseSections(state.content);
-        }
-        syncStatus.ok('active');
-        return;
-      }
-      // 409 = sha conflict → refetch and bail (caller should retry mutation)
-      if (res.status === 409 && attempt === 0) {
-        attempt++;
-        await ghLoad();
-        throw Object.assign(new Error('conflict'), { code: 409 });
-      }
-      throw new Error(`PUT ${res.status}`);
-    }
-  } catch (e) {
-    if (e.code === 409) syncStatus.end('active'); // 충돌은 호출자가 최신 기준으로 다시 처리
-    else syncStatus.fail('active');
-    throw e;
-  }
+async function ghPut(url, content, sha, message, { keepalive = false } = {}) {
+  const res = await fetch(url, {
+    method: 'PUT',
+    keepalive,
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message, content: utf8ToBase64(content), sha }),
+  });
+  if (!res.ok) throw Object.assign(new Error(`PUT ${url.split('/').pop()} ${res.status}`), { code: res.status });
+  const data = await res.json();
+  return data.content.sha;
 }
+
+function createStore({ file, url, parse, serialize, onChange, onRebase }) {
+  const s = {
+    file, base: null, sha: '', pending: [], view: null, loaded: false,
+    queue: Promise.resolve(), timer: null, flushing: false,
+  };
+  // pending 연산을 차례로 적용. 대상을 못 찾는 연산은 bad로 모은다.
+  const applyAll = (base, ops) => {
+    let c = base;
+    const bad = [];
+    for (const p of ops) {
+      try { c = p.op(c); } catch (e) { bad.push({ p, e }); }
+    }
+    return { c, bad };
+  };
+  const recompute = () => {
+    if (s.base == null) return;
+    const { c, bad } = applyAll(s.base, s.pending);
+    bad.forEach(({ p, e }) => dropOp(p, e));
+    s.view = c;
+    onChange && onChange(s.view);
+  };
+  const dropOp = (p, e) => {
+    s.pending = s.pending.filter((x) => x !== p);
+    p.done.reject(e);
+  };
+
+  s.apply = (op, { msg = 'update', debounce = 0, onFail = 'drop' } = {}) => {
+    const p = { op, msg, onFail, done: deferred() };
+    s.pending.push(p);
+    recompute();
+    s.schedule(debounce);
+    return p.done.promise;
+  };
+  // 즉시 저장하고 결과를 기다린다
+  s.commit = (op, opts = {}) => {
+    const pr = s.apply(op, { ...opts, debounce: 0 });
+    return pr;
+  };
+  s.schedule = (debounce = 0) => {
+    clearTimeout(s.timer);
+    if (debounce > 0) s.timer = setTimeout(() => { s.timer = null; s.flush(); }, debounce);
+    else { s.timer = null; s.flush(); }
+  };
+  s.flush = ({ keepalive = false } = {}) => {
+    clearTimeout(s.timer);
+    s.timer = null;
+    const run = s.queue.then(() => flushOnce(keepalive));
+    s.queue = run.catch(() => {});
+    return run;
+  };
+  const flushOnce = async (keepalive) => {
+    const batch = s.pending.slice();
+    if (!batch.length) {
+      // 다시 보낼 것이 없으면 남은 실패 표시도 정리
+      if (syncStatus.errors[file]) { delete syncStatus.errors[file]; renderSync(); }
+      return;
+    }
+    s.flushing = true;
+    syncStatus.start(file);
+    let rebased = false;
+    try {
+      for (let attempt = 0; ; attempt++) {
+        const { c: next, bad } = applyAll(s.base, batch);
+        bad.forEach(({ p, e }) => { batch.splice(batch.indexOf(p), 1); dropOp(p, e); });
+        if (!batch.length) { syncStatus.ok(file); recompute(); return; }
+        const msg = batch.length === 1 ? batch[0].msg : `${batch[batch.length - 1].msg} (+${batch.length - 1})`;
+        try {
+          const text = serialize(next);
+          s.sha = await ghPut(url, text, s.sha, msg, { keepalive });
+          s.base = next;
+          s.pending = s.pending.filter((p) => !batch.includes(p));
+          recompute();
+          syncStatus.ok(file);
+          batch.forEach((p) => p.done.resolve());
+          if (rebased) onRebase && onRebase();
+          return;
+        } catch (e) {
+          if (e.code === 409 && attempt < 2) {
+            // 다른 기기·봇이 먼저 썼다 → 최신본 위에 같은 연산을 다시 적용해 재시도
+            await s.reloadBase();
+            rebased = true;
+            continue;
+          }
+          throw e;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      batch.forEach((p) => { if (p.onFail !== 'keep') dropOp(p, e); });
+      // 저장 안 된 변경(keep)이 남아 있을 때만 "저장 안 됨 · 다시 시도"를 계속 보인다.
+      // 버린 변경(추가·이동 등)은 호출자가 글 복원·토스트로 알린다.
+      if (s.pending.some((p) => p.onFail === 'keep')) {
+        syncStatus.retry[file] = () => s.flush();
+        syncStatus.fail(file);
+      } else {
+        syncStatus.end(file);
+      }
+      recompute();
+      if (rebased) onRebase && onRebase();
+      // keep 연산은 남겨 두고 실패를 알린다(다시 시도하면 함께 저장)
+      batch.forEach((p) => {
+        if (p.onFail === 'keep') { const d = p.done; p.done = deferred(); d.reject(e); }
+      });
+    } finally {
+      s.flushing = false;
+    }
+  };
+  s.reloadBase = async () => {
+    const r = await ghGet(url);
+    s.sha = r.sha;
+    s.base = parse(r.content);
+    s.loaded = true;
+  };
+  // 원격본을 다시 받아 오되, 아직 저장 안 된 연산은 그 위에 다시 적용한다
+  s.reload = async () => {
+    await s.reloadBase();
+    recompute();
+  };
+  s.hasPending = () => s.pending.length > 0;
+  // 대기 중인 디바운스까지 지금 저장하고, 큐가 빌 때까지 기다린다
+  s.flushAll = async (opts) => {
+    if (s.pending.length) await s.flush(opts);
+    await s.queue;
+  };
+  return s;
+}
+
+// ---- active.md 스토어 ----
+const activeStore = createStore({
+  file: 'active',
+  url: API,
+  parse: (c) => c,
+  serialize: (c) => c,
+  onChange: (view) => {
+    state.content = view;
+    state.sections = parseSections(view);
+  },
+  onRebase: () => {
+    notify.info('다른 기기에서 바뀐 내용을 불러왔어요');
+    if (isEditingUI() || dragCtx.active) deferredRender = true;
+    else renderCurrent();
+  },
+});
+
+// 원격 active.md 불러오기(미저장 변경은 유지)
+function ghLoad() { return activeStore.reload(); }
+
+// ---- active.md 연산 (모두 content → content) ----
+// 렌더 시점 item(raw·lineIndex)으로 현재 줄을 다시 찾는다.
+const lineOf = (item, content) => resolveLineIndex(item, content.split('\n'));
+const opToggle = (item, checked) => (c) => toggleAt(lineOf(item, c), checked, c);
+const opAppend = (key, text) => (c) => appendToSection(key, text, c);
+const opEdit = (item, text) => (c) => editLine(lineOf(item, c), text, c);
+const opEditMove = (item, text, key) => (c) => {
+  const idx = lineOf(item, c);
+  return moveLineToSection(idx, key, editLine(idx, text, c));
+};
+const opDeleteBlock = (item) => (c) => deleteAt(lineOf(item, c), c);
+// 보관함 항목들을 되돌려 넣기
+const opRestore = (entries) => (c) => {
+  const lines = c.split('\n');
+  entries.forEach((entry) => restoreBlockInto(lines, entry));
+  return lines.join('\n');
+};
+// 여러 블록을 원문 줄로 찾아 한꺼번에 지우기(뒤에서부터)
+const opDeleteBlocks = (items) => (c) => {
+  const lines = c.split('\n');
+  const ranges = items.map((it) => extractBlock(lines, resolveLineIndex(it, lines)));
+  ranges.sort((a, b) => b.start - a.start).forEach((r) => lines.splice(r.start, r.end - r.start + 1));
+  return lines.join('\n');
+};
+// 드래그 이동: 목표 줄도 원문으로 다시 찾는다
+const opMove = (srcItem, target) => (c) => {
+  const lines = c.split('\n');
+  const t = { ...target };
+  if (target.beforeItem) t.beforeLine = resolveLineIndex(target.beforeItem, lines);
+  if (target.intoItem) t.intoLine = resolveLineIndex(target.intoItem, lines);
+  return moveLineToPosition(resolveLineIndex(srcItem, lines), t, c);
+};
 
 // ============ Parsing / Mutation ============
 function parseInbox(text) {
@@ -1270,28 +1440,23 @@ function resolveLineIndex(item, lines) {
     if (before >= 0 && normLine(ls[before]) === want) return before;
     if (after < ls.length && normLine(ls[after]) === want) return after;
   }
-  throw new Error('목록이 바뀌었어요 — 새로고침 후 다시 시도해주세요');
+  const msg = '목록이 바뀌었어요 — 새로고침 후 다시 시도해주세요';
+  throw Object.assign(new Error(msg), { userMessage: msg, gone: true });
 }
 
 // 헤더·빈 줄은 항목 조작 대상이 될 수 없다. 마지막 안전장치.
 function assertItemLine(lines, idx) {
   const l = lines[idx];
   if (l == null || /^##\s/.test(l) || l.trim() === '') {
-    throw new Error('대상 줄을 찾지 못했어요 — 새로고침 후 다시 시도해주세요');
+    const msg = '대상 줄을 찾지 못했어요 — 새로고침 후 다시 시도해주세요';
+    throw Object.assign(new Error(msg), { userMessage: msg, gone: true });
   }
 }
 
-// active.md 변경을 한 줄로 세워 처리한다. 겹쳐 실행되면 앞 저장이 줄 번호를
-// 바꿔버려 뒤 작업이 다른 줄을 건드린다.
-let activeMutations = Promise.resolve();
-function serializeActive(fn) {
-  const run = activeMutations.then(fn, fn);
-  activeMutations = run.then(() => {}, () => {});
-  return run;
-}
+// active.md 변경의 직렬화는 activeStore(F3)가 맡는다. 연산은 저장 직전 원문 줄로 위치를 다시 찾는다.
 
-function toggleAt(lineIndex, checked) {
-  const lines = state.content.split('\n');
+function toggleAt(lineIndex, checked, content = state.content) {
+  const lines = content.split('\n');
   assertItemLine(lines, lineIndex);
   const line = lines[lineIndex];
   lines[lineIndex] = checked
@@ -1300,14 +1465,14 @@ function toggleAt(lineIndex, checked) {
   return lines.join('\n');
 }
 
-function appendToSection(key, text) {
-  const lines = state.content.split('\n');
+function appendToSection(key, text, content = state.content) {
+  const lines = content.split('\n');
   insertIntoSection(lines, key, [`- [ ] ${text}`]);
   return lines.join('\n');
 }
 
-function editLine(lineIndex, newText) {
-  const lines = state.content.split('\n');
+function editLine(lineIndex, newText, content = state.content) {
+  const lines = content.split('\n');
   const line = lines[lineIndex];
   const m = line.match(/^(\s*- \[[ xX]\] )(.*)$/);
   if (!m) throw new Error('not a task line');
@@ -1315,8 +1480,8 @@ function editLine(lineIndex, newText) {
   return lines.join('\n');
 }
 
-function deleteAt(lineIndex) {
-  const lines = state.content.split('\n');
+function deleteAt(lineIndex, content = state.content) {
+  const lines = content.split('\n');
   assertItemLine(lines, lineIndex);
   const base = lines[lineIndex];
   const baseIndent = (base.match(/^(\s*)/)?.[0] || '').length;
@@ -1412,8 +1577,8 @@ function moveLineToSection(lineIndex, targetKey, content = state.content) {
 //   - neither: append at end of section as a main task (indent 0)
 //   - indent: optional explicit depth override (used for the depth-ambiguous gap below a
 //     last child, where the next line's indent alone can't express "stay as the last child")
-function moveLineToPosition(srcLineIndex, target) {
-  const lines = state.content.split('\n');
+function moveLineToPosition(srcLineIndex, target, content = state.content) {
+  const lines = content.split('\n');
   const { start, end } = extractBlock(lines, srcLineIndex);
   const blockLen = end - start + 1;
 
@@ -1648,10 +1813,7 @@ async function onBulkRestore() {
   try {
     const activeEntries = entries.filter((e) => e.source === 'active');
     if (activeEntries.length) {
-      await ghLoad();
-      const lines = state.content.split('\n');
-      activeEntries.forEach((entry) => restoreBlockInto(lines, entry));
-      await ghSave(lines.join('\n'), `restore ${activeEntries.length} from archive`);
+      await activeStore.commit(opRestore(activeEntries), { msg: `restore ${activeEntries.length} from archive` });
     }
 
     const inboxEntries = entries.filter((e) => e.source === 'inbox');
@@ -1713,9 +1875,8 @@ async function archiveActiveTask(item) {
   }
   await ghLoadArchive();
   await ghSaveArchive([...state.archiveItems, entry], `archive: ${item.text}`);
-  // archive.json을 저장하는 사이 active.md가 바뀌었을 수 있으니 위치를 다시 확인한다
-  const delIndex = resolveLineIndex({ lineIndex, raw: block[0] });
-  await ghSave(deleteAt(delIndex), `archive (from active): ${item.text}`);
+  // archive.json을 저장하는 사이 active.md가 바뀌었을 수 있으니 원문 줄로 위치를 다시 찾는다
+  await activeStore.commit(opDeleteBlock({ lineIndex, raw: block[0] }), { msg: `archive (from active): ${item.text}` });
 }
 
 async function archiveInboxItem(item) {
@@ -1733,10 +1894,7 @@ async function archiveInboxItem(item) {
 async function onRestore(entry) {
   try {
     if (entry.source === 'active') {
-      await ghLoad();
-      const lines = state.content.split('\n');
-      restoreBlockInto(lines, entry);
-      await ghSave(lines.join('\n'), `restore: ${entry.block[0]}`);
+      await activeStore.commit(opRestore([entry]), { msg: `restore: ${entry.block[0]}` });
     } else if (entry.source === 'inbox') {
       await ghLoadInbox();
       let c = state.inboxContent;
@@ -2144,9 +2302,7 @@ function bindBarEvents() {
 function onMoveToActive(item, priority) {
   return withInboxLock([item], async () => {
   try {
-    await ghLoad();
-    const newActive = appendToSection(priority, item.text);
-    await ghSave(newActive, `inbox → active: ${item.text}`);
+    await activeStore.commit(opAppend(priority, item.text), { msg: `inbox → active: ${item.text}` });
     await ghSaveInbox(removeInboxLine(item), `remove from inbox: ${item.text}`);
     selectedInbox.clear();
     toast(`${SECTION_KEYS[priority]} 에 추가됨`);
@@ -2160,12 +2316,8 @@ function onBulkMove(priority) {
   if (!items.length) return;
   return withInboxLock(items, async () => {
   try {
-    await ghLoad();
-    for (const item of items) {
-      state.content = appendToSection(priority, item.text);
-      state.sections = parseSections(state.content);
-    }
-    await ghSave(state.content, `inbox → active (${items.length}개)`);
+    await activeStore.commit((c) => items.reduce((acc, it) => appendToSection(priority, it.text, acc), c),
+      { msg: `inbox → active (${items.length}개)` });
     await ghSaveInbox(removeInboxLines(items), `remove ${items.length} from inbox`);
     selectedInbox.clear();
     toast(`${items.length}개 → ${SECTION_KEYS[priority]}`);
@@ -2403,7 +2555,7 @@ async function onBulkArchiveDone() {
     const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec.title) || 'medium';
     sec.items.forEach((i) => {
       if (i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()) {
-        targets.push({ lineIndex: i.lineIndex, priority });
+        targets.push({ lineIndex: i.lineIndex, raw: i.raw, priority });
       }
     });
   });
@@ -2411,10 +2563,8 @@ async function onBulkArchiveDone() {
   if (!confirm(`완료된 ${targets.length}개 항목을 보관함으로 옮길까요?`)) return;
   try {
     const lines = state.content.split('\n');
-    const ranges = [];
     const entries = targets.map((t) => {
       const { start, end } = extractBlock(lines, t.lineIndex);
-      ranges.push({ start, end });
       return {
         id: genArchiveId(),
         deletedAt: new Date().toISOString(),
@@ -2423,12 +2573,10 @@ async function onBulkArchiveDone() {
         block: lines.slice(start, end + 1),
       };
     });
-    // 인덱스 밀림 방지: 뒤(큰 인덱스)에서부터 삭제
-    ranges.sort((a, b) => b.start - a.start).forEach((r) => lines.splice(r.start, r.end - r.start + 1));
-    const newContent = lines.join('\n');
     await ghLoadArchive();
     await ghSaveArchive([...state.archiveItems, ...entries], `archive ${entries.length} done tasks`);
-    await ghSave(newContent, `archive ${entries.length} done tasks (from active)`);
+    // 보관 저장 사이 active.md가 바뀌었을 수 있으니 원문 줄로 다시 찾아 지운다(뒤에서부터)
+    await activeStore.commit(opDeleteBlocks(targets), { msg: `archive ${entries.length} done tasks (from active)` });
     renderApp();
     notify.undo(`${entries.length}개를 보관함으로 옮겼어요`, () => undoArchive(entries));
   } catch (e) { notifyError(e); }
@@ -2438,10 +2586,7 @@ async function onBulkArchiveDone() {
 async function undoArchive(entries) {
   const ids = entries.map((e) => e.id);
   try {
-    await ghLoad();
-    const lines = state.content.split('\n');
-    entries.forEach((entry) => restoreBlockInto(lines, entry));
-    await ghSave(lines.join('\n'), `undo archive: restore ${entries.length}`);
+    await activeStore.commit(opRestore(entries), { msg: `undo archive: restore ${entries.length}` });
     await ghLoadArchive();
     await ghSaveArchive(state.archiveItems.filter((i) => !ids.includes(i.id)), `undo archive: ${entries.length}`);
     currentTab = 'active';
@@ -2658,39 +2803,29 @@ async function onSetupSave() {
 }
 
 // ============ Event handlers (CRUD) ============
+// active.md 변경 하나를 저장하고 다시 그린다. op는 (content) => content.
 // 반환값: 성공 true / 실패 false. quiet이면 오류를 토스트로 알리지 않고 호출자(시트)가 보여준다.
-async function safeMutate(producer, msg, label, { quiet = false } = {}) {
+// 409(다른 기기 변경)는 스토어가 최신본 위에 다시 적용해 재시도한다.
+async function safeMutate(op, msg, label, { quiet = false } = {}) {
   try {
-    const newContent = producer();
-    await ghSave(newContent, msg);
+    await activeStore.commit(op, { msg });
     renderApp();
     if (label) toast(label);
     return true;
   } catch (e) {
-    if (e.code === 409) {
-      // Conflict: state.content was refreshed by ghSave. Re-render and notify.
-      renderApp();
-      if (!quiet) notify.info('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 해 주세요');
-    } else if (!quiet) {
-      notifyError(e);
-    } else {
-      console.error(e);
-    }
     lastMutateError = e;
+    renderApp(); // 실패한 연산은 버려졌으니 원래 모습으로
+    if (!quiet) notifyError(e); else console.error(e);
     return false;
   }
 }
 let lastMutateError = null;
 
-// 토글 저장 큐 — UI는 즉시 반영(낙관적 업데이트)하고, 저장은 디바운스해
-// 배경에서 한 번에 처리한다. 연속 체크/언체크 시 마지막 상태만 저장하므로
-// 매 클릭마다 네트워크를 기다리거나 sha 409 충돌이 나지 않는다.
-const toggleSync = { timer: null, saving: false, dirty: false };
-
+// 체크 — 화면은 즉시, 저장은 400ms 모아서 한 번에(연속 체크 = PUT 1번).
+// 저장 실패해도 체크를 말없이 되돌리지 않는다: 연산을 남겨 두고 "저장 안 됨 · 다시 시도"(A3).
 function onToggle(item, checked, el, cb) {
-  let lineIndex;
   try {
-    lineIndex = resolveLineIndex(item);
+    resolveLineIndex(item);
   } catch (e) {
     // 그 사이 항목이 사라졌다 — 체크 상태를 되돌리고 최신 목록으로 다시 그린다
     if (cb) cb.checked = !checked;
@@ -2699,60 +2834,37 @@ function onToggle(item, checked, el, cb) {
     return;
   }
   el.classList.toggle('done', checked);
-  // 로컬 상태 즉시 갱신 — 이후 토글은 이 최신 내용 위에 쌓인다.
-  state.content = toggleAt(lineIndex, checked);
-  state.sections = parseSections(state.content);
-  clearTimeout(toggleSync.timer);
-  toggleSync.timer = setTimeout(flushToggles, 400);
-}
-
-async function flushToggles() {
-  if (toggleSync.saving) { toggleSync.dirty = true; return; }
-  toggleSync.saving = true;
-  const snapshot = state.content;
-  try {
-    await ghSave(snapshot, 'toggle tasks', { keepLocalState: true });
-    // 저장 중 새 토글이 없을 때만 재렌더 (있으면 다음 flush가 처리)
-    if (!toggleSync.dirty && state.content === snapshot) renderApp();
-  } catch (e) {
-    if (e.code === 409) {
-      // 충돌: ghSave가 원격 최신 상태로 갱신함 — 화면을 원격 기준으로 되돌린다.
-      renderApp();
-      notify.info('다른 기기에서 바뀐 내용을 불러왔어요. 한 번 더 해 주세요');
-    } else {
-      // 저장 실패: 원격 상태로 되돌려 로컬/원격 불일치를 막는다.
-      await ghLoad().catch(() => {});
-      renderApp();
-      notifyError(e);
-    }
-  } finally {
-    toggleSync.saving = false;
-    if (toggleSync.dirty) { toggleSync.dirty = false; flushToggles(); }
-  }
+  activeStore.apply(opToggle(item, checked), { msg: 'toggle tasks', debounce: 400, onFail: 'keep' })
+    .then(() => {
+      // 다른 저장이 남아 있지 않을 때만 다시 그림(줄 번호 정리). 남아 있으면 다음 저장이 처리
+      if (!activeStore.hasPending() && currentTab === 'active' && !isEditingUI() && !dragCtx.active) renderApp();
+    })
+    .catch((e) => {
+      if (e && e.gone) { toast(e.message); renderApp(); return; }
+      notifyError(e, { retry: () => activeStore.flush() });
+    });
 }
 
 function onAdd(priority, text, opts) {
-  return safeMutate(
-    () => appendToSection(priority, text),
-    `add: ${text}`,
-    '추가됨',
-    opts
-  );
+  return safeMutate(opAppend(priority, text), `add: ${text}`, '추가됨', opts);
 }
 
-function onEdit(lineIndex, text, opts) {
-  return safeMutate(
-    () => editLine(lineIndex, text),
-    `edit: ${text}`,
-    '수정됨',
-    opts
-  );
+function onEdit(item, text, opts) {
+  return safeMutate(opEdit(item, text), `edit: ${text}`, '수정됨', opts);
+}
+
+// archive.json 저장 순서 지키기(스토어로 옮기기 전 임시 — F3-2에서 archiveStore가 대신함)
+let archiveQueue = Promise.resolve();
+function archiveChain(fn) {
+  const run = archiveQueue.then(fn, fn);
+  archiveQueue = run.then(() => {}, () => {});
+  return run;
 }
 
 async function onDelete(item) {
   // 상위·하위 모두 보관함으로(하위만 영구 삭제되던 문제 A6)
   if (!confirm(`보관함으로 옮길까요?\n\n"${item.text}"`)) return;
-  return serializeActive(async () => {
+  return archiveChain(async () => {
     try {
       await archiveActiveTask(item);
       renderApp();
@@ -2918,24 +3030,19 @@ function onDragEnd() {
   if (target.beforeLine === srcLine) return;
   if (target.intoLine === srcLine) return;
 
-  return serializeActive(() => {
-    // 드래그 중 다른 저장이 끝나 줄 번호가 밀렸다면 목표 위치도 함께 어긋난다.
-    // 이 경우 잘못된 줄을 옮기지 않고 최신 목록으로 다시 그린다.
-    let stillValid = true;
-    try {
-      if (srcItem && resolveLineIndex(srcItem) !== srcLine) stillValid = false;
-    } catch (e) { stillValid = false; }
-    if (!stillValid) {
-      renderApp();
-      toast('목록이 바뀌었어요 — 다시 시도해주세요');
-      return;
-    }
-    return safeMutate(
-      () => moveLineToPosition(srcLine, target),
-      `move: ${SECTION_KEYS[target.sectionKey]}`,
-      '이동됨'
-    );
-  });
+  // 드래그 중 화면이 그려진 뒤 줄이 밀렸다면(다른 기기 변경 재적용 등) 목표 위치도 어긋난다 → 다시 그림
+  let stillValid = true;
+  try { if (srcItem && resolveLineIndex(srcItem) !== srcLine) stillValid = false; } catch (e) { stillValid = false; }
+  if (!stillValid) { renderApp(); toast('목록이 바뀌었어요 — 다시 시도해주세요'); return; }
+  // 드롭 시점의 원문 줄로 출발·목표를 기억해 두고, 저장 직전에 다시 찾는다(그 사이 줄이 밀려도 안전)
+  const lines = state.content.split('\n');
+  const ref = (n) => (n == null ? null : { lineIndex: n, raw: lines[n] });
+  const t = { sectionKey: target.sectionKey, indent: target.indent, beforeItem: ref(target.beforeLine), intoItem: ref(target.intoLine) };
+  return safeMutate(
+    opMove(srcItem || ref(srcLine), t),
+    `move: ${SECTION_KEYS[target.sectionKey]}`,
+    '이동됨'
+  );
 }
 
 // ============ Sheet (add/edit) ============
@@ -3079,29 +3186,24 @@ async function runSheetSave(text, pri) {
   // 편집: 시트를 열어둔 사이 다른 저장이 끝났을 수 있으니 줄 위치를 다시 찾는다
   let line;
   try {
-    line = editingItem ? resolveLineIndex(editingItem) : editingLine;
+    line = resolveLineIndex(editingItem);
   } catch (e) {
-    lastMutateError = { userMessage: e.message };
+    lastMutateError = e;
     renderApp();
     return false;
   }
   if (editingIsSub) {
     // 하위 할 일: 우선순위(섹션) 개념이 없으므로 텍스트만 수정
-    return onEdit(line, text, quiet);
+    return onEdit(editingItem, text, quiet);
   }
   // Edit: if priority changed, also move
   const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === line));
   const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
   if (curKey !== pri) {
     // 글 수정 + 섹션 이동을 한 번에 저장. 실패해도 로컬 상태를 바꿔 두지 않는다.
-    return safeMutate(
-      () => moveLineToSection(line, pri, editLine(line, text)),
-      `edit+move: ${text}`,
-      '수정됨',
-      quiet
-    );
+    return safeMutate(opEditMove(editingItem, text, pri), `edit+move: ${text}`, '수정됨', quiet);
   }
-  return onEdit(line, text, quiet);
+  return onEdit(editingItem, text, quiet);
 }
 
 async function onAddToInbox(text, { quiet = false } = {}) {
@@ -3169,19 +3271,11 @@ async function processComposerQueue() {
       const { text, pri } = job;
       let ok = false;
       try {
-        // 보관·이동 등 다른 변경과 겹치지 않게 순서를 지켜 저장한다
-        await serializeActive(() => ghSave(appendToSection(pri, text), `add: ${text}`));
+        // 순서·충돌(409 재적용)은 activeStore가 맡는다
+        await activeStore.commit(opAppend(pri, text), { msg: `add: ${text}` });
         ok = true;
       } catch (e) {
-        if (e.code === 409) {
-          // 충돌: ghSave가 최신 content로 갱신됨 → 최신 기준으로 한 번 재시도
-          try {
-            await serializeActive(() => ghSave(appendToSection(pri, text), `add: ${text}`));
-            ok = true;
-          } catch (e2) { lastError = e2; }
-        } else {
-          lastError = e;
-        }
+        lastError = e;
       }
       if (ok) renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
       else failed.push(job);
@@ -3357,9 +3451,13 @@ function init() {
   // 실험실은 서비스워커를 등록하지 않는다(본 서비스 캐시와 섞이지 않게)
 
   // Refresh on visibility
+  // 앱을 벗어날 때: 디바운스를 기다리지 않고 바로 저장(keepalive — 페이지가 멈춰도 요청 유지)(A3)
+  const flushOnLeave = () => { if (activeStore.hasPending()) activeStore.flush({ keepalive: true }); };
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.token) refresh();
+    if (document.hidden) { flushOnLeave(); return; }
+    if (state.token) refresh();
   });
+  window.addEventListener('pagehide', flushOnLeave);
 
   // Re-layout memos on resize (column count may change)
   let resizeTimer;
@@ -3416,6 +3514,8 @@ function handleUnauthorized() {
 
 async function refresh() {
   if (!state.token) return;
+  // 앱으로 돌아왔을 때: 아직 저장 안 된 변경을 먼저 저장하고(실패해도 지우지 않음) 불러온다(A3)
+  await activeStore.flushAll().catch(() => {});
   try {
     await Promise.all([ghLoad(), ghLoadInbox(), ghLoadArchive(), ghLoadMemos()]);
     syncStatus.loadError = false;
