@@ -1125,6 +1125,11 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
   const dropOp = (p, e) => {
     s.pending = s.pending.filter((x) => x !== p);
     p.done.reject(e);
+    // 한 번 실패해 기다리는 곳이 없는 keep 연산(저장 못 한 체크·메모 수정)이 그 뒤 대상이 사라져 버려지면
+    // 조용히 사라지지 않게 알린다(Q16)
+    if (p.onFail === 'keep' && p.failedOnce) {
+      notify.error(e && e.gone ? '다른 기기에서 지워지거나 바뀐 항목이라 저장하지 못했어요' : friendlyError(e));
+    }
   };
 
   // gate: 이 연산을 저장해도 되는 시점(예: 다른 파일의 "추가"가 저장된 뒤). 화면에는 바로 반영되고,
@@ -1231,7 +1236,7 @@ function createStore({ file, url, parse, serialize, onChange, onRebase, missing 
       if (rebased) onRebase && onRebase();
       // keep 연산은 남겨 두고 실패를 알린다(다시 시도하면 함께 저장)
       batch.forEach((p) => {
-        if (p.onFail === 'keep') { const d = p.done; p.done = deferred(); d.reject(e); }
+        if (p.onFail === 'keep') { const d = p.done; p.done = deferred(); p.failedOnce = true; d.reject(e); }
       });
     } finally {
       s.flushing = false;
