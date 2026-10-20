@@ -3159,6 +3159,40 @@ let lastMutateError = null;
 
 // 체크 — 화면은 즉시, 저장은 400ms 모아서 한 번에(연속 체크 = PUT 1번).
 // 저장 실패해도 체크를 말없이 되돌리지 않는다: 연산을 남겨 두고 "저장 안 됨 · 다시 시도"(A3).
+// 체크 여러 개를 한 번에(원문 줄로 각각 다시 찾음)
+const opSetChecks = (list) => (c) => list.reduce((acc, { item, checked }) => toggleAt(lineOf(item, acc), checked, acc), c);
+
+// 부모 아래 미완료 하위(모든 깊이)
+function incompleteDescendants(item) {
+  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex && i.raw === item.raw));
+  if (!sec) return [];
+  const pos = sec.items.findIndex((i) => i.lineIndex === item.lineIndex);
+  const out = [];
+  for (let k = pos + 1; k < sec.items.length && sec.items[k].indent > item.indent; k++) {
+    const it = sec.items[k];
+    if (it.type === 'task' && !it.checked) out.push(it);
+  }
+  return out;
+}
+
+// 하위 체크박스를 위에서부터 40ms 간격으로 차례로 튀며 체크(최대 5개까지 차례, 나머지는 함께)
+function popChildChecks(parentEl, kids) {
+  const card = parentEl.closest('.card');
+  if (!card) return;
+  kids.forEach((k, i) => {
+    const row = card.querySelector(`.task[data-line="${k.lineIndex}"]`);
+    if (!row) return;
+    const cb = row.querySelector('input[type="checkbox"]');
+    const go = () => {
+      cb.checked = true;
+      row.classList.add('done');
+      if (!prefersReducedMotion()) { cb.classList.remove('pop'); void cb.offsetWidth; cb.classList.add('pop'); }
+    };
+    const delay = prefersReducedMotion() ? 0 : Math.min(i, 5) * 40;
+    if (delay) setTimeout(go, delay); else go();
+  });
+}
+
 function onToggle(item, checked, el, cb) {
   try {
     resolveLineIndex(item);
@@ -3175,7 +3209,24 @@ function onToggle(item, checked, el, cb) {
     if (checked) startLinger(item);
     else cancelLinger(item);
   }
-  activeStore.apply(opToggle(item, checked), { msg: 'toggle tasks', debounce: 400, onFail: 'keep' })
+  // 부모 완료 = 미완료 하위도 완료(B11). 체크 해제는 부모만
+  const kids = checked ? incompleteDescendants(item) : [];
+  const op = kids.length
+    ? opSetChecks([{ item, checked: true }, ...kids.map((k) => ({ item: k, checked: true }))])
+    : opToggle(item, checked);
+  if (kids.length) {
+    popChildChecks(el, kids);
+    notify.undo(`하위 할 일 ${kids.length}개도 완료했어요`, () => {
+      // 부모·하위 모두 원래 상태(미완료)로 정확히 되돌림
+      cancelLinger(item);
+      activeStore.apply(opSetChecks([{ item, checked: false }, ...kids.map((k) => ({ item: k, checked: false }))]),
+        { msg: 'undo complete with subtasks', debounce: 400, onFail: 'keep' })
+        .then(() => { if (currentTab === 'active' && !isEditingUI() && !dragCtx.active) renderApp(); })
+        .catch((e) => notifyError(e, { retry: () => activeStore.flush() }));
+      renderApp();
+    });
+  }
+  activeStore.apply(op, { msg: 'toggle tasks', debounce: 400, onFail: 'keep' })
     .then(() => {
       // 다른 저장이 남아 있지 않을 때만 다시 그림(줄 번호 정리). 남아 있으면 다음 저장이 처리
       if (!activeStore.hasPending() && currentTab === 'active' && !isEditingUI() && !dragCtx.active) renderApp();
