@@ -606,7 +606,8 @@
   /* 선택 끝내기 ✕(감사 B6): 44px */
   .bar-btn.bar-cancel { width: 44px; height: 44px; padding: 0; font-size: 16px; flex-shrink: 0; margin-left: -8px; }
   /* 선택 중에는 행의 🍅🍋🥝·📥·↺·🗑를 숨긴다 — 선택 바와 같은 동작이 겹치지 않게(감사 B5) */
-  .card.selecting .inbox-actions { display: none; }
+  /* 자리는 그대로 두고 숨김(B-2: display:none이면 행 높이가 줄어 다음 탭이 빗나갔다) */
+  .card.selecting .inbox-actions { visibility: hidden; pointer-events: none; }
 
   /* Drag & drop */
   .drag-handle {
