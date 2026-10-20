@@ -1081,16 +1081,19 @@ async function ghGet(url) {
   return { sha: data.sha, content: base64ToUtf8(data.content) };
 }
 
+// keepalive 요청은 브라우저가 동시에 보내는 본문 합계 64KB까지만 허용한다(넘으면 바로 실패, Q9)
+const KEEPALIVE_MAX = 60 * 1024;
 async function ghPut(url, content, sha, message, { keepalive = false } = {}) {
+  const body = JSON.stringify({ message, content: utf8ToBase64(content), sha });
   const res = await netFetch(url, {
     method: 'PUT',
-    keepalive,
+    keepalive: keepalive && body.length <= KEEPALIVE_MAX,
     headers: {
       Authorization: `Bearer ${state.token}`,
       Accept: 'application/vnd.github+json',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ message, content: utf8ToBase64(content), sha }),
+    body,
   });
   if (!res.ok) throw Object.assign(new Error(`PUT ${url.split('/').pop()} ${res.status}`), { code: res.status });
   const data = await res.json();
@@ -4493,8 +4496,9 @@ function init() {
 
   // Refresh on visibility
   // 앱을 벗어날 때: 디바운스를 기다리지 않고 바로 저장(keepalive — 페이지가 멈춰도 요청 유지)(A3)
+  // keepalive는 체크 보호용 active.md에만(작은 파일). 나머지는 일반 요청 — 64KB 합계 초과 방지(Q9)
   const flushOnLeave = () => {
-    ALL_STORES().forEach((st) => { if (st.hasPending()) st.flush({ keepalive: true }); });
+    ALL_STORES().forEach((st) => { if (st.hasReady()) st.flush({ keepalive: st === activeStore }); });
   };
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { flushOnLeave(); return; }
