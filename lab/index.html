@@ -645,11 +645,11 @@
 
   /* Archive */
   .archive-parent { margin-left: 0; font-size: 12px; }
-  .archive-badge.from-inbox { width: auto; min-width: 22px; font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0; }
+  .archive-badge.from-inbox { font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0; }
   .archive-when { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .archive-badge {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 22px; height: 22px; flex-shrink: 0;
+    width: 30px; height: 22px; flex-shrink: 0; /* 과일·"Inbox" 글자 모두 같은 폭 → 글 시작 위치가 맞음 */
     font-size: 13px; line-height: 1;
   }
 
@@ -2607,14 +2607,9 @@ function renderArchiveItem(entry) {
   restore.setAttribute('aria-label', `되살리기: ${firstLine}`);
   restore.innerHTML = '↺';
   restore.addEventListener('click', (e) => { e.stopPropagation(); onRestore(entry); });
-  const del = document.createElement('button');
-  del.className = 'row-btn danger';
-  del.title = '완전히 지우기';
-  del.setAttribute('aria-label', `완전히 지우기: ${firstLine}`);
-  del.innerHTML = '🗑';
-  del.addEventListener('click', (e) => { e.stopPropagation(); onPurge(entry); });
+  // 완전히 지우기(🗑)는 행에 두지 않고 선택 바에만(사용성 2차 — Inbox 📥와 같은 자리에 빨간 🗑가 있어
+  // 탭을 옮겨 연속으로 누르면 지울 수 있었다). 행을 눌러 선택 → 아래 바의 🗑
   actions.appendChild(restore);
-  actions.appendChild(del);
 
   div.addEventListener('click', () => toggleArchiveSelect(entry.id, div, cb));
   div.appendChild(cb);
@@ -2784,13 +2779,6 @@ async function onRestore(entry) {
   finally { claim.release(); }
 }
 
-async function onPurge(entry) {
-  if (!confirm('완전히 지울까요?\n지우면 다시 살릴 수 없어요.')) return;
-  const rows = archiveRowsFor([entry.id]);
-  const work = archiveStore.commit(opArchiveRemove([entry.id]), { msg: 'purge: archive' });
-  vanishRows(rows, renderArchive);
-  try { await work; } catch (e) { renderArchive(); flashArchiveRows([entry.id]); notifyError(e); }
-}
 
 // ============ Memos ============
 function renderMemos() {
