@@ -4704,14 +4704,28 @@ const composerIme = { composing: false, sentWhileComposing: false };
 
 // ---- 하단 입력창 모드(B5): 'active' | 'inbox' | 'memo' | null(없음) ----
 let composerMode = null;
-const composerDrafts = { active: '', inbox: '', memo: '' }; // 탭을 옮겨도 쓰던 글 유지
+// 탭을 옮겨도, 앱을 닫았다 열어도 쓰던 글 유지(S8 — 실패해서 입력창에 돌려놓은 글도 여기에 남는다)
+const COMPOSER_DRAFTS_KEY = lsKey('tako_composer_drafts');
+const composerDrafts = (() => {
+  const d = { active: '', inbox: '', memo: '' };
+  try { Object.assign(d, JSON.parse(localStorage.getItem(COMPOSER_DRAFTS_KEY) || '{}') || {}); } catch (e) {}
+  return d;
+})();
+function saveComposerDraft() {
+  if (!composerMode) return;
+  composerDrafts[composerMode] = $('#composer-input').value;
+  try {
+    if (Object.values(composerDrafts).some((v) => v)) localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(composerDrafts));
+    else localStorage.removeItem(COMPOSER_DRAFTS_KEY);
+  } catch (e) {}
+}
 const COMPOSER_PLACEHOLDER = { active: '할 일 입력…', inbox: 'Inbox에 적어 두기', memo: '메모 남기기' };
 // PC(마우스·키보드)에서만 안내 글에 단축키를 덧붙인다(D3)
 const IS_PC = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
 const composerPlaceholder = (mode) => COMPOSER_PLACEHOLDER[mode] + (IS_PC ? ' (/ 키)' : '');
 function setComposerMode(mode) {
   const input = $('#composer-input');
-  if (composerMode && composerMode !== mode) composerDrafts[composerMode] = input.value;
+  if (composerMode && composerMode !== mode) saveComposerDraft();
   const changed = composerMode !== mode;
   composerMode = mode;
   const box = $('#composer');
@@ -4750,15 +4764,24 @@ function quickAdd() {
   const text = composerMode === 'memo' ? input.value.replace(/\s+$/, '').replace(/^\s*\n/, '') : input.value.trim();
   if (!text.trim() || !composerMode) return;
   input.value = '';
-  autoGrowComposer();
   composerIme.sentWhileComposing = true; // 전송 뒤 되돌아오는 조합 잔여 문자 제거용
   $('#composer-send').disabled = true;
   if (composerMode !== 'memo' && /\n/.test(text)) {
-    // 붙여넣은 여러 줄(R4): 한 줄 = 한 항목. 앞의 목록 표시(-, •, *, 1., [ ])는 떼고 빈 줄은 무시, 최대 20개
-    splitPastedLines(text).forEach((t) => submitComposerJob({ mode: composerMode, text: t, pri: composerPriority }));
+    // 붙여넣은 여러 줄(R4): 한 줄 = 한 항목. 앞의 목록 표시(-, •, *, [ ])는 떼고 빈 줄은 무시.
+    // 한 번에 PASTE_MAX개까지 — 넘는 줄은 버리지 않고 입력창에 남겨 둔다(S10)
+    const parts = splitPastedLines(text);
+    parts.slice(0, PASTE_MAX).forEach((t) => submitComposerJob({ mode: composerMode, text: t, pri: composerPriority }));
+    if (parts.length > PASTE_MAX) {
+      input.value = parts.slice(PASTE_MAX).join('\n');
+      composerIme.sentWhileComposing = false; // 남긴 줄을 조합 잔여로 보고 지우지 않게
+      $('#composer-send').disabled = false;
+      notify.info(`${PASTE_MAX}개까지 넣었어요. 나머지 ${parts.length - PASTE_MAX}줄은 입력창에 남겨 뒀어요`, 4000);
+    }
   } else {
     submitComposerJob({ mode: composerMode, text, pri: composerPriority });
   }
+  autoGrowComposer();
+  saveComposerDraft();
   // 저장 못 한 글이 남아 있으면 비워진 입력창에 다음 글을 돌려놓는다(R1). 한글 조합 잔여 처리 뒤에
   setTimeout(fillComposerFromQueue, 150);
 }
@@ -4791,14 +4814,26 @@ function smoothScrollBy(dy, ms) {
   step();
 }
 
+// 여러 줄 → 항목 글 목록. 목록 기호(-, *, •)·체크 표시([ ])는 떼고, 번호(1. 2) …)는 모든 줄이 번호 목록일 때만 뗀다
+// (S11: "2024. 연간 계획"처럼 글의 일부인 숫자를 지우지 않게). 개수 제한은 호출하는 쪽(PASTE_MAX)
+const PASTE_MAX = 30;
 function splitPastedLines(text) {
-  return text.split(/\r?\n/)
-    .map((l) => l.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s+)?/, '').trim())
-    .filter(Boolean)
-    .slice(0, 20);
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const numbered = lines.length > 1 && lines.every((l) => /^\d+[.)]\s+\S/.test(l));
+  return lines
+    .map((l) => (numbered ? l.replace(/^\d+[.)]\s+/, '') : l).replace(/^(?:[-*•]\s+)?(?:\[[ xX]\]\s+)?/, '').trim())
+    .filter(Boolean);
 }
 
+// 결과 모름 판정용: 이 글이 지금 몇 개 있는지(S9 — "있는지"가 아니라 보내기 전보다 늘었는지로 본다)
+function composerCount(job) {
+  if (job.mode === 'inbox') return countInbox(job.text);
+  if (job.mode === 'memo') return (state.memos || []).filter((m) => m.text === job.text).length;
+  return countActiveLine(job.pri, `- [ ] ${job.text}`);
+}
 function submitComposerJob(job) {
+  job.id = job.id || genArchiveId();
+  job.before = composerCount(job);
   if (job.mode === 'inbox') addInboxFromComposer(job);
   else if (job.mode === 'memo') addMemoFromComposer(job);
   else addFromComposer(job);
@@ -4898,12 +4933,11 @@ function writeFailedQ(q) {
     else localStorage.removeItem(COMPOSER_FAILED_KEY);
   } catch (e) {}
 }
-// 결과 모름(uncertain)으로 실패한 글이 실제로는 저장돼 있으면 다시 넣지 않는다(중복 방지)
+// 결과 모름(uncertain)으로 실패한 글이 실제로는 저장돼 있으면 다시 넣지 않는다(중복 방지).
+// 같은 글이 원래 있었을 수 있으므로 "보내기 전 개수(before)보다 늘었는지"로 판단(S9)
 function alreadySaved(job) {
-  if (!job.uncertain) return false;
-  if (job.mode === 'inbox') return state.inboxItems.some((i) => i.text === job.text);
-  if (job.mode === 'memo') return state.memos.some((m) => m.text === job.text);
-  return countActiveLine(job.pri, `- [ ] ${job.text}`) > 0;
+  if (!job.uncertain || job.before == null) return false;
+  return composerCount(job) > job.before;
 }
 function fillComposerFromQueue() {
   const input = $('#composer-input');
@@ -4916,6 +4950,7 @@ function fillComposerFromQueue() {
   writeFailedQ(q);
   if (!job) return;
   input.value = job.text;
+  saveComposerDraft(); // 입력창에 돌려놓은 글도 앱을 닫았다 열면 그대로(S8)
   if (job.mode === 'active' && job.pri) { composerPriority = job.pri; updateComposerPriBtn(); }
   $('#composer-send').disabled = false;
   autoGrowComposer();
@@ -4926,7 +4961,8 @@ function onComposerFailed(failed, err) {
   const q = readFailedQ();
   failed.forEach((job) => {
     const list = q[job.mode] || (q[job.mode] = []);
-    if (!list.some((x) => x.text === job.text && x.pri === job.pri)) list.push({ ...job, uncertain: !!(err && err.uncertain) });
+    // 중복 제거는 job id로(S9 — 같은 글을 일부러 두 번 넣고 둘 다 실패해도 둘 다 남김)
+    if (!list.some((x) => x.id && x.id === job.id)) list.push({ ...job, uncertain: !!(err && err.uncertain) });
   });
   writeFailedQ(q);
   fillComposerFromQueue();
@@ -4978,6 +5014,7 @@ function init() {
   const composerInput = $('#composer-input');
   composerInput.addEventListener('input', (e) => {
     $('#composer-send').disabled = e.target.value.trim() === '';
+    saveComposerDraft();
   });
   composerInput.addEventListener('compositionstart', () => {
     composerIme.composing = true;
@@ -4989,6 +5026,7 @@ function init() {
     if (composerIme.sentWhileComposing) {
       composerIme.sentWhileComposing = false;
       composerInput.value = '';
+      saveComposerDraft();
       setTimeout(fillComposerFromQueue, 0);
     }
     $('#composer-send').disabled = composerInput.value.trim() === '';

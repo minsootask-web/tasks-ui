@@ -93,7 +93,7 @@ const NAMES = [
   'undoGone', 'anchorAt', 'anchorIndex', 'recordMove', 'opEdit', 'opEditBack', 'opEditMove', 'opUndoMove',
   'parseInbox', 'inboxTarget', 'resolveInboxLine', 'removeInboxLines',
   'memoCol', 'memoOrder', 'memosAfterMove',
-  'splitPastedLines',
+  'PASTE_MAX', 'splitPastedLines',
 ];
 const found = NAMES.map((n) => [n, grab(n)]).filter(([, src]) => src);
 const missing = NAMES.filter((n) => !found.some(([f]) => f === n));
@@ -449,6 +449,14 @@ test('S20④: 옛 형식 기록(ver·도착지 개수 없음)은 실행하지 �
   eq(notices.length, 1);
 });
 
+test('S10·S11: 붙여넣기 — 25줄도 하나도 버리지 않음, 번호는 모든 줄이 번호 목록일 때만 뗌', () => {
+  const many = Array.from({ length: 25 }, (_, i) => '항목' + (i + 1)).join('\n');
+  eq(T.splitPastedLines(many).length, 25);
+  eq(T.splitPastedLines('2024. 연간 계획\n예산'), ['2024. 연간 계획', '예산']);
+  eq(T.splitPastedLines('1. 하나\n2) 둘\n3. [ ] 셋'), ['하나', '둘', '셋']);
+  if (!(T.PASTE_MAX >= 20)) throw new Error('PASTE_MAX');
+});
+
 // ---------- 핵심 연산 ----------
 test('토글: 체크/해제가 그 줄만 바꿈, 하위·형식 유지', () => {
   const c = md('## 🔥 High', '- [ ] a', '  - [ ] b', '');
@@ -461,7 +469,7 @@ test('토글: 체크/해제가 그 줄만 바꿈, 하위·형식 유지', () => 
 test('추가: 섹션 끝에 한 줄, 줄바꿈이 들어와도 한 줄로(R4 방어)', () => {
   const c = md('## 🔥 High', '- [ ] a', '', '## 🟡 Medium', '');
   eq(sectionLines(T.appendToSection('high', '줄1\n줄2', c), 'high'), ['- [ ] a', '- [ ] 줄1 줄2']);
-  eq(T.splitPastedLines('회의 준비\n- 자료 출력\n\n2. [ ] 셋째'), ['회의 준비', '자료 출력', '셋째']);
+  eq(T.splitPastedLines('회의 준비\n- 자료 출력\n\n- [ ] 셋째'), ['회의 준비', '자료 출력', '셋째']);
 });
 
 test('이동: 다른 섹션으로·하위로 넣기', () => {
