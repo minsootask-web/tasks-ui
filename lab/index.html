@@ -3546,7 +3546,21 @@ function init() {
   });
 
   // PWA SW
-  // 실험실은 서비스워커를 등록하지 않는다(본 서비스 캐시와 섞이지 않게)
+  // 실험실은 본 서비스 서비스워커(../sw.js, 상위 scope)에 가로채이지 않도록 lab 전용 빈 워커를
+  // 더 좁은 scope(./)로 등록한다. 첫 방문에 본 서비스 워커가 이 페이지를 맡고 있었다면 한 번만 새로 연다.
+  if ('serviceWorker' in navigator) {
+    const isLabWorker = (w) => !!w && /\/lab\/sw-lab\.js$/.test(w.scriptURL);
+    navigator.serviceWorker.register('sw-lab.js', { scope: './' }).then(() => {
+      if (navigator.serviceWorker.controller && !isLabWorker(navigator.serviceWorker.controller)) {
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (isLabWorker(navigator.serviceWorker.controller) && !sessionStorage.getItem('tako_lab_sw_reloaded')) {
+            try { sessionStorage.setItem('tako_lab_sw_reloaded', '1'); } catch (e) {}
+            location.reload();
+          }
+        });
+      }
+    }).catch(() => {});
+  }
 
   // Refresh on visibility
   // 앱을 벗어날 때: 디바운스를 기다리지 않고 바로 저장(keepalive — 페이지가 멈춰도 요청 유지)(A3)
