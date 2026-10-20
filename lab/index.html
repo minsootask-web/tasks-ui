@@ -735,7 +735,8 @@
   // 저장된 테마를 렌더 전에 적용(깜빡임 방지). 'light' | 'dark' | 없음(시스템)
   (function () {
     try {
-      var t = localStorage.getItem('tasks_theme');
+      // [lab 전용] 키 접두사 tako_lab_ — 본 서비스는 'tasks_theme'(아래 LS_PREFIX 참조)
+      var t = localStorage.getItem('tako_lab_tasks_theme');
       if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
     } catch (e) {}
   })();
@@ -814,6 +815,12 @@
 'use strict';
 
 // ============ Config ============
+// localStorage 키 접두사(C2). lab은 같은 origin의 본 서비스와 키(토큰 등)를 섞지 않도록 'tako_lab_'.
+// [이식] 본 서비스에서는 '' — 기존 키 이름(gh_pat·tasks_collapsed·tasks_theme)을 그대로 써서 기존 토큰·설정 유지
+const LS_PREFIX = 'tako_lab_';
+const lsKey = (k) => LS_PREFIX + k;
+const TOKEN_KEY = lsKey('gh_pat');
+
 const OWNER = 'minsootask-web';
 const REPO  = 'tasks-data';
 const FILE  = 'active.md';
@@ -840,7 +847,7 @@ const MEMO_MAX_COLS = 3;
 // content/sections·inboxContent/inboxItems·archiveItems·memos는 각 파일 스토어의 view를 비춘 값(F3).
 // 직접 대입하지 말고 스토어 연산(apply/commit)으로 바꾼다.
 const state = {
-  token: localStorage.getItem('gh_pat') || null,
+  token: localStorage.getItem(TOKEN_KEY) || null,
   content: '',
   sections: [],
   inboxContent: '',
@@ -859,7 +866,7 @@ let editingItem = null; // 편집 대상 항목 — 저장 직전 줄 위치를 
 let editingIsSub = false; // 편집 대상이 하위 할 일인지
 
 // 하위 항목 접기 상태 — 부모 할 일의 텍스트를 키로 저장(재정렬·재조회에도 유지)
-const COLLAPSE_KEY = 'tasks_collapsed';
+const COLLAPSE_KEY = lsKey('tasks_collapsed');
 let collapsedSet = new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]'));
 function collapseKeyOf(item) { return item.text.trim(); }
 function isCollapsed(item) { return collapsedSet.has(collapseKeyOf(item)); }
@@ -871,7 +878,7 @@ function toggleCollapse(item) {
 }
 
 // ============ Theme (light/dark toggle) ============
-const THEME_KEY = 'tasks_theme';
+const THEME_KEY = lsKey('tasks_theme');
 // 현재 실제 적용 중인 테마('light'|'dark') — 수동 지정이 있으면 그 값, 없으면 시스템 설정
 function effectiveTheme() {
   const t = document.documentElement.getAttribute('data-theme');
@@ -1457,7 +1464,7 @@ function runTransfer({ adds, remove }) {
 // 뒤쪽(제거) 저장도 실패하고 되돌리기마저 실패하면 항목이 두 곳에 남는다. 이때 "제거" 단계를
 // 데이터로 localStorage에 남겨 두고, 다음 불러오기·새로고침·연결 복구 때 다시 실행해 이동을 마저 끝낸다.
 // 제거 연산은 다시 해도 결과가 같다(이미 없으면 gone = 끝난 것으로 봄).
-const JOURNAL_KEY = 'tako_pending_moves';
+const JOURNAL_KEY = lsKey('tako_pending_moves');
 const JOURNAL_OPS = {
   archiveRemove: { store: () => archiveStore, op: (ids) => opArchiveRemove(ids) },
   inboxRemove: { store: () => inboxStore, op: (items) => opInboxRemove(items) },
@@ -3394,8 +3401,8 @@ function maybeShowLongPressHint() {
   if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
   if (!document.querySelector('#sections .task')) return;
   try {
-    if (localStorage.getItem('tako_hint_longpress')) return;
-    localStorage.setItem('tako_hint_longpress', '1');
+    if (localStorage.getItem(lsKey('tako_hint_longpress'))) return;
+    localStorage.setItem(lsKey('tako_hint_longpress'), '1');
   } catch (e) { return; }
   setTimeout(() => { if (!$('#toast').classList.contains('show')) notify.info('길게 눌러 순서를 바꿀 수 있어요'); }, 600);
 }
@@ -3437,7 +3444,7 @@ function appendRows(card, rows, key) {
 }
 
 // ---- 완료 접기(B3) ----
-const DONE_OPEN_KEY = 'tako_done_open';
+const DONE_OPEN_KEY = lsKey('tako_done_open');
 let doneOpen = {};
 try { doneOpen = JSON.parse(localStorage.getItem(DONE_OPEN_KEY) || '{}') || {}; } catch (e) { doneOpen = {}; }
 function isDoneOpen(key) { return !!doneOpen[key]; } // 기본 접힘
@@ -3615,7 +3622,7 @@ async function onSetupSave() {
   state.token = tok;
   try {
     await ghLoad();
-    localStorage.setItem('gh_pat', tok);
+    localStorage.setItem(TOKEN_KEY, tok);
     renderApp();
     // 토큰 확인이 끝나면 나머지 세 파일도 불러온다(Q4 — 이전엔 active.md만 읽어 Inbox가 비어 보이고 저장이 실패)
     initialLoad();
@@ -4382,7 +4389,18 @@ function onComposerFailed(failed, err) {
 }
 
 // ============ Init ============
+// [lab 전용] fail closed(C2): 가짜 API(mock-github.js)가 실제로 로드돼 fetch를 가로채고 있을 때만 시작한다.
+// mock이 없으면 실제 GitHub(tasks-data)에 쓰게 되므로 아무것도 하지 않고 안내만 보인다. 본 서비스에서는 이 함수와 호출을 지운다.
+function labMockGuard() {
+  if (window.__TAKO_LAB_MOCK === true) return true;
+  document.getElementById('app').innerHTML =
+    '<div class="setup"><h1>실험실을 열 수 없어요</h1><p>가짜 저장소(mock-github.js)를 불러오지 못했어요. 실제 데이터에 쓰지 않도록 실행을 멈췄어요. 새로고침해 주세요.</p></div>';
+  ['composer', 'inbox-bar', 'archive-bar'].forEach((id) => { const el = document.getElementById(id); if (el) el.hidden = true; });
+  return false;
+}
+
 function init() {
+  if (!labMockGuard()) return;
   updateThemeColorMeta();
 
   bindBarEvents();
@@ -4636,7 +4654,7 @@ function runDeferredRender() {
 
 let setupNotice = '';
 function handleUnauthorized() {
-  localStorage.removeItem('gh_pat');
+  localStorage.removeItem(TOKEN_KEY);
   state.token = null;
   setupNotice = '토큰이 만료됐거나 권한이 바뀌었어요. 다시 입력해 주세요.';
   renderSetup();
@@ -4665,7 +4683,7 @@ async function refresh() {
 
 function openSettings() {
   if (confirm('토큰을 다시 입력할까요?\n이 기기에 저장된 토큰은 지워져요.')) {
-    localStorage.removeItem('gh_pat');
+    localStorage.removeItem(TOKEN_KEY);
     state.token = null;
     renderSetup();
   }

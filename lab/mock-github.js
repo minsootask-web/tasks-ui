@@ -3,6 +3,8 @@
 // 본 서비스(index.html)에는 포함하지 않는다.
 (function () {
   'use strict';
+  // lab이 "가짜 API가 켜져 있다"는 것을 확인하는 표시(C2 fail closed). 이 표시가 없으면 lab은 시작하지 않는다
+  window.__TAKO_LAB_MOCK = true;
   var NS = 'tako_lab_mock_';
   var LATENCY = 350; // 실제 API 왕복과 비슷한 지연 — 낙관적 업데이트·저장 표시 검증용
 
@@ -171,7 +173,8 @@
   };
 
   // 실험실은 토큰 없이 바로 열린다(실제 토큰은 쓰지도 보내지도 않는다).
-  try { if (!localStorage.getItem('gh_pat')) localStorage.setItem('gh_pat', 'lab-mock-token'); } catch (e) {}
+  // 토큰 키도 lab 전용 접두사 — 같은 origin 본 서비스의 gh_pat을 덮거나 읽지 않는다(C2)
+  try { if (!localStorage.getItem('tako_lab_gh_pat')) localStorage.setItem('tako_lab_gh_pat', 'lab-mock-token'); } catch (e) {}
 
   // 콘솔·QA용 도우미: __takoMockReset() 샘플 데이터 초기화 · __takoMockFail 실패 주입(위 규칙)
   // · __takoMockExternalWrite 외부 작성자 흉내 · __takoMockLog/__takoMockPuts 요청 기록 · __takoMockRead 저장소 내용
