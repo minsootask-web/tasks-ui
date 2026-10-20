@@ -982,6 +982,13 @@ const highlightMeta = (s) => linkify(s, (t) => t.replace(/\(([~^]?[\d\-/.][^)]*)
 // 시간: 되돌리기 5초, 오류 6초, 안내 2.5초. 손가락·마우스가 올라가 있는 동안은 멈춤.
 // PC에서 Cmd/Ctrl+Z = 지금 떠 있는 토스트의 되돌리기.
 const TOAST_MS = { info: 2500, undo: 5000, error: 6000 };
+// 마지막 동작 1개의 되돌리기(D2): 토스트가 있는 동작(보관·분류·메모 삭제 등)은 토스트가, 토스트가 없는 동작
+// (체크·순서 바꾸기·우선순위·글 고치기·추가)은 setLastUndo가 기록. PC Cmd/Ctrl+Z가 이것을 무르고 그 행을 600ms 깜빡임
+let lastUndo = null;
+function setLastUndo(run, flashKey) {
+  let fired = false;
+  lastUndo = { fire: () => { if (fired) return; fired = true; lastUndo = null; run(); if (flashKey) setTimeout(() => flashTaskRows([flashKey]), 0); } };
+}
 const toastState = { timer: null, remaining: 0, startedAt: 0, action: null, kind: null };
 
 function showToast(msg, { kind = 'info', ms, action = null } = {}) {
@@ -1009,6 +1016,8 @@ function showToast(msg, { kind = 'info', ms, action = null } = {}) {
     btn.addEventListener('click', fire);
     t.appendChild(btn);
     toastState.action = { fire, undo: kind === 'undo' };
+    // 되돌리기 토스트는 사라진 뒤에도 Cmd/Ctrl+Z로 무를 수 있게 "마지막 동작"으로 기억(D2)
+    if (kind === 'undo') lastUndo = { fire };
   }
   t.classList.add('show');
   toastState.remaining = ms ?? TOAST_MS[kind] ?? TOAST_MS.info;
@@ -1726,11 +1735,35 @@ const opToggle = (item, checked) => (c) => toggleAt(lineOf(item, c), checked, c)
 const opAppend = (key, text) => withApplied((c) => appendToSection(key, text, c),
   (now, before) => countExactLines(now, `- [ ] ${text}`) > countExactLines(before, `- [ ] ${text}`));
 const opEdit = (item, text) => (c) => editLine(lineOf(item, c), text, c);
+// 글 고치기 되돌리기: 지금 글로 줄을 찾아 원래 글로
+const opEditByText = (nowText, backText) => (c) => {
+  const lines = c.split('\n');
+  const idx = lines.findIndex((l) => { const m = l.match(/^\s*- \[[ xX]\] (.*)$/); return m && m[1] === nowText; });
+  if (idx === -1) throw undoGone();
+  return editLine(idx, backText, c);
+};
 const opEditMove = (item, text, key) => (c) => {
   const idx = lineOf(item, c);
   return moveLineToSection(idx, key, editLine(idx, text, c));
 };
 const opDeleteBlock = (item) => (c) => deleteAt(lineOf(item, c), c);
+// 옮기기·우선순위 변경 되돌리기(D2): 지금 자리의 블록(글로 찾음)을 빼고, 원래 블록을 원래 바로 위 줄 다음에 다시 넣는다
+const opUndoMove = (text, origBlock, after) => (c) => {
+  const lines = c.split('\n');
+  const want = normLine(`- [ ] ${text}`);
+  const idx = lines.findIndex((l) => normLine(l.trim()) === want);
+  if (idx === -1) throw undoGone();
+  const r = extractBlock(lines, idx);
+  lines.splice(r.start, r.end - r.start + 1);
+  let at = -1;
+  if (after && after.raw != null) {
+    if (/^##\s/.test(after.raw)) at = lines.findIndex((l) => l === after.raw) + 1;
+    else { try { at = resolveLineIndex(after, lines) + 1; } catch (e) { at = -1; } }
+  }
+  if (at <= 0) at = Math.min(after ? after.lineIndex + 1 : lines.length, lines.length);
+  lines.splice(at, 0, ...origBlock);
+  return lines.join('\n');
+};
 // 보관함 항목들을 되돌려 넣기
 const opRestore = (entries) => (c) => {
   const lines = c.split('\n');
@@ -3908,6 +3941,16 @@ function onToggle(item, checked, el, cb) {
       renderApp();
     });
   }
+  setLastUndo(() => {
+    if (kids.length) {
+      cancelLinger(item);
+      activeStore.apply(opSetChecks([{ item, checked: false }, ...kids.map((k) => ({ item: k, checked: false }))]), { msg: 'undo check', debounce: 400, onFail: 'keep', idem: true }).catch(() => {});
+    } else {
+      if (checked && item.indent === 0) cancelLinger(item);
+      activeStore.apply(opToggle(item, !checked), { msg: 'undo check', debounce: 400, onFail: 'keep', idem: true }).catch(() => {});
+    }
+    renderApp();
+  }, item.text);
   activeStore.apply(op, { msg: 'toggle tasks', debounce: 400, onFail: 'keep', idem: true })
     .then(() => {
       // 다른 저장이 남아 있지 않을 때만 다시 그림(줄 번호 정리). 남아 있으면 다음 저장이 처리
@@ -4136,6 +4179,13 @@ function onDragEnd(e) {
   try {
     if (opMove(srcItem || ref(srcLine), t)(state.content) === state.content) { renderApp(); return; }
   } catch (e) { /* 아래 safeMutate가 알림 */ }
+  // 되돌리기(D2): 원래 블록과 그 바로 위 줄을 기억
+  if (srcItem) {
+    const r0 = extractBlock(lines, srcLine);
+    const origBlock = lines.slice(r0.start, r0.end + 1);
+    const after = { lineIndex: r0.start - 1, raw: lines[r0.start - 1] };
+    setLastUndo(() => { safeMutate(opUndoMove(srcItem.text, origBlock, after), 'undo move', null, { failMsg: '되돌리지 못했어요' }); }, srcItem.text);
+  }
   return safeMutate(
     opMove(srcItem || ref(srcLine), t),
     `move: ${SECTION_KEYS[target.sectionKey]}`,
@@ -4364,11 +4414,23 @@ async function runSheetSave(text, pri) {
   // Edit: if priority changed, also move
   const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === line));
   const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+  // 되돌리기(D2): 원래 블록·위치
+  const lines0 = state.content.split('\n');
+  const r0 = extractBlock(lines0, line);
+  const origBlock = lines0.slice(r0.start, r0.end + 1);
+  const after = { lineIndex: r0.start - 1, raw: lines0[r0.start - 1] };
+  const oldText = editingItem.text;
   if (curKey !== pri) {
     // 글 수정 + 섹션 이동을 한 번에 저장. 실패해도 로컬 상태를 바꿔 두지 않는다.
-    return safeMutate(opEditMove(editingItem, text, pri), `edit+move: ${text}`, '수정됨', quiet);
+    const ok = await safeMutate(opEditMove(editingItem, text, pri), `edit+move: ${text}`, '수정됨', quiet);
+    if (ok) setLastUndo(() => { safeMutate(opUndoMove(text, origBlock, after), 'undo edit+move', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+    return ok;
   }
-  return onEdit(editingItem, text, quiet);
+  const ok = await onEdit(editingItem, text, quiet);
+  if (ok && text !== oldText) {
+    setLastUndo(() => { safeMutate(opEditByText(text, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+  }
+  return ok;
 }
 
 
@@ -4557,6 +4619,7 @@ function addMemoFromComposer(job) {
 const composerFailed = { jobs: [], err: null, timer: null };
 function addFromComposer(job) {
   const pr = activeStore.apply(opAppend(job.pri, job.text), { msg: `add: ${job.text}` });
+  setLastUndo(() => { safeMutate(opActiveRemoveAppended(job.pri, [job.text]), 'undo add', null, { failMsg: '되돌리지 못했어요' }); }, null);
   renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
   const wantRaw = `- [ ] ${job.text}`;
   revealNewRow([...document.querySelectorAll(`#sections .pri-${job.pri === 'medium' ? 'med' : job.pri} .task`)]
@@ -4710,9 +4773,18 @@ function init() {
     // 입력 중에는 브라우저 기본 되돌리기(글자 취소)를 그대로 둔다
     const ae = document.activeElement;
     if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
-    if (!toastState.action || !toastState.action.undo) return;
-    e.preventDefault();
-    toastState.action.fire();
+    if (toastState.action && toastState.action.undo) {
+      e.preventDefault();
+      lastUndo = null;
+      toastState.action.fire();
+      return;
+    }
+    if (lastUndo) { // 토스트가 이미 사라졌거나 토스트가 없는 동작
+      e.preventDefault();
+      const u = lastUndo;
+      lastUndo = null;
+      u.fire();
+    }
   });
 
   $('#scrim').addEventListener('click', hideSheet);
