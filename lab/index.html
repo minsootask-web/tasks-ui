@@ -3647,7 +3647,11 @@ function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 
-let suppressTaskClickUntil = 0;
+// 드래그한 행만 놓은 뒤 잠깐 클릭을 무시(R13 — 전역으로 막으면 다른 할 일을 바로 눌러도 무반응이었다)
+// 놓는 순간 목록이 다시 그려져 행 요소가 바뀌므로 행 key(글)로 기억한다
+const suppressedRows = new Map();
+const suppressRowClick = (row, ms) => { if (row && row.dataset.key) suppressedRows.set(row.dataset.key, Date.now() + ms); };
+const rowClickSuppressed = (row) => !!row && (suppressedRows.get(row.dataset.key) || 0) > Date.now();
 
 function renderTask(item, key, opts = {}) {
   const { hasChildren = false, collapsed = false, hiddenCount = 0 } = opts;
@@ -3708,14 +3712,14 @@ function renderTask(item, key, opts = {}) {
     if (e.target.closest('input, .cb-hit, .task-toggle, a, .task-actions')) return;
     longPress(e, t, {
       onStart: (ev) => {
-        suppressTaskClickUntil = Date.now() + 600; // 놓은 뒤 따라오는 클릭이 편집 시트를 열지 않게
+        suppressRowClick(t, 600); // 놓은 뒤 따라오는 클릭이 편집 시트를 열지 않게(이 행만)
         onDragStart(ev, item, key, t);
       },
     });
   });
   span.addEventListener('click', (e) => {
     if (e.target.closest('a')) { e.stopPropagation(); return; } // 링크는 열기만, 편집 안 함
-    if (Date.now() < suppressTaskClickUntil) return;
+    if (rowClickSuppressed(t)) return;
     if (e.target.tagName === 'INPUT') return;
     openEditSheet(item);
   });
@@ -4097,7 +4101,7 @@ function onDragEnd(e) {
   if (!dragCtx.active) return;
   const cancelled = !!(e && e.type === 'pointercancel'); // 전화·알림·제스처가 터치를 가로챔 → 정리만, 저장 안 함(R7)
   endTouchDrag();
-  suppressTaskClickUntil = Math.max(suppressTaskClickUntil, Date.now() + 400);
+  suppressRowClick(dragCtx.srcEl, 400);
   document.removeEventListener('pointermove', onDragMove);
   document.removeEventListener('pointerup', onDragEnd);
   document.removeEventListener('pointercancel', onDragEnd);
