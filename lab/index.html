@@ -1462,10 +1462,26 @@ const opRestore = (entries) => (c) => {
   return lines.join('\n');
 };
 // 여러 블록을 원문 줄로 찾아 한꺼번에 지우기(뒤에서부터)
+// 여러 대상을 한 번에 찾는다(Q1): 이미 잡힌 블록의 줄은 다음 대상 후보에서 빼서, 같은 글이 둘이어도
+// 서로 다른 줄로 배정된다. 범위가 겹치면 하나로 합친다.
 const opDeleteBlocks = (items) => (c) => {
   const lines = c.split('\n');
-  const ranges = items.map((it) => extractBlock(lines, resolveLineIndex(it, lines)));
-  ranges.sort((a, b) => b.start - a.start).forEach((r) => lines.splice(r.start, r.end - r.start + 1));
+  const claimed = new Set();
+  const ranges = [];
+  items.forEach((it) => {
+    const idx = resolveLineIndex(it, lines, { exclude: claimed });
+    const r = extractBlock(lines, idx);
+    for (let i = r.start; i <= r.end; i++) claimed.add(i);
+    ranges.push(r);
+  });
+  ranges.sort((a, b) => a.start - b.start);
+  const merged = [];
+  ranges.forEach((r) => {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    else merged.push({ ...r });
+  });
+  merged.reverse().forEach((r) => lines.splice(r.start, r.end - r.start + 1));
   return lines.join('\n');
 };
 // 드래그 이동: 목표 줄도 원문으로 다시 찾는다
@@ -3000,7 +3016,7 @@ async function onBulkArchiveDone() {
     const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec.title) || 'medium';
     sec.items.forEach((i) => {
       if (i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()) {
-        targets.push({ lineIndex: i.lineIndex, raw: i.raw, priority });
+        targets.push({ ...i, priority }); // 섹션·부모·순번 단서까지 함께(Q1·Q2)
       }
     });
   });
