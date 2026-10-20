@@ -1280,6 +1280,11 @@ const inboxStore = createStore({
   onChange: (view) => {
     state.inboxContent = view;
     state.inboxItems = parseInbox(view);
+    // 다시 불러오거나 다른 기기 변경을 다시 적용한 뒤에도 선택은 같은 항목에만 — 사라진 항목은 선택 해제(Q10)
+    if (selectedInbox.size) {
+      const keys = new Set(state.inboxItems.map((i) => i.key));
+      [...selectedInbox].forEach((k) => { if (!keys.has(k)) selectedInbox.delete(k); });
+    }
   },
   onRebase: rebaseNotice,
 });
@@ -1505,11 +1510,18 @@ const opMove = (srcItem, target) => (c) => {
 };
 
 // ============ Parsing / Mutation ============
+// key: 줄 번호 대신 쓰는 안정 키(Q10·Q14) = 글 + 같은 글 중 몇 번째. 위쪽 줄이 바뀌어도 같은 항목을 가리킨다
 function parseInbox(text) {
+  const seen = new Map();
   return text.split('\n')
     .map((line, idx) => ({ line, idx }))
     .filter(({ line }) => line.match(/^-\s+\S/))
-    .map(({ line, idx }) => ({ text: line.replace(/^-\s+/, '').trim(), lineIdx: idx }));
+    .map(({ line, idx }) => {
+      const t = line.replace(/^-\s+/, '').trim();
+      const n = (seen.get(t) || 0) + 1;
+      seen.set(t, n);
+      return { text: t, lineIdx: idx, key: `${t}\u0000${n}` };
+    });
 }
 
 // Inbox 줄 위치는 렌더 이후 바뀔 수 있다(앞선 처리·봇 추가). 줄 번호만 믿고 지우면 엉뚱한 줄이
@@ -1927,16 +1939,16 @@ function renderInbox() {
 
 function renderInboxItem(item) {
   const div = document.createElement('div');
-  div.className = 'inbox-item' + (selectedInbox.has(item.lineIdx) ? ' selected' : '');
+  div.className = 'inbox-item' + (selectedInbox.has(item.key) ? ' selected' : '');
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.className = 'inbox-cb';
-  cb.checked = selectedInbox.has(item.lineIdx);
+  cb.checked = selectedInbox.has(item.key);
   cb.setAttribute('aria-label', `선택: ${item.text}`);
   cb.addEventListener('click', (e) => {
     e.stopPropagation();
-    toggleInboxSelect(item.lineIdx, div, cb);
+    toggleInboxSelect(item.key, div, cb);
   });
 
   const text = document.createElement('div');
@@ -1956,20 +1968,20 @@ function renderInboxItem(item) {
   });
   actions.querySelector('.row-btn').addEventListener('click', (e) => { e.stopPropagation(); onDeleteFromInbox(item); });
 
-  div.addEventListener('click', () => toggleInboxSelect(item.lineIdx, div, cb));
+  div.addEventListener('click', () => toggleInboxSelect(item.key, div, cb));
   div.appendChild(cb);
   div.appendChild(text);
   div.appendChild(actions);
   return div;
 }
 
-function toggleInboxSelect(lineIdx, div, cb) {
-  if (selectedInbox.has(lineIdx)) {
-    selectedInbox.delete(lineIdx);
+function toggleInboxSelect(key, div, cb) {
+  if (selectedInbox.has(key)) {
+    selectedInbox.delete(key);
     div.classList.remove('selected');
     cb.checked = false;
   } else {
-    selectedInbox.add(lineIdx);
+    selectedInbox.add(key);
     div.classList.add('selected');
     cb.checked = true;
   }
@@ -2663,7 +2675,7 @@ function bindBarEvents() {
     if (selectedInbox.size === all) {
       selectedInbox.clear();
     } else {
-      state.inboxItems.forEach((i) => selectedInbox.add(i.lineIdx));
+      state.inboxItems.forEach((i) => selectedInbox.add(i.key));
     }
     renderInbox();
   });
@@ -2690,7 +2702,7 @@ function onMoveToActive(item, priority) {
 }
 
 function onBulkMove(priority) {
-  const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
+  const items = state.inboxItems.filter((i) => selectedInbox.has(i.key));
   if (!items.length) return;
   return withInboxLock(items, async () => {
   const work = moveInboxToActive(items, priority);
@@ -2702,7 +2714,7 @@ function onBulkMove(priority) {
   } catch (e) {
     renderInbox();
     flashInboxRows(items);
-    notifyTransferError(e, () => { items.forEach((i) => selectedInbox.add(i.lineIdx)); onBulkMove(priority); });
+    notifyTransferError(e, () => { items.forEach((i) => selectedInbox.add(i.key)); onBulkMove(priority); });
   }
   });
 }
@@ -2817,7 +2829,7 @@ function offerUndo(msg, work, inverse) {
 }
 
 async function onBulkDelete() {
-  const items = state.inboxItems.filter((i) => selectedInbox.has(i.lineIdx));
+  const items = state.inboxItems.filter((i) => selectedInbox.has(i.key));
   if (!items.length) return;
   if (items.some((i) => inboxBusy.has(i.text))) return;
   const run = () => withInboxLock(items, async () => {
