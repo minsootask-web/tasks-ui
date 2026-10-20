@@ -2053,17 +2053,19 @@ function adjustBlockIndent(block, deltaIndent) {
 }
 
 // 부모 줄(parentIdx)의 마지막 하위 항목 바로 다음 위치
+// 부모의 마지막 하위(비어 있지 않은 줄) 바로 다음 — 섹션 끝 빈 줄 뒤에 넣지 않는다(B-6:
+// 부모와 하위 사이에 빈 줄이 끼고 다음 섹션 제목 앞 빈 줄이 사라졌다)
 function childInsertIndex(lines, parentIdx) {
   const parentIndent = getLineIndent(lines[parentIdx]);
-  let insertAt = parentIdx + 1;
-  while (insertAt < lines.length) {
-    const l = lines[insertAt];
+  let last = parentIdx;
+  for (let i = parentIdx + 1; i < lines.length; i++) {
+    const l = lines[i];
     if (l.startsWith('## ')) break;
-    if (l.trim() === '') { insertAt++; continue; }
+    if (l.trim() === '') continue;
     if (getLineIndent(l) <= parentIndent) break;
-    insertAt++;
+    last = i;
   }
-  return insertAt;
+  return last + 1;
 }
 
 // 보관함 항목을 active.md 줄 배열에 되돌린다.
