@@ -1001,7 +1001,8 @@ function hideToast() {
 // 화면에 보여줄 쉬운 오류 문구. 원래 오류(PUT 500, conflict 등)는 콘솔에만 남긴다.
 function friendlyError(e, fallback = '저장하지 못했어요') {
   if (e && e.userMessage) return e.userMessage;
-  if (e && (e.name === 'TypeError' || e.offline || (typeof navigator !== 'undefined' && navigator.onLine === false))) {
+  // 연결 문제는 요청 단계에서 붙인 표시(network)로만 판단(Q15) — 코드 오류(TypeError)를 연결 탓으로 돌리지 않음
+  if (e && (e.network || e.offline || (typeof navigator !== 'undefined' && navigator.onLine === false))) {
     return '인터넷 연결을 확인해 주세요';
   }
   return fallback;
@@ -1058,8 +1059,16 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+// fetch 자체가 실패(응답 없음)하면 network 표시를 붙인다 — 연결 문제와 코드 오류를 구분(Q15)
+async function netFetch(url, init) {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { network: true });
+  }
+}
 async function ghGet(url) {
-  const res = await fetch(url, {
+  const res = await netFetch(url, {
     headers: { Authorization: `Bearer ${state.token}`, Accept: 'application/vnd.github+json' },
     cache: 'no-cache',
   });
@@ -1073,7 +1082,7 @@ async function ghGet(url) {
 }
 
 async function ghPut(url, content, sha, message, { keepalive = false } = {}) {
-  const res = await fetch(url, {
+  const res = await netFetch(url, {
     method: 'PUT',
     keepalive,
     headers: {
@@ -1365,7 +1374,7 @@ function runTransfer({ adds, remove }) {
         throw Object.assign(new Error('partial'), { partial: true, cause });
       }
     }
-    throw Object.assign(new Error('rolled back'), { rolledBack: true, cause, offline: cause && cause.name === 'TypeError' });
+    throw Object.assign(new Error('rolled back'), { rolledBack: true, cause, network: !!(cause && cause.network) });
   };
   return (async () => {
     const results = await Promise.allSettled(addPs);
