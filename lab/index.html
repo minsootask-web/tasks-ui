@@ -2343,10 +2343,31 @@ function childInsertIndex(lines, parentIdx) {
 // 보관함 항목을 active.md 줄 배열에 되돌린다.
 // 하위 할 일(entry.parent 있음)은 같은 섹션에 부모가 있으면 그 부모의 마지막 하위로,
 // 없으면 상위 항목으로 섹션 끝에 넣는다(A6). 들여쓴 채 섹션 끝에 넣으면 엉뚱한 부모에 붙기 때문.
+// at 자리에 상위 블록을 넣을 때 다른 항목의 하위 줄 사이에 끼지 않도록, 들여쓴 줄들 뒤로 민다
+function topLevelSlot(lines, at) {
+  while (at < lines.length && lines[at].trim() !== '' && !lines[at].startsWith('## ') && getLineIndent(lines[at]) > 0) at++;
+  return at;
+}
+// at 자리(그 앞 줄 기준)가 속한 섹션 제목
+function sectionTitleAt(lines, at) {
+  for (let i = Math.min(at, lines.length) - 1; i >= 0; i--) { const m = lines[i].match(/^##\s+(.+)$/); if (m) return m[1].trim(); }
+  return null;
+}
 // 반환: 넣은 블록 첫 줄 번호(없으면 -1)
 function restoreBlockInto(lines, entry) {
   const block = entry.block || [];
   if (!block.length) return -1;
+  // 원래 자리(보관할 때 남긴 바로 위 기준 줄 지문 entry.after): 같은 섹션에서 정확히 하나로 찾으면 그 아래로.
+  // 애매하거나 섹션이 다르면 아래 규칙(부모 아래·섹션 끝)대로(사용성 2차)
+  if (!entry.parent && entry.after) {
+    let at = -1;
+    try { at = anchorIndex(lines, entry.after); } catch (e) { at = -1; }
+    if (at >= 0) at = topLevelSlot(lines, at);
+    if (at >= 0 && sectionTitleAt(lines, at) === SECTION_KEYS[entry.priority]) {
+      lines.splice(at, 0, ...adjustBlockIndent(block, -getLineIndent(block[0])));
+      return at;
+    }
+  }
   if (entry.parent) {
     const headerIdx = ensureSectionHeader(lines, entry.priority);
     for (let i = headerIdx + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
@@ -2666,13 +2687,19 @@ async function onBulkRestore() {
   });
   selectedArchive.clear();
   vanishRows(rows, renderArchive);
-  try { await work; } catch (e) {
+  try { await work; restoredNotice(entries); } catch (e) {
     renderArchive();
     flashArchiveRows(ids);
     notifyTransferError(e, () => { ids.forEach((id) => selectedArchive.add(id)); onBulkRestore(); });
   } finally { claim.release(); }
 }
 
+// 복구 뒤 어디로 갔는지 짧게 알림(사용성 2차 — 복구 뒤 안내가 없었다)
+function restoredNotice(entries) {
+  const dests = [...new Set(entries.map((e) => (e.source === 'active' ? `${(PRI[e.priority] || PRI.medium).icon} ${(PRI[e.priority] || PRI.medium).label}` : 'Inbox')))];
+  const where = dests.length === 1 ? dests[0] : '원래 자리';
+  notify.info(entries.length > 1 ? `${entries.length}개를 ${where}에 되살렸어요` : `${where}에 되살렸어요`);
+}
 // 보관함 항목 복구의 "추가" 단계들(Task·Inbox 각각)
 function restoreAdds(entries) {
   const adds = [];
@@ -2730,6 +2757,10 @@ function archiveActiveTask(item) {
       if (m && getLineIndent(lines[i]) < baseIndent) { entry.parent = m[2]; break; }
     }
   }
+  // 나중에 복구할 때 원래 자리로(상위 항목만): 블록을 뺀 내용에서 바로 위 기준 줄 지문
+  const mid = [...lines.slice(0, start), ...lines.slice(end + 1)];
+  const anchor = anchorAt(mid, start);
+  if (baseIndent === 0) entry.after = anchor;
   // 보관함에 먼저 넣고 Task에서 뺀다. 뺄 때 실패하면 보관함에서 다시 빼서 한 곳에만 남긴다(A4)
   const work = runTransfer({
     adds: [{ store: archiveStore, op: opArchiveAdd([entry]), undo: opArchiveRemove([entry.id]), msg: `archive: ${item.text}` }],
@@ -2737,8 +2768,7 @@ function archiveActiveTask(item) {
       [{ k: 'archiveHas', ids: [entry.id] }]),
   });
   // 되돌리기용 원래 자리: 블록을 뺀 내용에서 바로 위 기준 줄의 지문과 원래 들여쓰기 블록
-  const mid = [...lines.slice(0, start), ...lines.slice(end + 1)];
-  return { work, entry, pos: { block, anchor: anchorAt(mid, start) } };
+  return { work, entry, pos: { block, anchor } };
 }
 
 
@@ -2750,7 +2780,7 @@ async function onRestore(entry) {
     remove: removeStep('archiveRemove', [[entry.id]], 'restore done', restoreVerify([entry])),
   });
   vanishRows(archiveRowsFor([entry.id]), renderArchive);
-  try { await work; } catch (e) { renderArchive(); flashArchiveRows([entry.id]); notifyTransferError(e, () => onRestore(entry)); }
+  try { await work; restoredNotice([entry]); } catch (e) { renderArchive(); flashArchiveRows([entry.id]); notifyTransferError(e, () => onRestore(entry)); }
   finally { claim.release(); }
 }
 
@@ -3722,13 +3752,15 @@ async function onBulkArchiveDone() {
     const entries = targets.map((t) => {
       const { start, end } = extractBlock(lines, t.lineIndex);
       const mid = [...lines.slice(0, start), ...lines.slice(end + 1)];
-      positions.push({ start, block: lines.slice(start, end + 1), anchor: anchorAt(mid, start) });
+      const anchor = anchorAt(mid, start);
+      positions.push({ start, block: lines.slice(start, end + 1), anchor });
       return {
         id: genArchiveId(),
         deletedAt: new Date().toISOString(),
         source: 'active',
         priority: t.priority,
         block: lines.slice(start, end + 1),
+        after: anchor, // 복구할 때 원래 자리(사용성 2차)
       };
     });
     // 보관함에 먼저 넣고, Task에서는 원문 줄로 다시 찾아 지운다(뒤에서부터). 실패하면 보관함에서 다시 뺌(A4)
@@ -3752,6 +3784,7 @@ const opActiveReinsert = (entry, pos, ats = null) => (c) => {
   const lines = c.split('\n');
   let at = -1;
   try { at = anchorIndex(lines, pos.anchor); } catch (e) { at = -1; }
+  if (at >= 0 && getLineIndent(pos.block[0]) === 0) at = topLevelSlot(lines, at);
   if (at >= 0) lines.splice(at, 0, ...pos.block);
   else at = restoreBlockInto(lines, entry);
   if (ats) { for (let k = 0; k < ats.length; k++) if (ats[k] >= at) ats[k] += pos.block.length; ats.push(at); }

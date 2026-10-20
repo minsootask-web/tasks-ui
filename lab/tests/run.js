@@ -81,7 +81,7 @@ const NAMES = [
   'locateGone', 'inboxKey', 'INBOX_LOC', 'blockEndAt', 'lineSig', 'lineFp', 'locate', 'resolveLineIndex',
   'parseSections', 'sectionHeaderIndex', 'ensureSectionHeader', 'sectionInsertAfter', 'insertIntoSection',
   'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
-  'childInsertIndex', 'restoreBlockInto',
+  'childInsertIndex', 'topLevelSlot', 'sectionTitleAt', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
   'LS_PREFIX', 'lsKey', 'genArchiveId', 'JOURNAL_KEY', 'JOURNAL_MAX_AGE', 'countActiveLine', 'countAllActive', 'countInbox',
   'JOURNAL_OPS', 'JOURNAL_DEST', 'destCounts', 'destArrived', 'removeStep', 'readJournal', 'writeJournal', 'liveJournal',
@@ -455,6 +455,24 @@ test('S10·S11: 붙여넣기 — 25줄도 하나도 버리지 않음, 번호는 
   eq(T.splitPastedLines('2024. 연간 계획\n예산'), ['2024. 연간 계획', '예산']);
   eq(T.splitPastedLines('1. 하나\n2) 둘\n3. [ ] 셋'), ['하나', '둘', '셋']);
   if (!(T.PASTE_MAX >= 20)) throw new Error('PASTE_MAX');
+});
+
+test('보관함 복구: 원래 자리(기준 줄 지문)로, 기준 줄이 다른 항목의 하위면 그 하위 뒤로, 못 찾으면 섹션 끝', () => {
+  const c = md('## 🔥 High', '- [ ] a', '  - [ ] a1', '- [x] 끝냄', '- [ ] b', '', '## 🟡 Medium', '');
+  const lines = c.split('\n');
+  const mid = [...lines.slice(0, 3), ...lines.slice(4)];
+  const entry = { priority: 'high', block: ['- [x] 끝냄'], after: T.anchorAt(mid, 3) };
+  const back = mid.join('\n').split('\n');
+  T.restoreBlockInto(back, entry);
+  eq(back.join('\n'), c);
+  // 그 뒤 a에 하위가 하나 더 생겼어도 a 블록 뒤(b 앞)로 — a2를 끝냄의 하위로 만들지 않음
+  const grown = md('## 🔥 High', '- [ ] a', '  - [ ] a1', '  - [ ] a2', '- [ ] b', '', '## 🟡 Medium', '').split('\n');
+  T.restoreBlockInto(grown, entry);
+  eq(sectionLines(grown.join('\n'), 'high'), ['- [ ] a', '  - [ ] a1', '  - [ ] a2', '- [x] 끝냄', '- [ ] b']);
+  // 기준 줄이 없어졌으면 섹션 끝
+  const gone = md('## 🔥 High', '- [ ] b', '', '## 🟡 Medium', '').split('\n');
+  T.restoreBlockInto(gone, entry);
+  eq(sectionLines(gone.join('\n'), 'high'), ['- [ ] b', '- [x] 끝냄']);
 });
 
 // ---------- 핵심 연산 ----------
