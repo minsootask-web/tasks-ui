@@ -4400,6 +4400,9 @@ const composerIme = { composing: false, sentWhileComposing: false };
 let composerMode = null;
 const composerDrafts = { active: '', inbox: '', memo: '' }; // 탭을 옮겨도 쓰던 글 유지
 const COMPOSER_PLACEHOLDER = { active: '할 일 입력…', inbox: 'Inbox에 적어 두기', memo: '메모 남기기' };
+// PC(마우스·키보드)에서만 안내 글에 단축키를 덧붙인다(D3)
+const IS_PC = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+const composerPlaceholder = (mode) => COMPOSER_PLACEHOLDER[mode] + (IS_PC ? ' (/ 키)' : '');
 function setComposerMode(mode) {
   const input = $('#composer-input');
   if (composerMode && composerMode !== mode) composerDrafts[composerMode] = input.value;
@@ -4412,7 +4415,7 @@ function setComposerMode(mode) {
   box.classList.add(`mode-${mode}`);
   if (changed) {
     input.value = composerDrafts[mode] || '';
-    input.placeholder = COMPOSER_PLACEHOLDER[mode];
+    input.placeholder = composerPlaceholder(mode);
     // 키보드 키 표시: Memo는 Enter가 줄바꿈이라 "줄바꿈"(R19·D10⑤), Task·Inbox는 "보내기"
     input.setAttribute('enterkeyhint', mode === 'memo' ? 'enter' : 'send');
     input.setAttribute('aria-label', COMPOSER_PLACEHOLDER[mode].replace('…', ''));
@@ -4688,6 +4691,18 @@ function init() {
   toastEl.addEventListener('pointerenter', pauseToast);
   toastEl.addEventListener('pointerleave', resumeToast);
   toastEl.addEventListener('pointerdown', pauseToast);
+  // 입력창 포커스 단축키(D3): / 또는 N. e.code로 판정해 한글 입력 상태에서도 동작. 글 입력 중·시트 열림 중엔 무시
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    if (e.code !== 'Slash' && e.code !== 'KeyN') return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
+    if ($('#sheet').classList.contains('show')) return;
+    const box = $('#composer');
+    if (!composerMode || box.hidden) return;
+    e.preventDefault();
+    $('#composer-input').focus();
+  });
   document.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
     // 입력 중에는 브라우저 기본 되돌리기(글자 취소)를 그대로 둔다
