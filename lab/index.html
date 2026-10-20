@@ -134,6 +134,9 @@
   .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .title-row { min-width: 0; flex: 1; }
+  .meta { display: flex; gap: 4px; align-items: baseline; }
+  .meta .meta-date { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta .meta-count { flex-shrink: 0; white-space: nowrap; }
   .icon-btn {
     appearance: none; -webkit-appearance: none;
     background: transparent; border: 1px solid transparent; color: var(--muted);
@@ -3517,7 +3520,8 @@ function renderApp() {
 
   app.innerHTML = `
     ${renderShell('active', {
-      meta: `${fmtDate(new Date())} · ${remaining ? `남은 할 일 ${remaining}` : '남은 할 일 없음'}`,
+      // 저장 실패 알약이 떠도 "남은 할 일 n"은 잘리지 않게 날짜 쪽만 줄어든다(다듬기)
+      meta: `<span class="meta-date">${fmtDate(new Date())} ·</span> <span class="meta-count">${remaining ? `남은 할 일 ${remaining}` : '남은 할 일 없음'}</span>`,
     })}
     <div id="sections"></div>
   `;
