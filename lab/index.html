@@ -2850,7 +2850,8 @@ async function onAddToInbox(text) {
     c += `- ${text}\n`;
     await ghSaveInbox(c, `inbox: add ${text}`);
     toast('Inbox에 추가됨');
-    if (currentTab === 'inbox') renderInbox();
+    // 어느 탭에서 추가했든 탭 줄의 Inbox 배지까지 다시 그린다(A9)
+    renderCurrent();
   } catch (e) { notifyError(e); }
 }
 
