@@ -1333,7 +1333,7 @@ const opInboxAppend = (texts) => (c) => {
   texts.forEach((t) => { out += `- ${t}\n`; });
   return out;
 };
-const opInboxRemove = (items) => (c) => removeInboxLines(items, c);
+const opInboxRemove = (items) => (c) => removeInboxLines(items, c, { strict: true });
 const opArchiveAdd = (entries) => (list) => [...list, ...entries.filter((e) => !list.some((x) => x.id === e.id))];
 const opArchiveRemove = (ids) => (list) => list.filter((x) => !ids.includes(x.id));
 const opMemoReplace = (fn) => (list) => fn(list);
@@ -1389,6 +1389,10 @@ function notifyTransferError(e, retry) {
   console.error(e && e.cause ? e.cause : e);
   if (e && e.partial) {
     notify.error('일부만 저장됐어요', { label: '새로 불러오기', retry: refresh });
+  } else if (e && e.rolledBack && e.cause && e.cause.gone) {
+    // 이미 다른 곳에서 처리됨 → 다시 시도할 일이 아님. 최신 내용으로 다시 그림
+    notify.error(e.cause.userMessage || '목록이 바뀌었어요');
+    refresh();
   } else if (e && e.rolledBack) {
     notify.error('옮기지 못했어요. 원래 자리에 그대로 있어요', { retry });
   } else {
@@ -1540,12 +1544,17 @@ function removeInboxLine(item, content = state.inboxContent) {
   return removeInboxLines([item], content);
 }
 
-function removeInboxLines(items, content = state.inboxContent) {
+// strict: 지울 줄을 하나라도 못 찾으면 gone(Q14) — 다른 기기가 이미 옮긴 항목을 또 옮겨 Task에 2개가 되지 않게
+function removeInboxLines(items, content = state.inboxContent, { strict = false } = {}) {
   const lines = content.split('\n');
   const idxs = [];
   items.forEach((it) => {
     const i = resolveInboxLine(it, lines.map((l, k) => (idxs.includes(k) ? null : l)));
     if (i !== -1) idxs.push(i);
+    else if (strict) {
+      const msg = '이미 다른 곳에서 정리된 항목이에요';
+      throw Object.assign(new Error(msg), { userMessage: msg, gone: true });
+    }
   });
   idxs.sort((a, b) => b - a).forEach((idx) => lines.splice(idx, 1));
   return lines.join('\n');
@@ -1557,7 +1566,8 @@ const inboxBusy = new Set();
 function withInboxLock(items, fn) {
   // 화면은 바로 바뀌므로(B9) 차례 기다리기는 하지 않고, 처리 중인 같은 항목만 무시한다.
   // 저장 순서·충돌은 파일 스토어가 맡는다.
-  const keys = items.map((i) => i.text);
+  // 키는 글 + 같은 글 중 몇 번째(Q14) — 같은 글 "우유" 두 줄을 각각 처리할 수 있게
+  const keys = items.map((i) => i.key || i.text);
   if (keys.some((k) => inboxBusy.has(k))) return Promise.resolve();
   keys.forEach((k) => inboxBusy.add(k));
   return Promise.resolve().then(fn).finally(() => keys.forEach((k) => inboxBusy.delete(k)));
@@ -2831,7 +2841,7 @@ function offerUndo(msg, work, inverse) {
 async function onBulkDelete() {
   const items = state.inboxItems.filter((i) => selectedInbox.has(i.key));
   if (!items.length) return;
-  if (items.some((i) => inboxBusy.has(i.text))) return;
+  if (items.some((i) => inboxBusy.has(i.key || i.text))) return;
   const run = () => withInboxLock(items, async () => {
     const { work, entries } = archiveInboxItems(items);
     selectedInbox.clear();
@@ -2849,7 +2859,7 @@ async function onBulkDelete() {
 }
 
 async function onDeleteFromInbox(item) {
-  if (inboxBusy.has(item.text)) return;
+  if (inboxBusy.has(item.key || item.text)) return;
   const run = () => withInboxLock([item], async () => {
     const { work, entries } = archiveInboxItems([item]);
     selectedInbox.clear();
