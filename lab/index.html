@@ -994,7 +994,19 @@ let undoSeq = 0;
 function setLastUndo(run, flashKey) {
   undoSeq++;
   let fired = false;
-  lastUndo = { fire: () => { if (fired) return; fired = true; lastUndo = null; run(); if (flashKey) setTimeout(() => flashTaskRows([flashKey]), 0); } };
+  lastUndo = { fire: () => {
+    if (fired) return;
+    fired = true;
+    lastUndo = null;
+    run();
+    if (flashKey) setTimeout(() => { flashTaskRows([flashKey]); focusUndoneRow(flashKey); }, 0);
+  } };
+}
+// 되돌린 행으로 포커스(키보드로 되돌렸으니 그 자리에서 이어서). 글을 입력 중이면 건드리지 않음
+function focusUndoneRow(key) {
+  if (isTextEntry(document.activeElement) || currentTab !== 'active') return;
+  if (typeof key === 'object') { const row = taskRowFor(key); row?.querySelector('input[type="checkbox"]')?.focus({ preventScroll: true }); return; }
+  restoreTaskFocus({ key: String(key).trim(), kind: 'cb' });
 }
 function reserveUndo() {
   const tok = ++undoSeq;
@@ -3944,7 +3956,23 @@ function scheduleFold() {
   lingerTimer = setTimeout(() => {
     const keys = [...doneLinger];
     const rows = [...document.querySelectorAll('#sections .task')].filter((r) => keys.includes(r.dataset.key));
-    const finish = () => { keys.forEach((k) => doneLinger.delete(k)); if (currentTab === 'active' && !dragCtx.active) renderApp(); };
+    const finish = () => {
+      keys.forEach((k) => doneLinger.delete(k));
+      if (currentTab !== 'active' || dragCtx.active) return;
+      // 키보드로 완료했으면(포커스가 접혀 들어가는 행) 다음 미완료 행으로 포커스를 옮겨 이어서 처리(사용성 2차)
+      const ae = document.activeElement;
+      const fr = ae && ae.closest && ae.closest('#sections .task');
+      let next = null;
+      if (fr && keys.includes(fr.dataset.key)) {
+        const all = [...document.querySelectorAll('#sections .task')];
+        const open = (r) => !r.classList.contains('done') && !keys.includes(r.dataset.key);
+        const i = all.indexOf(fr);
+        next = all.slice(i + 1).find(open) || all.slice(0, i).reverse().find(open) || null;
+      }
+      const kind = ae && ae.matches && ae.matches('input[type="checkbox"]') ? 'cb' : 'text';
+      renderApp();
+      if (next) restoreTaskFocus({ key: next.dataset.key, kind });
+    };
     if (rows.length && !prefersReducedMotion()) {
       // 200ms에 접히며 들어감 → 다시 그림
       rows.forEach((row) => { row.style.maxHeight = row.offsetHeight + 'px'; });
