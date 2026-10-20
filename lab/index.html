@@ -2727,7 +2727,8 @@ function onMemoDragMove(e) {
   memoDragCtx.targetIdx = insertIdx;
 }
 
-async function onMemoDragEnd() {
+async function onMemoDragEnd(e) {
+  const cancelled = !!(e && e.type === 'pointercancel'); // 가로채인 터치는 놓기가 아니다 → 저장 안 함(R7)
   endTouchDrag();
   document.removeEventListener('pointermove', onMemoDragMove);
   document.removeEventListener('pointerup', onMemoDragEnd);
@@ -2739,6 +2740,7 @@ async function onMemoDragEnd() {
   div?.classList.remove('dragging');
   memoDragCtx.div = null; // 드래그 끝 — 미뤄 둔 다시 그리기를 막지 않게
 
+  if (cancelled) { drawMemos(); return; }
   if (targetIdx < 0) return;
 
   const newMemos = memosAfterMove(state.memos, m, targetCol, targetIdx, getMemoCols());
@@ -4091,8 +4093,9 @@ function sectionEndLine(section, taskUnder) {
   return +first;
 }
 
-function onDragEnd() {
+function onDragEnd(e) {
   if (!dragCtx.active) return;
+  const cancelled = !!(e && e.type === 'pointercancel'); // 전화·알림·제스처가 터치를 가로챔 → 정리만, 저장 안 함(R7)
   endTouchDrag();
   suppressTaskClickUntil = Math.max(suppressTaskClickUntil, Date.now() + 400);
   document.removeEventListener('pointermove', onDragMove);
@@ -4108,7 +4111,7 @@ function onDragEnd() {
   dragCtx.intoEl = null;
   dragCtx.active = false;
 
-  if (!target) return;
+  if (cancelled || !target) return;
   if (target.beforeLine === srcLine) return;
   if (target.intoLine === srcLine) return;
 
