@@ -2986,7 +2986,7 @@ function renderApp() {
         fold.className = 'done-fold';
         fold.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         const prev = lastDoneCount[key];
-        fold.innerHTML = `완료 <span class="done-n">${done.length}</span>개 <span aria-hidden="true">${expanded ? '⌄' : '›'}</span>`;
+        fold.innerHTML = `<span>완료 <span class="done-n">${done.length}</span>개</span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>`;
         if (prev != null && done.length > prev) fold.querySelector('.done-n').classList.add('bump');
         fold.addEventListener('click', () => { setDoneOpen(key, !expanded); renderApp(); });
         card.appendChild(fold);
