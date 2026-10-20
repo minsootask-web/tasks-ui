@@ -235,6 +235,9 @@
     word-break: break-word; padding: 1px 0;
   }
   .task-text:focus { outline: none; }
+  .task-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .task input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .task-link { color: var(--accent-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; word-break: break-all; }
   .task.done .task-link { color: inherit; }
   .task.done .task-text { color: var(--muted); text-decoration: line-through; }
@@ -361,7 +364,7 @@
   }
   /* 포커스는 메인 컬러 대신 중립적인 진한 보더로 은은하게 표시 */
   .field input:focus, .field textarea:focus {
-    outline: none; border-color: var(--border-strong);
+    outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent;
     background: var(--surface);
   }
   .pri-picker { display: flex; gap: 8px; }
@@ -2748,6 +2751,17 @@ async function onDeleteFromInbox(item) {
 
 function bindTabEvents() {
   renderSync(); // 헤더가 새로 그려졌으니 저장 표시를 현재 상태로
+  // 탭 목록: ←→로 이동(roving tabindex, D3)
+  document.querySelector('.tabs')?.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const tabs = [...document.querySelectorAll('.tabs .tab')];
+    const i = tabs.indexOf(document.activeElement);
+    if (i === -1) return;
+    e.preventDefault();
+    const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    next.click();
+    document.getElementById(next.id)?.focus();
+  });
   const clearAll = () => {
     selectedInbox.clear(); updateInboxBar();
     selectedArchive.clear(); updateArchiveBar();
@@ -2765,7 +2779,8 @@ function renderShell(tab, { meta = '', sort = false } = {}) {
   const inboxCount = state.inboxItems.length;
   const tabsHtml = TABS.map(([id, label]) => {
     const badge = id === 'inbox' && inboxCount ? ` <span class="badge">${inboxCount}</span>` : '';
-    return `<button class="tab${id === tab ? ' active' : ''}" id="tab-${id}">${label}${badge}</button>`;
+    const on = id === tab;
+    return `<button class="tab${on ? ' active' : ''}" id="tab-${id}" role="tab" aria-selected="${on}" tabindex="${on ? 0 : -1}">${label}${badge}</button>`;
   }).join('');
   return `
     <header>
@@ -2775,7 +2790,7 @@ function renderShell(tab, { meta = '', sort = false } = {}) {
       </div>
       <div class="header-actions"><span class="sync-slot">${syncPillHTML()}</span>${headerActions({ sort })}</div>
     </header>
-    <div class="tabs">${tabsHtml}</div>`;
+    <div class="tabs" role="tablist" aria-label="화면">${tabsHtml}</div>`;
 }
 
 // 지금 보고 있는 탭을 다시 그린다(탭 배지 등 공용 영역까지 함께 갱신)
@@ -3010,6 +3025,11 @@ function restoreEntries(entries) {
 function renderApp() {
   if (!state.token) { renderSetup(); return; }
   const app = $('#app');
+  // 다시 그려도 키보드 포커스를 같은 줄에 남긴다(D2)
+  const ae = document.activeElement;
+  const focusRow = ae && ae.closest && ae.closest('#sections .task');
+  const focusKey = focusRow ? { key: focusRow.dataset.key, kind: ae.matches('input[type="checkbox"]') ? 'cb' : 'text' } : null;
+  const focusSection = ae && ae.closest && (ae.closest('#sections .done-fold') || focusRow) ? ae.closest('.section')?.classList[1] : null;
   const totalLine = state.sections.reduce((acc, s) => {
     return acc + s.items.filter((i) => i.type === 'task' && i.text.trim()).length;
   }, 0);
@@ -3086,6 +3106,20 @@ function renderApp() {
   });
   setComposerMode('active');
   maybeShowLongPressHint();
+  restoreTaskFocus(focusKey, focusSection);
+}
+
+function restoreTaskFocus(focusKey, sectionCls) {
+  if (focusKey) {
+    const row = [...document.querySelectorAll('#sections .task')].find((r) => r.dataset.key === focusKey.key);
+    if (row) {
+      const el = focusKey.kind === 'cb' ? row.querySelector('input[type="checkbox"]') : row.querySelector('.task-text');
+      el?.focus({ preventScroll: true });
+      return;
+    }
+  }
+  // 완료되어 접기 행 속으로 들어갔거나 접기 행을 눌렀으면 그 섹션의 접기 행으로
+  if (sectionCls) document.querySelector(`#sections .section.${sectionCls} .done-fold`)?.focus({ preventScroll: true });
 }
 
 // 터치 기기에서 Task 목록을 처음 볼 때 한 번만: 길게 눌러 옮기기 안내(이후 기기에 기억)
@@ -3222,6 +3256,14 @@ function renderTask(item, key, opts = {}) {
     span.appendChild(badge);
   }
   span.title = '눌러서 고치기';
+  // 키보드: Tab으로 글에 가서 Enter(또는 Space)로 편집 시트(D1)
+  span.tabIndex = 0;
+  span.setAttribute('role', 'button');
+  span.setAttribute('aria-label', `고치기: ${item.text}`);
+  span.addEventListener('keydown', (e) => {
+    if (e.target !== span) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditSheet(item); }
+  });
   // 터치: 행을 길게 눌러 옮기기(B2). 체크박스·펼침 화살표는 제외
   t.addEventListener('pointerdown', (e) => {
     if (!e.pointerType || e.pointerType === 'mouse') return;
