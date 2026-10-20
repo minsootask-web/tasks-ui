@@ -2556,8 +2556,14 @@ function renderMemoEl(m) {
 // 마우스는 이 유틸을 쓰지 않는다(PC는 기존 방식 유지).
 const LONG_PRESS_MS = 400;
 const LONG_PRESS_SLOP = 8;
+// 드래그 중에만 붙이는 비수동 touchmove 리스너(R22) — 평소 스크롤은 수동 리스너만이라 메인 스레드를 막지 않는다
 let blockTouchScroll = false;
-document.addEventListener('touchmove', (e) => { if (blockTouchScroll && e.cancelable) e.preventDefault(); }, { passive: false });
+const touchBlocker = (e) => { if (e.cancelable) e.preventDefault(); };
+function beginTouchBlock() {
+  if (blockTouchScroll) return;
+  blockTouchScroll = true;
+  document.addEventListener('touchmove', touchBlocker, { passive: false });
+}
 
 function longPress(e, el, { onTap, onStart }) {
   const startX = e.clientX, startY = e.clientY, id = e.pointerId;
@@ -2585,7 +2591,6 @@ function longPress(e, el, { onTap, onStart }) {
   const timer = setTimeout(() => {
     if (done) return;
     cleanup();
-    blockTouchScroll = true;
     try { navigator.vibrate && navigator.vibrate(10); } catch (err) {}
     onStart(last);
   }, LONG_PRESS_MS);
@@ -2593,7 +2598,11 @@ function longPress(e, el, { onTap, onStart }) {
   document.addEventListener('pointerup', onUp);
   document.addEventListener('pointercancel', onCancel);
 }
-function endTouchDrag() { blockTouchScroll = false; autoScroll.stop(); }
+function endTouchDrag() {
+  if (blockTouchScroll) document.removeEventListener('touchmove', touchBlocker, { passive: false });
+  blockTouchScroll = false;
+  autoScroll.stop();
+}
 
 // 드래그 중 화면 위·아래 끝 60px에 닿으면 자동 스크롤(메모·할 일 공용)
 const autoScroll = {
@@ -2651,6 +2660,7 @@ function onMemoPointerDown(e, m, div) {
 const memoDragCtx = {};
 
 function startMemoDrag(e, m, div) {
+  if (e.pointerType && e.pointerType !== 'mouse') beginTouchBlock();
   const divRect = div.getBoundingClientRect();
 
   const ghost = div.cloneNode(true);
@@ -3945,6 +3955,8 @@ function onDragStart(e, item, key, taskEl) {
   }
   e.preventDefault();
   e.stopPropagation();
+  // 스크롤 막기는 드래그가 실제로 시작된 뒤에만(R3 — 위에서 일찍 돌아가면 문서 전체 스크롤이 계속 막혔다)
+  if (e.pointerType && e.pointerType !== 'mouse') beginTouchBlock();
 
   const rect = taskEl.getBoundingClientRect();
   const ghost = taskEl.cloneNode(true);
