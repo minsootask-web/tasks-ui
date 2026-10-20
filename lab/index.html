@@ -932,34 +932,36 @@ const fmtDate = (d) => {
 const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 // URL 자동 링크(B14): http(s)만. 긴 주소는 "도메인/…"으로 줄여 보여 주고 전체 주소는 툴팁.
 // 파일 원문은 그대로(표시만). 이스케이프한 글 위에서 만들기 때문에 다른 HTML은 들어갈 수 없다.
+// 속성값용 이스케이프(따옴표까지) — esc는 따옴표를 바꾸지 않으므로 속성값에 쓰지 않는다
+const escAttr = (s) => esc(String(s)).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 function linkHTML(url) {
   const m = url.match(/^https?:\/\/([^/?#]+)([^]*)$/);
   const host = m ? m[1].replace(/^www\./, '') : url;
   const label = m && m[2] && m[2] !== '/' ? `${host}/…` : host;
-  return `<a class="task-link" href="${url}" target="_blank" rel="noopener noreferrer" title="${url}">${label}</a>`;
+  return `<a class="task-link" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" title="${escAttr(url)}">${esc(label)}</a>`;
 }
-// 이스케이프한 글을 URL과 나머지로 나눠, URL은 링크로·나머지는 plain()으로 처리
-function linkify(escaped, plain = (t) => t) {
+// 원문(이스케이프 전)에서 URL을 찾고, 조각마다 이스케이프한다(R14 — 이스케이프한 글 위에서 끝 ';'를 떼면
+// &amp; 같은 문자 참조가 반토막 났다). URL이 아닌 조각은 plain(이스케이프된 글)으로 한 번 더 가공
+function linkify(raw, plain = (t) => t) {
   const out = [];
   const re = /https?:\/\/[^\s<>"']+/g;
   let last = 0, m;
-  while ((m = re.exec(escaped))) {
-    let url = m[0], tail = '';
+  while ((m = re.exec(raw))) {
+    let url = m[0];
     // 문장 끝 구두점·괄호 닫기는 링크에서 뺀다(괄호가 짝이 맞으면 유지)
     while (/[.,;:!?)\]]$/.test(url)) {
       const ch = url.slice(-1);
       if (ch === ')' && (url.match(/\(/g) || []).length >= (url.match(/\)/g) || []).length) break;
-      tail = ch + tail;
       url = url.slice(0, -1);
     }
-    out.push(plain(escaped.slice(last, m.index)), linkHTML(url));
+    out.push(plain(esc(raw.slice(last, m.index))), linkHTML(url));
     last = m.index + url.length;
     re.lastIndex = last;
   }
-  out.push(plain(escaped.slice(last)));
+  out.push(plain(esc(raw.slice(last))));
   return out.join('');
 }
-const highlightMeta = (s) => linkify(esc(s), (t) => t.replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>'));
+const highlightMeta = (s) => linkify(s, (t) => t.replace(/\(([~^]?[\d\-/.][^)]*)\)/g, '<span class="meta-inline">($1)</span>'));
 
 // ============ 공용 토스트 (F1) ============
 // 규칙: 한 번에 하나만(새 것이 오면 이전 것은 그대로 확정되고 교체), 용도는 되돌리기·다시 시도·짧은 안내.
