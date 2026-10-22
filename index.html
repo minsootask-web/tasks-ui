@@ -639,8 +639,8 @@
     border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     opacity: 0.92; transition: none;
   }
-  /* 드롭 자리 — 사이: 항목 사이가 벌어지고 점선 빈 칸(깊이만큼 들여 시작, 끄는 행에 가려도 테두리가 보임).
-     하위: 벌어지지 않고 대상 행 강조 + "하위로 넣기" 표시 */
+  /* 드롭 자리 — 놓일 곳에 점선 빈 칸(깊이만큼 들여 시작, 끄는 행에 가려도 테두리가 보임).
+     사이: 그 두 행 사이가 벌어짐. 하위: 대상 행의 하위 목록 끝에 한 단계 들여 열리고, 대상 행은 옅게 강조 + "하위로 넣기" 표시 */
   .drop-gap {
     height: 0; overflow: hidden; display: flex; align-items: center;
     transition: height 160ms var(--ease);
@@ -653,9 +653,7 @@
     background: color-mix(in srgb, var(--accent) 5%, var(--surface));
   }
   .task.drop-into {
-    background: color-mix(in srgb, var(--accent) 16%, var(--surface));
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
     border-radius: 8px;
   }
   .task.drop-into::after {
@@ -4505,7 +4503,7 @@ function onDragStart(e, item, key, taskEl) {
   document.addEventListener('pointercancel', onDragEnd);
 }
 
-// ---- 드롭 자리: 사이 = 항목 사이가 벌어지는 빈 자리(gapAt), 하위 = 행 강조(drop-into) ----
+// ---- 드롭 자리: 놓일 곳에 벌어지는 빈 칸(gapAt). 하위로 넣기는 대상 행 강조(drop-into) + 하위 목록 끝의 빈 칸 ----
 // 자리가 바뀌면 이전 빈 자리는 닫히고(160ms) 새 자리가 열린다. 같은 자리면 그대로 둔다(깜빡임 방지)
 const GAP_MS = 160;
 const isGap = (n) => !!n && n.nodeType === 1 && n.classList.contains('drop-gap');
@@ -4536,6 +4534,17 @@ function closeGap() {
   g.classList.add('closing');
   g.style.height = '0px';
   setTimeout(() => g.remove(), GAP_MS + 40);
+}
+// 하위로 넣기: 대상 행을 강조하고, 실제로 들어갈 자리(보이는 하위 행들 뒤)에 한 단계 들여 빈 칸을 연다.
+// 대상 행은 움직이지 않으므로 포인터 아래가 바뀌지 않는다. 접힌 부모면 바로 아래(숨은 하위 뒤로 들어감)
+function markInto(card, row) {
+  if (dragCtx.intoEl && dragCtx.intoEl !== row) dragCtx.intoEl.classList.remove('drop-into');
+  row.classList.add('drop-into');
+  dragCtx.intoEl = row;
+  const ind = +row.dataset.indent || 0;
+  let ref = row.nextElementSibling;
+  while (ref && (isGap(ref) || (ref.classList.contains('task') && (+ref.dataset.indent || 0) > ind))) ref = ref.nextElementSibling;
+  gapAt(card, ref, ind + 1);
 }
 // 위 행이 하위 목록의 마지막이라 깊이가 애매한 자리: 가로 위치로 깊이를 고른다(빈 자리 위에서도 계속 고를 수 있게 기억)
 function pickDepth(e, card, min, max) {
@@ -4615,10 +4624,7 @@ function onDragMove(e) {
     const intoByX = (e.clientX - dragCtx.startX) >= 24;
 
     if (intoByX) {
-      closeGap();
-      if (dragCtx.intoEl && dragCtx.intoEl !== taskUnder) dragCtx.intoEl.classList.remove('drop-into');
-      taskUnder.classList.add('drop-into');
-      dragCtx.intoEl = taskUnder;
+      markInto(card, taskUnder);
       dragCtx.target = { sectionKey, intoLine: +taskUnder.dataset.line };
     } else if (y < zoneTop) {
       clearInto();
@@ -4668,10 +4674,7 @@ function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
   let above = null, below = null, done = false;
   if (taskUnder && card.contains(taskUnder)) {
     if ((e.clientX - dragCtx.startX) >= 24) { // 하위로 넣기(B7) — 그 행의 우선순위로
-      closeGap();
-      if (dragCtx.intoEl && dragCtx.intoEl !== taskUnder) dragCtx.intoEl.classList.remove('drop-into');
-      taskUnder.classList.add('drop-into');
-      dragCtx.intoEl = taskUnder;
+      markInto(card, taskUnder);
       dragCtx.target = { sectionKey: taskUnder.dataset.pri, intoLine: +taskUnder.dataset.line };
       setFruit(taskUnder.dataset.pri);
       return;
