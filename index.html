@@ -4504,6 +4504,14 @@ function onDragStart(e, item, key, taskEl) {
 }
 
 // ---- 드롭 자리: 놓일 곳에 벌어지는 빈 칸(gapAt). 하위로 넣기는 대상 행 강조(drop-into) + 하위 목록 끝의 빈 칸 ----
+// 행 위 영역: 위 30% = 그 앞(사이), 가운데 40% = 하위로 넣기, 아래 30% = 그 뒤(사이). 오른쪽으로 24px 이상 끌어도 하위로(B7)
+const INTO_ZONE = [0.3, 0.7];
+const dropZone = (e, row) => {
+  const r = row.getBoundingClientRect();
+  const f = (e.clientY - r.top) / (r.height || 1);
+  if ((e.clientX - dragCtx.startX) >= 24 || (f >= INTO_ZONE[0] && f <= INTO_ZONE[1])) return 'into';
+  return f < INTO_ZONE[0] ? 'before' : 'after';
+};
 // 자리가 바뀌면 이전 빈 자리는 닫히고(160ms) 새 자리가 열린다. 같은 자리면 그대로 둔다(깜빡임 방지)
 const GAP_MS = 160;
 const isGap = (n) => !!n && n.nodeType === 1 && n.classList.contains('drop-gap');
@@ -4617,16 +4625,11 @@ function onDragMove(e) {
     closeGap();
     dragCtx.target = null;
   } else if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
-    const r = taskUnder.getBoundingClientRect();
-    const y = e.clientY - r.top;
-    // 하위로 넣기는 오른쪽으로 24px 이상 끌었을 때만(B7). 그 외에는 행의 위·아래 절반으로 순서만 바꾼다
-    const zoneTop = r.height * 0.5;
-    const intoByX = (e.clientX - dragCtx.startX) >= 24;
-
-    if (intoByX) {
+    const zone = dropZone(e, taskUnder);
+    if (zone === 'into') {
       markInto(card, taskUnder);
       dragCtx.target = { sectionKey, intoLine: +taskUnder.dataset.line };
-    } else if (y < zoneTop) {
+    } else if (zone === 'before') {
       clearInto();
       gapAt(card, taskUnder);
       dragCtx.target = { sectionKey, beforeLine: +taskUnder.dataset.line };
@@ -4673,7 +4676,8 @@ function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
   const setFruit = (key) => { const f = dragCtx.ghost && dragCtx.ghost.querySelector('.pri-fruit'); if (f) f.textContent = PRI[key].icon; };
   let above = null, below = null, done = false;
   if (taskUnder && card.contains(taskUnder)) {
-    if ((e.clientX - dragCtx.startX) >= 24) { // 하위로 넣기(B7) — 그 행의 우선순위로
+    const zone = dropZone(e, taskUnder);
+    if (zone === 'into') { // 하위로 넣기 — 그 행의 우선순위로
       markInto(card, taskUnder);
       dragCtx.target = { sectionKey: taskUnder.dataset.pri, intoLine: +taskUnder.dataset.line };
       setFruit(taskUnder.dataset.pri);
@@ -4684,8 +4688,7 @@ function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
     done = inDone(taskUnder);
     const list = rows.filter((r) => inDone(r) === done);
     const i = list.indexOf(taskUnder);
-    const r = taskUnder.getBoundingClientRect();
-    if (e.clientY - r.top < r.height * 0.5) { above = list[i - 1] || null; below = taskUnder; }
+    if (zone === 'before') { above = list[i - 1] || null; below = taskUnder; }
     else { above = taskUnder; below = list[i + 1] || null; }
   } else {
     clearInto();
