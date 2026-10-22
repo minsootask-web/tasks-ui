@@ -639,12 +639,14 @@
     border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     opacity: 0.92; transition: none;
   }
-  /* 드롭 자리 — 놓일 곳에 점선 빈 칸(깊이만큼 들여 시작, 끄는 행에 가려도 테두리가 보임).
-     사이: 그 두 행 사이가 벌어짐. 하위: 대상 행의 하위 목록 끝에 한 단계 들여 열리고, 대상 행은 옅게 강조 + "하위로 넣기" 표시 */
+  /* 드롭 자리 — 같은 점선 박스로 놓일 곳을 보인다.
+     사이: 두 행 사이가 벌어지며 점선 빈 칸(깊이만큼 들여 시작, 끄는 행에 가려도 테두리가 보임).
+     하위: 벌어지지 않고 대상 행 자체에 점선 박스 + "하위로 넣기" 표시 */
   .drop-gap {
     height: 0; overflow: hidden; display: flex; align-items: center;
     transition: height 160ms var(--ease);
   }
+  .drop-gap.spacer .drop-slot { visibility: hidden; } /* 하위로 넣기 중 대상 행 바로 위에 남겨 둔 자리 */
   .drop-slot {
     flex: 1; align-self: stretch; margin: 4px 8px; border-radius: 8px;
     border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -653,7 +655,9 @@
     background: color-mix(in srgb, var(--accent) 5%, var(--surface));
   }
   .task.drop-into {
-    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
     border-radius: 8px;
   }
   .task.drop-into::after {
@@ -4503,7 +4507,7 @@ function onDragStart(e, item, key, taskEl) {
   document.addEventListener('pointercancel', onDragEnd);
 }
 
-// ---- 드롭 자리: 놓일 곳에 벌어지는 빈 칸(gapAt). 하위로 넣기는 대상 행 강조(drop-into) + 하위 목록 끝의 빈 칸 ----
+// ---- 드롭 자리: 사이 = 벌어지는 점선 빈 칸(gapAt), 하위로 넣기 = 대상 행 자체에 점선 박스(drop-into) ----
 // 행 위 영역: 위 30% = 그 앞(사이), 가운데 40% = 하위로 넣기, 아래 30% = 그 뒤(사이). 오른쪽으로 24px 이상 끌어도 하위로(B7)
 const INTO_ZONE = [0.3, 0.7];
 const dropZone = (e, row) => {
@@ -4530,6 +4534,7 @@ function gapAt(card, ref, indent = null) {
     g.style.height = dragCtx.gapH + 'px';
     dragCtx.indicator = g;
   }
+  g.classList.remove('spacer');
   g.firstChild.style.marginLeft = indent == null ? '' : (8 + indent * 24) + 'px';
   return g;
 }
@@ -4543,16 +4548,15 @@ function closeGap() {
   g.style.height = '0px';
   setTimeout(() => g.remove(), GAP_MS + 40);
 }
-// 하위로 넣기: 대상 행을 강조하고, 실제로 들어갈 자리(보이는 하위 행들 뒤)에 한 단계 들여 빈 칸을 연다.
-// 대상 행은 움직이지 않으므로 포인터 아래가 바뀌지 않는다. 접힌 부모면 바로 아래(숨은 하위 뒤로 들어감)
+// 하위로 넣기: 대상 행 자체에 점선 박스("그 항목 안으로"). 벌어진 빈 칸은 닫되, 대상 행 바로 위의 빈 칸은
+// 박스만 감추고 자리는 둔다 — 닫으면 대상 행이 올라가 포인터가 아래 행으로 넘어가 버린다(위에서 끌어 내려올 때)
 function markInto(card, row) {
+  const g = dragCtx.indicator;
+  if (g && g.isConnected && g.parentNode === card && afterEl(g) === row) { g.classList.add('spacer'); dragCtx.depth = null; }
+  else closeGap();
   if (dragCtx.intoEl && dragCtx.intoEl !== row) dragCtx.intoEl.classList.remove('drop-into');
   row.classList.add('drop-into');
   dragCtx.intoEl = row;
-  const ind = +row.dataset.indent || 0;
-  let ref = row.nextElementSibling;
-  while (ref && (isGap(ref) || (ref.classList.contains('task') && (+ref.dataset.indent || 0) > ind))) ref = ref.nextElementSibling;
-  gapAt(card, ref, ind + 1);
 }
 // 위 행이 하위 목록의 마지막이라 깊이가 애매한 자리: 가로 위치로 깊이를 고른다(빈 자리 위에서도 계속 고를 수 있게 기억)
 function pickDepth(e, card, min, max) {
