@@ -639,19 +639,29 @@
     border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
     opacity: 0.92; transition: none;
   }
-  .drop-indicator {
-    height: 2px; background: var(--accent);
-    margin: 0 8px; border-radius: 1px;
-    pointer-events: none;
+  /* 드롭 자리 — 사이: 항목 사이가 벌어지고 점선 빈 칸(깊이만큼 들여 시작, 끄는 행에 가려도 테두리가 보임).
+     하위: 벌어지지 않고 대상 행 강조 + "하위로 넣기" 표시 */
+  .drop-gap {
+    height: 0; overflow: hidden; display: flex; align-items: center;
+    transition: height 160ms var(--ease);
+  }
+  .drop-slot {
+    flex: 1; align-self: stretch; margin: 4px 8px; border-radius: 8px;
+    border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
   .section.drop-active .card {
     background: color-mix(in srgb, var(--accent) 5%, var(--surface));
   }
   .task.drop-into {
-    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-    outline: 2px dashed var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+    outline: 2px solid var(--accent);
     outline-offset: -2px;
     border-radius: 8px;
+  }
+  .task.drop-into::after {
+    content: '↳ 하위로 넣기'; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    padding: 2px 8px; border-radius: 10px; background: var(--accent); color: var(--accent-fg);
+    font-size: 12px; font-weight: 600; line-height: 16px; pointer-events: none; z-index: 1;
   }
 
   /* Archive */
@@ -4469,9 +4479,6 @@ function onDragStart(e, item, key, taskEl) {
   ghost.style.width = rect.width + 'px';
   document.body.appendChild(ghost);
 
-  const indicator = document.createElement('div');
-  indicator.className = 'drop-indicator';
-
   const blockRange = extractBlock(state.content.split('\n'), item.lineIndex);
 
   dragCtx.active = true;
@@ -4482,7 +4489,9 @@ function onDragStart(e, item, key, taskEl) {
   dragCtx.srcKey = key;
   dragCtx.srcEl = taskEl;
   dragCtx.ghost = ghost;
-  dragCtx.indicator = indicator;
+  dragCtx.indicator = null; // 지금 열린 빈 자리(gapAt)
+  dragCtx.gapH = Math.min(52, Math.max(36, Math.round(rect.height))); // 벌어지는 높이 = 옮기는 행 높이(36~52px)
+  dragCtx.depth = null;
   dragCtx.offsetX = e.clientX - rect.left;
   dragCtx.lift = e.pointerType && e.pointerType !== 'mouse' ? 28 : 0; // 터치는 손가락에 가리지 않게 28px 위로(다듬기)
   dragCtx.startX = e.clientX;
@@ -4496,10 +4505,48 @@ function onDragStart(e, item, key, taskEl) {
   document.addEventListener('pointercancel', onDragEnd);
 }
 
+// ---- 드롭 자리: 사이 = 항목 사이가 벌어지는 빈 자리(gapAt), 하위 = 행 강조(drop-into) ----
+// 자리가 바뀌면 이전 빈 자리는 닫히고(160ms) 새 자리가 열린다. 같은 자리면 그대로 둔다(깜빡임 방지)
+const GAP_MS = 160;
+const isGap = (n) => !!n && n.nodeType === 1 && n.classList.contains('drop-gap');
+function afterEl(el) { let n = el.nextSibling; while (isGap(n)) n = n.nextSibling; return n; }
+function gapAt(card, ref, indent = null) {
+  dragCtx.depth = null; // 깊이가 애매한 자리면 부른 쪽이 다시 기록
+  let g = dragCtx.indicator;
+  if (!(g && g.isConnected && g.parentNode === card && afterEl(g) === (ref || null))) {
+    closeGap();
+    g = document.createElement('div');
+    g.className = 'drop-gap';
+    g.setAttribute('aria-hidden', 'true');
+    g.innerHTML = '<div class="drop-slot"></div>';
+    card.insertBefore(g, ref || null);
+    void g.offsetHeight; // 0에서 시작해 벌어지게
+    g.style.height = dragCtx.gapH + 'px';
+    dragCtx.indicator = g;
+  }
+  g.firstChild.style.marginLeft = indent == null ? '' : (8 + indent * 24) + 'px';
+  return g;
+}
+function closeGap() {
+  const g = dragCtx.indicator;
+  dragCtx.indicator = null;
+  dragCtx.depth = null;
+  if (!g || !g.isConnected) return;
+  if (prefersReducedMotion()) { g.remove(); return; }
+  g.classList.add('closing');
+  g.style.height = '0px';
+  setTimeout(() => g.remove(), GAP_MS + 40);
+}
+// 위 행이 하위 목록의 마지막이라 깊이가 애매한 자리: 가로 위치로 깊이를 고른다(빈 자리 위에서도 계속 고를 수 있게 기억)
+function pickDepth(e, card, min, max) {
+  const lvl = Math.round((e.clientX - card.getBoundingClientRect().left - 12) / 24);
+  return Math.max(min, Math.min(max, lvl));
+}
+
 function onDragMove(e) {
   if (!dragCtx.active) return;
   autoScroll.update(e.clientY);
-  const { ghost, indicator, offsetX, offsetY } = dragCtx;
+  const { ghost, offsetX, offsetY } = dragCtx;
   // 화면 밖으로 삐져나가지 않게 좌우를 화면 안으로, 하위로 넣는 중이면 24px 들여 보이기(다듬기)
   const w = ghost.offsetWidth || 0;
   const indent = dragCtx.intoEl ? 24 : 0;
@@ -4511,13 +4558,22 @@ function onDragMove(e) {
   const el = document.elementFromPoint(e.clientX, e.clientY);
   ghost.style.display = '';
   if (!el) return;
+  // 벌어진 빈 자리 위 = 그 자리 유지(행이 밀려 포인터 아래가 바뀌어도 자리가 튀지 않게). 깊이가 애매한 자리면 가로로 깊이만 고름
+  if (el.closest('.drop-gap')) {
+    const d = dragCtx.depth;
+    if (d && dragCtx.target && dragCtx.indicator) {
+      dragCtx.target.indent = pickDepth(e, d.card, d.min, d.max);
+      dragCtx.indicator.firstChild.style.marginLeft = (8 + dragCtx.target.indent * 24) + 'px';
+    }
+    return;
+  }
 
   const section = el.closest('.section');
   if (dragCtx.lastSection && dragCtx.lastSection !== section) {
     dragCtx.lastSection.classList.remove('drop-active');
   }
   if (!section) {
-    indicator.remove();
+    closeGap();
     dragCtx.target = null;
     dragCtx.lastSection = null;
     return;
@@ -4539,12 +4595,17 @@ function onDragMove(e) {
   const clearInto = () => {
     if (dragCtx.intoEl) { dragCtx.intoEl.classList.remove('drop-into'); dragCtx.intoEl = null; }
   };
+  // 행이 아닌 카드 빈 곳(닫히는 빈 자리 자리 등)인데 이 카드에 열린 자리가 있으면 그대로 둔다
+  if (!taskUnder && dragCtx.indicator && dragCtx.indicator.parentNode === card) {
+    const lastRow = [...card.querySelectorAll('.task')].pop();
+    if (lastRow && e.clientY < lastRow.getBoundingClientRect().bottom) return;
+  }
   if (section.classList.contains('one-list')) { dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto); return; }
 
   if (taskUnder && card.contains(taskUnder) && isOwnBlock(taskUnder)) {
     // 자기 블록 위 = 제자리(B-3): 놓으면 아무 일도 없음
     clearInto();
-    indicator.remove();
+    closeGap();
     dragCtx.target = null;
   } else if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
     const r = taskUnder.getBoundingClientRect();
@@ -4554,19 +4615,17 @@ function onDragMove(e) {
     const intoByX = (e.clientX - dragCtx.startX) >= 24;
 
     if (intoByX) {
-      indicator.remove();
+      closeGap();
       if (dragCtx.intoEl && dragCtx.intoEl !== taskUnder) dragCtx.intoEl.classList.remove('drop-into');
       taskUnder.classList.add('drop-into');
       dragCtx.intoEl = taskUnder;
       dragCtx.target = { sectionKey, intoLine: +taskUnder.dataset.line };
     } else if (y < zoneTop) {
       clearInto();
-      indicator.style.marginLeft = '';
-      card.insertBefore(indicator, taskUnder);
+      gapAt(card, taskUnder);
       dragCtx.target = { sectionKey, beforeLine: +taskUnder.dataset.line };
     } else {
       clearInto();
-      card.insertBefore(indicator, taskUnder.nextSibling);
       let next = taskUnder.nextElementSibling;
       // "완료 n개" 접기 행에서 멈춘다(R10 — 펼친 완료 행을 기준으로 잡으면 파일상 미완료 행들 사이에 들어갔다)
       while (next && !next.classList.contains('done-fold') && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
@@ -4578,21 +4637,19 @@ function onDragMove(e) {
         // it could attach to any ancestor between the next line's level and taskUnder's own.
         // Let the horizontal cursor position pick the depth — drag left to pop out toward
         // nextIndent, keep it under the row to stay as the last child (default).
-        const cardLeft = card.getBoundingClientRect().left;
-        const lvl = Math.round((e.clientX - cardLeft - 12) / 24);
-        const chosenIndent = Math.max(nextIndent, Math.min(underIndent, lvl));
-        indicator.style.marginLeft = (8 + chosenIndent * 24) + 'px';
+        const chosenIndent = pickDepth(e, card, nextIndent, underIndent);
+        gapAt(card, afterEl(taskUnder), chosenIndent);
+        dragCtx.depth = { card, min: nextIndent, max: underIndent };
         dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : sectionEndLine(section, taskUnder), indent: chosenIndent };
       } else {
-        indicator.style.marginLeft = '';
+        gapAt(card, afterEl(taskUnder));
         dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : sectionEndLine(section, taskUnder) };
       }
     }
   } else {
     clearInto();
-    indicator.style.marginLeft = '';
     const fold = card.querySelector('.done-fold');
-    if (fold) card.insertBefore(indicator, fold); else card.appendChild(indicator);
+    gapAt(card, fold || null);
     dragCtx.target = { sectionKey, beforeLine: sectionEndLine(section, null) };
   }
 }
@@ -4600,9 +4657,8 @@ function onDragMove(e) {
 // 한 목록 보기의 드래그(3차 F4): 다른 우선순위 사이로도 끌 수 있고, 놓인 자리 바로 위 상위 행의 우선순위를 따른다
 // (맨 위면 아래 행). 나눠 보기의 "섹션 사이로 옮기면 우선순위 변경"과 같은 규칙. 끄는 동안 고스트의 과일이 미리 바뀐다
 function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
-  const { indicator } = dragCtx;
   if (taskUnder && card.contains(taskUnder) && isOwnBlock(taskUnder)) {
-    clearInto(); indicator.remove(); dragCtx.target = null; // 자기 블록 위 = 제자리(B-3)
+    clearInto(); closeGap(); dragCtx.target = null; // 자기 블록 위 = 제자리(B-3)
     return;
   }
   const fold = card.querySelector('.done-fold');
@@ -4612,7 +4668,7 @@ function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
   let above = null, below = null, done = false;
   if (taskUnder && card.contains(taskUnder)) {
     if ((e.clientX - dragCtx.startX) >= 24) { // 하위로 넣기(B7) — 그 행의 우선순위로
-      indicator.remove();
+      closeGap();
       if (dragCtx.intoEl && dragCtx.intoEl !== taskUnder) dragCtx.intoEl.classList.remove('drop-into');
       taskUnder.classList.add('drop-into');
       dragCtx.intoEl = taskUnder;
@@ -4633,12 +4689,10 @@ function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
     const list = rows.filter((r) => !inDone(r));
     above = list[list.length - 1] || null;
   }
-  if (!above && !below) { indicator.remove(); dragCtx.target = null; return; }
+  if (!above && !below) { closeGap(); dragCtx.target = null; return; }
   const key = (above || below).dataset.pri;
   const sameSec = !!below && below.dataset.pri === key;
-  if (below) card.insertBefore(indicator, below);
-  else if (!done && fold) card.insertBefore(indicator, fold);
-  else card.appendChild(indicator);
+  const ref = below || (!done && fold) || null;
   // 아래 행이 같은 우선순위면 그 앞, 아니면 그 우선순위의 끝(미완료 마지막 뒤. 펼친 완료 영역이면 진짜 끝)
   const firstDone = JSON.parse(section.dataset.firstDone || '{}');
   const beforeLine = sameSec ? +below.dataset.line : (done ? null : (firstDone[key] ?? null));
@@ -4646,13 +4700,12 @@ function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
   const nextIndent = sameSec ? (+below.dataset.indent || 0) : 0;
   if (above && nextIndent < aboveIndent) {
     // 위 행이 하위 목록의 마지막이면 깊이가 애매 — 나눠 보기와 같이 가로 위치로 고른다
-    const cardLeft = card.getBoundingClientRect().left;
-    const lvl = Math.round((e.clientX - cardLeft - 12) / 24);
-    const chosenIndent = Math.max(nextIndent, Math.min(aboveIndent, lvl));
-    indicator.style.marginLeft = (8 + chosenIndent * 24) + 'px';
+    const chosenIndent = pickDepth(e, card, nextIndent, aboveIndent);
+    gapAt(card, ref, chosenIndent);
+    dragCtx.depth = { card, min: nextIndent, max: aboveIndent };
     dragCtx.target = { sectionKey: key, beforeLine, indent: chosenIndent };
   } else {
-    indicator.style.marginLeft = '';
+    gapAt(card, ref);
     dragCtx.target = sameSec ? { sectionKey: key, beforeLine } : { sectionKey: key, beforeLine, indent: 0 };
   }
   setFruit(key);
@@ -4676,9 +4729,11 @@ function onDragEnd(e) {
   document.removeEventListener('pointerup', onDragEnd);
   document.removeEventListener('pointercancel', onDragEnd);
 
-  const { srcLine, srcItem, srcEl, ghost, indicator, target, lastSection, intoEl } = dragCtx;
+  const { srcLine, srcItem, srcEl, ghost, target, lastSection, intoEl } = dragCtx;
   ghost?.remove();
-  indicator?.remove();
+  document.querySelectorAll('.drop-gap').forEach((g) => g.remove()); // 놓으면 바로 다시 그리므로 닫는 모션 없이
+  dragCtx.indicator = null;
+  dragCtx.depth = null;
   srcEl?.classList.remove('dragging');
   lastSection?.classList.remove('drop-active');
   intoEl?.classList.remove('drop-into');
