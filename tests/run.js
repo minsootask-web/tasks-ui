@@ -5,10 +5,12 @@
 //   node tests/run.js index.html --allow-skip   # 일부 묶음만 옮긴 경우(PORTING 방법 ②): 없는 함수의 테스트는 건너뜀
 //
 // 관문(S19): 기본은 엄격 — 떼어 올 함수가 하나라도 없거나(이름·선언 방식이 바뀜) 건너뛴 테스트가 있으면 실패.
-// "전부 건너뜀이어도 통과"하지 않게. 상수(SECTION_KEYS·MEMO_MAX_COLS)도 하드코딩하지 않고 index.html에서 떼어 온다.
+// "전부 건너뜀이어도 통과"하지 않게. 상수(CATEGORIES·MEMO_MAX_COLS)도 하드코딩하지 않고 index.html에서 떼어 온다.
 //
 // index.html 안의 함수 정의를 "이름으로" 그대로 떼어 와 실행한다(복사본을 따로 두지 않음 → 코드가 바뀌면
 // 테스트도 바로 그 코드를 검사). DOM·네트워크를 쓰지 않는 줄 계산·연산 함수만 대상.
+//
+// 데이터 형식(카테고리 전환 뒤): active.md는 섹션 없이 한 목록. 상위 줄 끝의 태그(" #portal")가 카테고리, 태그 없음 = etc.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -81,13 +83,14 @@ function grab(name) {
 }
 
 const NAMES = [
-  'SECTION_KEYS', 'MEMO_MAX_COLS',
+  'CATEGORIES', 'CAT_ORDER', 'CAT', 'DEFAULT_CAT', 'normCat', 'TAG_RE', 'parseTag', 'tagSuffix', 'taskLine', 'setLineCat', 'lineCat',
+  'MEMO_MAX_COLS',
   'esc', 'escAttr', 'linkHTML', 'linkify', 'highlightMeta',
   'normLine', 'getLineIndent', 'assertItemLine', 'extractBlock', 'adjustBlockIndent', 'lineContext',
   'locateGone', 'inboxKey', 'INBOX_LOC', 'blockEndAt', 'lineSig', 'lineFp', 'locate', 'resolveLineIndex',
-  'parseSections', 'sectionHeaderIndex', 'ensureSectionHeader', 'sectionInsertAfter', 'insertIntoSection',
-  'toggleAt', 'appendToSection', 'editLine', 'deleteAt', 'moveLineToPosition', 'moveLineToSection',
-  'childInsertIndex', 'topLevelSlot', 'sectionTitleAt', 'restoreBlockInto',
+  'parseTasks', 'appendIndex', 'appendBlock',
+  'toggleAt', 'appendTask', 'editLine', 'deleteAt', 'moveLineToPosition',
+  'childInsertIndex', 'topLevelSlot', 'entryCat', 'restoreBlockInto',
   'lineOf', 'opToggle', 'opDeleteBlock', 'opDeleteBlocks', 'opMove', 'opAddChild',
   'LS_PREFIX', 'lsKey', 'genArchiveId', 'JOURNAL_KEY', 'JOURNAL_MAX_AGE', 'countActiveLine', 'countAllActive', 'countInbox',
   'JOURNAL_OPS', 'JOURNAL_DEST', 'destCounts', 'destArrived', 'removeStep', 'readJournal', 'writeJournal', 'liveJournal',
@@ -96,18 +99,17 @@ const NAMES = [
   'deferred', 'createStore', 'removedVerdict', 'countKeyLines', 'opInboxRemove', 'opArchiveRemove',
   'countExactLines', 'withApplied', 'opAppend', 'opAppendMany', 'removeByFps', 'opActiveRemoveRec', 'opInboxRemoveRec',
   'opInboxAppend', 'opInboxInsert', 'recFps', 'opRestore', 'opActiveReinsert',
-  'undoGone', 'anchorAt', 'anchorIndex', 'recordMove', 'opEdit', 'opEditBack', 'opEditMove', 'opUndoMove',
+  'undoGone', 'anchorAt', 'anchorIndex', 'recordMove', 'opEdit', 'opEditBack', 'opUndoMove',
   'parseInbox', 'inboxTarget', 'resolveInboxLine', 'removeInboxLines',
   'memoCol', 'memoOrder', 'memosAfterMove',
   'PASTE_MAX', 'splitPastedLines', 'BUNDLE_INDENT', 'parseBundle', 'serializeBundle', 'opAppendBundle',
-  'COMPOSER_PRI_ORDER', 'nextComposerPriority',
 ];
 const found = NAMES.map((n) => [n, grab(n)]).filter(([, src]) => src);
 const missing = NAMES.filter((n) => !found.some(([f]) => f === n));
 const sources = found.map(([, src]) => src).join('\n\n');
 const sandbox = {
   console: { log: console.log, warn() {}, error() {} },
-  state: { content: '', inboxContent: '' },
+  state: { content: '', items: [], inboxContent: '' },
   // createStore가 쓰는 화면·네트워크 자리(테스트마다 ghGet·ghPut을 바꿔 끼움)
   syncStatus: { errors: {}, retry: {}, start() {}, ok() {}, end() {}, fail() {} },
   renderSync() {}, handleUnauthorized() {},
@@ -144,70 +146,121 @@ function throwsGone(fn) {
   throw new Error('gone 예외를 기대했지만 통과함');
 }
 const md = (...lines) => lines.join('\n');
-const items = (content, title) => T.parseSections(content).find((s) => s.title === title).items;
-const sectionLines = (content, key) => {
+// 그 카테고리의 항목들(하위 포함, 파일 순서)
+const items = (content, cat) => T.parseTasks(content).filter((i) => i.cat === cat);
+// 그 카테고리 상위 할 일들의 블록 줄(하위 포함) — 옛 sectionLines의 자리
+const catLines = (content, cat) => {
   const s = content.split('\n');
-  const h = s.findIndex((l) => l === `## ${T.SECTION_KEYS[key]}`);
-  let e = s.length;
-  for (let i = h + 1; i < s.length; i++) if (s[i].startsWith('## ')) { e = i; break; }
-  return s.slice(h + 1, e).filter((l) => l.trim());
+  const out = [];
+  T.parseTasks(content).forEach((i) => {
+    if (i.indent !== 0 || i.cat !== cat) return;
+    const { start, end } = T.extractBlock(s, i.lineIndex);
+    for (let k = start; k <= end; k++) if (s[k].trim()) out.push(s[k]);
+  });
+  return out;
 };
 
 console.log(`tako 순수 함수 테스트 — ${path.relative(process.cwd(), target)}`);
 
+// ---------- 카테고리 태그 형식 ----------
+test('태그: 줄 끝 #카테고리만 떼고(대소문자 무시), 글 안의 #은 그대로, 모르는 태그·태그 없음 = etc', () => {
+  eq(T.parseTag('포탈 파비콘 #portal'), { text: '포탈 파비콘', cat: 'portal' });
+  eq(T.parseTag('포탈 파비콘 #Portal  '), { text: '포탈 파비콘', cat: 'portal' });
+  eq(T.parseTag('이슈 #123 확인'), { text: '이슈 #123 확인', cat: null });
+  eq(T.parseTag('링크 https://x.com/#home 보기'), { text: '링크 https://x.com/#home 보기', cat: null });
+  eq(T.parseTag('뭔가 #unknown'), { text: '뭔가 #unknown', cat: null });
+  eq(T.normCat('high'), 'etc');
+  eq(T.normCat('mail'), 'mail');
+  eq(T.taskLine('a', 'portal'), '- [ ] a #portal');
+  eq(T.taskLine('a', 'etc'), '- [ ] a');
+  eq(T.taskLine('a', 'portal', 1), '  - [ ] a'); // 하위 줄엔 태그 없음
+  eq(T.setLineCat('- [x] a #portal', 'mail'), '- [x] a #mail');
+  eq(T.setLineCat('- [ ] a #portal', null), '- [ ] a');
+  eq(T.setLineCat('- [ ] a', 'etc'), '- [ ] a');
+  eq(T.CAT_ORDER, ['ainote', 'paperon', 'portal', 'page', 'board', 'contact', 'drive', 'home', 'mail', 'survey', 'etc']);
+});
+
+test('해석: 상위는 자기 태그(없으면 etc), 하위는 부모의 카테고리, 옛 섹션 헤더(## 🔥 High)는 무시', () => {
+  const c = md('# Active', '', '> 설명', '', '## 🔥 High', '- [ ] 옛 항목', '  - [ ] 옛 하위', '- [ ] 포탈 #portal', '  - [ ] 하위 #mail', '    - 글머리', '- [x] 끝 #Mail', '');
+  const it = T.parseTasks(c);
+  eq(it.map((i) => [i.text, i.cat, i.indent]), [
+    ['옛 항목', 'etc', 0], ['옛 하위', 'etc', 1], ['포탈', 'portal', 0], ['하위 #mail', 'portal', 1], ['글머리', 'portal', 2], ['끝', 'mail', 0],
+  ]);
+  eq(it[5].checked, true);
+  eq(it[0].section, '🔥 High'); // 지문의 섹션 단서는 그대로 남긴다(옛 파일에서도 locate 가능)
+  eq(T.parseTasks(md('- [ ] a #portal', '')).map((i) => i.section), [null]);
+});
+
+test('추가 자리: 마지막 내용 줄 다음(끝 빈 줄 앞). 제목·설명만 있으면 빈 줄 하나 띄우고, "- " 자리표시자는 대체', () => {
+  const a = md('# Active', '', '> 설명', '');
+  eq(T.appendTask('portal', '첫 할 일', a), md('# Active', '', '> 설명', '', '- [ ] 첫 할 일 #portal', ''));
+  const b = md('- [ ] a', '- [ ] b #mail', '', '');
+  eq(T.appendTask('etc', 'c', b), md('- [ ] a', '- [ ] b #mail', '- [ ] c', '', ''));
+  eq(T.appendTask('home', 'c', md('- ', '')), md('- [ ] c #home', ''));
+  // 옛 헤더가 남아 있어도 끝에 붙는다(태그가 카테고리)
+  eq(T.appendTask('page', 'p', md('## 🟢 Low', '- [ ] x', '')), md('## 🟢 Low', '- [ ] x', '- [ ] p #page', ''));
+});
+
+test('글 고치기: 태그는 그대로(cat 생략), cat을 주면 그 태그로, 하위 줄에는 태그를 붙이지 않음', () => {
+  const c = md('- [ ] a #portal', '  - [ ] b', '');
+  eq(T.editLine(0, 'a2', c), md('- [ ] a2 #portal', '  - [ ] b', ''));
+  eq(T.editLine(0, 'a2', c, 'mail'), md('- [ ] a2 #mail', '  - [ ] b', ''));
+  eq(T.editLine(0, 'a2', c, 'etc'), md('- [ ] a2', '  - [ ] b', ''));
+  eq(T.editLine(1, 'b2', c, 'mail'), md('- [ ] a #portal', '  - [ ] b2', ''));
+});
+
 // ---------- QA 재현 시나리오 고정 ----------
-const BASE = md('# Active', '', '## 🔥 High', '- [ ] 보고서 1', '- [ ] 보고서 2', '- [ ] 보고서 3', '',
-  '## 🟡 Medium', '- [ ] 운동', '  - [ ] 스트레칭', '- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km', '', '## 🟢 Low', '- [ ] 사진', '');
+const BASE = md('# Active', '', '- [ ] 보고서 1 #ainote', '- [ ] 보고서 2 #ainote', '- [ ] 보고서 3 #ainote',
+  '- [ ] 운동 #portal', '  - [ ] 스트레칭', '- [ ] 기타 #portal', '- [ ] 운동 #portal', '  - [ ] 러닝 5km', '- [ ] 사진', '');
 
 test('R2: 같은 글 "운동" 둘 — 위쪽 줄이 밀려도 첫 번째 블록만 지움(러닝 5km 유지)', () => {
-  const first = items(BASE, '🟡 Medium').find((i) => i.text === '운동');
-  const shifted = BASE.replace('- [ ] 보고서 1\n- [ ] 보고서 2\n- [ ] 보고서 3\n', ''); // 봇 cmd_done
+  const first = items(BASE, 'portal').find((i) => i.text === '운동');
+  const shifted = BASE.replace('- [ ] 보고서 1 #ainote\n- [ ] 보고서 2 #ainote\n- [ ] 보고서 3 #ainote\n', ''); // 봇 cmd_done
   const out = T.opDeleteBlock(first)(shifted);
-  eq(sectionLines(out, 'medium'), ['- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km']);
+  eq(catLines(out, 'portal'), ['- [ ] 기타 #portal', '- [ ] 운동 #portal', '  - [ ] 러닝 5km']);
 });
 
 test('R2: 같은 글 개수가 바뀌고 맥락으로도 못 고르면 추측하지 않고 gone', () => {
-  const c = md('## 🟡 Medium', '- [ ] 같은글', '- [ ] 같은글', '');
-  const second = items(c, '🟡 Medium')[1];
-  const changed = md('## 🟡 Medium', '- [ ] 같은글', '- [ ] 끼어듦', '- [ ] 같은글', '- [ ] 같은글', '');
+  const c = md('- [ ] 같은글 #portal', '- [ ] 같은글 #portal', '');
+  const second = items(c, 'portal')[1];
+  const changed = md('- [ ] 같은글 #portal', '- [ ] 끼어듦 #portal', '- [ ] 같은글 #portal', '- [ ] 같은글 #portal', '');
   throwsGone(() => T.opDeleteBlock({ ...second, lineIndex: 99 })(changed));
 });
 
 test('S4: 같은 글 "운동" 둘 중 첫째가 다른 기기에서 먼저 지워짐 → 다시 적용해도 둘째(러닝 5km)를 지우지 않고 gone', () => {
-  const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [ ] 운동', '  - [ ] 스트레칭', '- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km', '', '## 🟢 Low', '');
-  const first = items(c, '🟡 Medium').find((i) => i.text === '운동');
-  const after = c.replace('- [ ] 운동\n  - [ ] 스트레칭\n', '');
+  const c = md('- [ ] h #ainote', '- [ ] 운동 #portal', '  - [ ] 스트레칭', '- [ ] 기타 #portal', '- [ ] 운동 #portal', '  - [ ] 러닝 5km', '');
+  const first = items(c, 'portal').find((i) => i.text === '운동');
+  const after = c.replace('- [ ] 운동 #portal\n  - [ ] 스트레칭\n', '');
   throwsGone(() => T.opDeleteBlock(first)(after));
   // 둘째를 지우는 것은(첫째가 먼저 사라졌어도) 앞뒤 줄·하위가 같아 그대로 찾음
-  const second = items(c, '🟡 Medium').filter((i) => i.text === '운동')[1];
-  eq(sectionLines(T.opDeleteBlock(second)(after), 'medium'), ['- [ ] 기타']);
+  const second = items(c, 'portal').filter((i) => i.text === '운동')[1];
+  eq(catLines(T.opDeleteBlock(second)(after), 'portal'), ['- [ ] 기타 #portal']);
 });
 
-test('locate: 같은 글이 하나뿐이면 다른 섹션으로 옮겨져 있어도 찾음 / 같은 글이 붙어 있고 개수가 바뀌면 gone', () => {
-  const c = md('## 🔥 High', '- [ ] a', '', '## 🟡 Medium', '- [ ] 혼자', '');
-  const it = items(c, '🟡 Medium')[0];
-  const moved = md('## 🔥 High', '- [ ] a', '- [x] 혼자', '', '## 🟡 Medium', '');
-  eq(T.locate(moved.split('\n'), it), 2);
-  const d = md('## 🟡 Medium', '- [ ] 우유', '- [ ] 우유', '');
-  const second = items(d, '🟡 Medium')[1];
-  throwsGone(() => T.locate(md('## 🟡 Medium', '- [ ] 우유', '- [ ] 우유', '- [ ] 우유', '').split('\n'), second));
+test('locate: 같은 글이 하나뿐이면 순서가 바뀌어 있어도 찾음 / 같은 글이 붙어 있고 개수가 바뀌면 gone', () => {
+  const c = md('- [ ] a #ainote', '', '- [ ] 혼자 #portal', '');
+  const it = items(c, 'portal')[0];
+  const moved = md('- [x] 혼자 #portal', '- [ ] a #ainote', '');
+  eq(T.locate(moved.split('\n'), it), 0);
+  const d = md('- [ ] 우유', '- [ ] 우유', '');
+  const second = items(d, 'etc')[1];
+  throwsGone(() => T.locate(md('- [ ] 우유', '- [ ] 우유', '- [ ] 우유', '').split('\n'), second));
 });
 
-test('Q2: 서로 다른 섹션의 같은 글 부모 — 줄이 밀려도 Low 쪽만 지움', () => {
-  const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [ ] 회의', '  - [ ] 첫째 하위', '', '## 🟢 Low', '- [ ] 회의', '  - [ ] 둘째 하위', '');
-  const low = items(c, '🟢 Low').find((i) => i.text === '회의');
-  const shifted = c.replace('- [ ] h\n', '- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n- [ ] h\n');
-  const out = T.opDeleteBlock(low)(shifted);
-  eq(sectionLines(out, 'medium'), ['- [ ] 회의', '  - [ ] 첫째 하위']);
-  eq(sectionLines(out, 'low'), []);
+test('Q2: 같은 글 부모 둘 — 줄이 밀려도 둘째 쪽만 지움', () => {
+  const c = md('- [ ] h #ainote', '- [ ] 회의', '  - [ ] 첫째 하위', '- [ ] 회의', '  - [ ] 둘째 하위', '');
+  const second = items(c, 'etc').filter((i) => i.text === '회의')[1];
+  const shifted = c.replace('- [ ] h #ainote\n', '- [ ] a #ainote\n- [ ] b #ainote\n- [ ] c #ainote\n- [ ] d #ainote\n- [ ] h #ainote\n');
+  const out = T.opDeleteBlock(second)(shifted);
+  eq(catLines(out, 'etc'), ['- [ ] 회의', '  - [ ] 첫째 하위']);
 });
 
 test('Q1: 완료 일괄 보관 — 같은 글 "운동" 둘을 서로 다른 줄로 배정, "기타"는 남김', () => {
-  const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [x] 운동', '- [ ] 기타', '- [x] 운동', '');
-  const targets = items(c, '🟡 Medium').filter((i) => i.checked);
-  const shifted = c.replace('- [ ] h\n', '- [ ] h\n- [ ] 새 줄\n');
+  const c = md('- [ ] h #ainote', '- [x] 운동 #portal', '- [ ] 기타 #portal', '- [x] 운동 #portal', '');
+  const targets = items(c, 'portal').filter((i) => i.checked);
+  const shifted = c.replace('- [ ] h #ainote\n', '- [ ] h #ainote\n- [ ] 새 줄 #ainote\n');
   const out = T.opDeleteBlocks(targets)(shifted);
-  eq(sectionLines(out, 'medium'), ['- [ ] 기타']);
+  eq(catLines(out, 'portal'), ['- [ ] 기타 #portal']);
 });
 
 test('R8: Inbox "우유" 둘 — 첫째를 뺀 뒤 둘째(줄 번호 밀림)를 빼도 "빵"은 남음', () => {
@@ -245,59 +298,85 @@ test('R14: 링크 — & 문자 참조가 온전, 태그 이스케이프, 끝 마
   if (!e.includes('<span class="meta-inline">(10/23)</span>') || !e.includes('>n.com</a>')) throw new Error(e);
 });
 
-test('S1: Low "운동"을 Medium으로 옮긴 뒤 되돌리기 — High "운동"+스트레칭은 그대로, 러닝 5km는 Low에만', () => {
-  const c = md('## 🔥 High', '- [ ] 운동', '  - [ ] 스트레칭', '', '## 🟡 Medium', '- [ ] 기타', '', '## 🟢 Low', '- [ ] 운동', '  - [ ] 러닝 5km', '- [ ] 사진', '');
-  const low = items(c, '🟢 Low').find((i) => i.text === '운동');
+test('S1: etc "운동"을 Portal 묶음 끝·앞으로 옮긴 뒤 되돌리기 — AiNote "운동"+스트레칭은 그대로, 러닝 5km는 따라감', () => {
+  const c = md('- [ ] 운동 #ainote', '  - [ ] 스트레칭', '- [ ] 기타 #portal', '- [ ] 운동', '  - [ ] 러닝 5km', '- [ ] 사진', '');
+  const low = items(c, 'etc').find((i) => i.text === '운동');
+  const gita = { lineIndex: 2, raw: '- [ ] 기타 #portal' };
   const rec = {};
-  const moved = T.opMove(low, { sectionKey: 'medium', beforeItem: null, intoItem: null }, rec)(c);
-  eq(sectionLines(moved, 'medium'), ['- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km']);
+  const moved = T.opMove(low, { cat: 'portal', afterItem: gita }, rec)(c);
+  eq(catLines(moved, 'portal'), ['- [ ] 기타 #portal', '- [ ] 운동 #portal', '  - [ ] 러닝 5km']);
+  eq(catLines(moved, 'ainote'), ['- [ ] 운동 #ainote', '  - [ ] 스트레칭']);
   eq(T.opUndoMove(rec)(moved), c);
-  // 옮긴 뒤 하위를 체크했어도 되돌리면 지금 모습 그대로 원래 자리로(옛 사본으로 덮지 않음)
+  // 옮긴 뒤 하위를 체크했어도 되돌리면 지금 모습 그대로 원래 자리·원래 카테고리로(옛 사본으로 덮지 않음)
   const checked = moved.replace('  - [ ] 러닝 5km', '  - [x] 러닝 5km');
-  eq(sectionLines(T.opUndoMove(rec)(checked), 'low'), ['- [ ] 운동', '  - [x] 러닝 5km', '- [ ] 사진']);
+  eq(catLines(T.opUndoMove(rec)(checked), 'etc'), ['- [ ] 운동', '  - [x] 러닝 5km', '- [ ] 사진']);
+  // 묶음 앞(기타 앞)으로
+  const rec2 = {};
+  const moved2 = T.opMove(low, { cat: 'portal', beforeItem: gita }, rec2)(c);
+  eq(moved2, md('- [ ] 운동 #ainote', '  - [ ] 스트레칭', '- [ ] 운동 #portal', '  - [ ] 러닝 5km', '- [ ] 기타 #portal', '- [ ] 사진', ''));
+  eq(T.opUndoMove(rec2)(moved2), c);
 });
 
-test('S1: Medium 두 "운동" 중 둘째를 High로 → 되돌리기는 그 블록만 원래 자리(기타 다음)로', () => {
-  const c = md('## 🔥 High', '- [ ] h', '', '## 🟡 Medium', '- [ ] 운동', '  - [ ] 스트레칭', '- [ ] 기타', '- [ ] 운동', '  - [ ] 러닝 5km', '', '## 🟢 Low', '');
-  const second = items(c, '🟡 Medium').filter((i) => i.text === '운동')[1];
+test('S1: Portal 두 "운동" 중 둘째를 AiNote로 → 되돌리기는 그 블록만 원래 자리(기타 다음)로', () => {
+  const c = md('- [ ] h #ainote', '- [ ] 운동 #portal', '  - [ ] 스트레칭', '- [ ] 기타 #portal', '- [ ] 운동 #portal', '  - [ ] 러닝 5km', '');
+  const second = items(c, 'portal').filter((i) => i.text === '운동')[1];
   const rec = {};
-  const moved = T.opMove(second, { sectionKey: 'high', beforeItem: null, intoItem: null }, rec)(c);
+  const moved = T.opMove(second, { cat: 'ainote', afterItem: { lineIndex: 0, raw: '- [ ] h #ainote' } }, rec)(c);
+  eq(catLines(moved, 'ainote'), ['- [ ] h #ainote', '- [ ] 운동 #ainote', '  - [ ] 러닝 5km']);
   eq(T.opUndoMove(rec)(moved), c);
 });
 
-test('S1: 우선순위+글 고치기 되돌리기 — 같은 글이 다른 섹션에 있어도 옮긴 줄만 원래 자리·원래 글로', () => {
-  const c = md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '- [ ] a', '- [ ] 기타', '- [ ] b', '', '## 🟢 Low', '');
-  const it = items(c, '🟡 Medium').find((i) => i.text === '기타');
+test('이동: 하위로 넣으면 태그를 떼고(부모를 따름), 상위로 빼내면 놓인 자리의 카테고리 태그를 붙임. 되돌리면 원래 태그', () => {
+  const c = md('- [ ] a #portal', '- [ ] b #mail', '  - [ ] b1', '');
+  const a = items(c, 'portal')[0];
   const rec = {};
-  const out = T.opEditMove(it, '운동', 'high', rec)(c);
-  eq(sectionLines(out, 'high'), ['- [ ] 운동', '- [ ] 운동']);
-  eq(T.opUndoMove(rec, { backText: '기타' })(out), c);
+  const nested = T.opMove(a, { cat: 'mail', intoItem: { lineIndex: 1, raw: '- [ ] b #mail' } }, rec)(c);
+  eq(nested, md('- [ ] b #mail', '  - [ ] b1', '  - [ ] a', ''));
+  eq(T.opUndoMove(rec)(nested), c);
+  const b1 = items(c, 'mail')[1];
+  const rec2 = {};
+  const out = T.opMove(b1, { cat: 'portal', beforeItem: { lineIndex: 0, raw: '- [ ] a #portal' }, indent: 0 }, rec2)(c);
+  eq(out, md('- [ ] b1 #portal', '- [ ] a #portal', '- [ ] b #mail', ''));
+  eq(T.opUndoMove(rec2)(out), c);
+  // 등록순 이동(카테고리 그대로): cat을 자기 것으로 주면 태그 유지
+  eq(T.opMove(a, { cat: 'portal', afterItem: { lineIndex: 1, raw: '- [ ] b #mail' } })(c), md('- [ ] b #mail', '  - [ ] b1', '- [ ] a #portal', ''));
 });
 
-test('S13: "기타"를 "운동"으로 고친 뒤 되돌리기 — High "운동"은 그대로, Medium 줄만 "기타"로', () => {
-  const c = md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '- [ ] 기타', '');
-  const it = items(c, '🟡 Medium')[0];
+test('S1: 카테고리+글 고치기 되돌리기 — 같은 글이 다른 카테고리에 있어도 고친 줄만 원래 글·원래 카테고리로', () => {
+  const c = md('- [ ] 운동 #ainote', '- [ ] a #portal', '- [ ] 기타 #portal', '- [ ] b #portal', '');
+  const it = items(c, 'portal').find((i) => i.text === '기타');
+  const rec = {};
+  const out = T.opEdit(it, '운동', rec, 'ainote')(c);
+  eq(catLines(out, 'ainote'), ['- [ ] 운동 #ainote', '- [ ] 운동 #ainote']);
+  eq(T.opEditBack(rec, '기타', 'portal')(out), c);
+});
+
+test('S13: "기타"를 "운동"으로 고친 뒤 되돌리기 — AiNote "운동"은 그대로, Portal 줄만 "기타"로(태그 유지)', () => {
+  const c = md('- [ ] 운동 #ainote', '- [ ] 기타 #portal', '');
+  const it = items(c, 'portal')[0];
   const rec = {};
   const e1 = T.opEdit(it, '운동', rec)(c);
+  eq(e1, md('- [ ] 운동 #ainote', '- [ ] 운동 #portal', ''));
   eq(T.opEditBack(rec, '기타')(e1), c);
   // 고친 줄이 그새 사라졌으면 다른 같은 글 줄을 고치지 않고 gone
-  throwsGone(() => T.opEditBack(rec, '기타')(md('## 🔥 High', '- [ ] 운동', '', '## 🟡 Medium', '')));
+  throwsGone(() => T.opEditBack(rec, '기타')(md('- [ ] 운동 #ainote', '')));
 });
 
-test('S12: 추가 되돌리기는 넣은 그 줄만 — 같은 섹션의 원래 "우유"(하위 포함)는 그대로', () => {
-  const c = md('## 🔥 High', '- [ ] 우유', '  - [ ] 저지방', '- [ ] 빵', '', '## 🟡 Medium', '');
+test('S12: 추가 되돌리기는 넣은 그 줄만 — 같은 카테고리의 원래 "우유"(하위 포함)는 그대로', () => {
+  const c = md('- [ ] 우유 #ainote', '  - [ ] 저지방', '- [ ] 빵 #ainote', '- [ ] m #portal', '');
   const rec = {};
-  const added = T.opAppend('high', '우유', rec)(c);
-  eq(sectionLines(added, 'high'), ['- [ ] 우유', '  - [ ] 저지방', '- [ ] 빵', '- [ ] 우유']);
+  const added = T.opAppend('ainote', '우유', rec)(c);
+  eq(added, md('- [ ] 우유 #ainote', '  - [ ] 저지방', '- [ ] 빵 #ainote', '- [ ] m #portal', '- [ ] 우유 #ainote', ''));
+  eq(catLines(added, 'ainote'), ['- [ ] 우유 #ainote', '  - [ ] 저지방', '- [ ] 빵 #ainote', '- [ ] 우유 #ainote']);
   eq(T.opActiveRemoveRec(rec)(added), c);
   // 추가가 저장되지 않아(실패) 넣은 줄이 없으면 아무것도 지우지 않고 gone
   throwsGone(() => T.opActiveRemoveRec(rec)(c));
 });
 
 test('S1·S12: Inbox→Task 분류 되돌리기·실패 되돌림 — Task에 원래 있던 같은 글은 남김', () => {
-  const c = md('## 🔥 High', '- [ ] 보고서', '- [ ] 메일', '', '## 🟡 Medium', '');
+  const c = md('- [ ] 보고서 #ainote', '- [ ] 메일 #ainote', '');
   const rec = {};
-  const moved = T.opAppendMany('high', ['보고서', '메일'], rec)(c);
+  const moved = T.opAppendMany('ainote', ['보고서', '메일'], rec)(c);
   eq(T.opActiveRemoveRec(rec)(moved), c);
   const ib = md('# Inbox', '', '- 보고서', '- 빵', '');
   const r2 = {};
@@ -306,15 +385,15 @@ test('S1·S12: Inbox→Task 분류 되돌리기·실패 되돌림 — Task에 �
   eq(T.opInboxRemoveRec(r2)(back), ib);
 });
 
-test('보관 되돌리기: 원래 기준 줄 아래로, 기준 줄이 애매하면 섹션 끝(일반 복구 규칙)', () => {
-  const c = md('## 🔥 High', '- [ ] a', '- [x] 끝냄', '- [ ] b', '', '## 🟡 Medium', '');
+test('보관 되돌리기: 원래 기준 줄 아래로, 기준 줄이 애매하면 목록 끝(일반 복구 규칙)', () => {
+  const c = md('- [ ] a #ainote', '- [x] 끝냄 #ainote', '- [ ] b #ainote', '- [ ] m #portal', '');
   const lines = c.split('\n');
-  const mid = [...lines.slice(0, 2), ...lines.slice(3)];
-  const pos = { block: ['- [x] 끝냄'], anchor: T.anchorAt(mid, 2) };
-  const entry = { priority: 'high', block: ['- [x] 끝냄'] };
+  const mid = [...lines.slice(0, 1), ...lines.slice(2)];
+  const pos = { block: ['- [x] 끝냄 #ainote'], anchor: T.anchorAt(mid, 1) };
+  const entry = { category: 'ainote', block: ['- [x] 끝냄 #ainote'] };
   eq(T.opActiveReinsert(entry, pos)(mid.join('\n')), c);
-  const dup = md('## 🔥 High', '- [ ] a', '- [ ] a', '- [ ] b', '', '## 🟡 Medium', '');
-  eq(sectionLines(T.opActiveReinsert(entry, pos)(dup), 'high'), ['- [ ] a', '- [ ] a', '- [ ] b', '- [x] 끝냄']);
+  const dup = md('- [ ] a #ainote', '- [ ] a #ainote', '- [ ] b #ainote', '- [ ] m #portal', '');
+  eq(T.opActiveReinsert(entry, pos)(dup), md('- [ ] a #ainote', '- [ ] a #ainote', '- [ ] b #ainote', '- [ ] m #portal', '- [x] 끝냄 #ainote', ''));
 });
 
 // 가짜 원격(파일 하나). lost: PUT을 반영한 뒤 응답 대신 연결 끊김, offline: 요청이 닿지 않음
@@ -381,7 +460,7 @@ test('R5: 요청이 닿지 않았고 다시 받아 보니 그대로 → 미반�
   let err = null;
   try { await st.commit(T.opInboxRemove([T.parseInbox(ib)[0]])); } catch (e) { err = e; }
   if (!err || err.uncertain) throw new Error('uncertain이 아닌 실패 기대');
-  eq(T.opDeleteBlock({ raw: '- [ ] a', lineIndex: 1 }).isApplied('## H\n', '## H\n- [ ] a\n'), true);
+  eq(T.opDeleteBlock({ raw: '- [ ] a', lineIndex: 1 }).isApplied('# H\n', '# H\n- [ ] a\n'), true);
 });
 
 // 저널 환경: 화면 state와 파일 스토어를 흉내 낸다
@@ -389,42 +468,47 @@ function journalEnv({ active = '', inbox = '', archive = [] } = {}) {
   T.localStorage.clear();
   const notices = [];
   T.notify = { error: (m) => notices.push(m), info() {}, undo() {} };
-  T.state = { token: 't', content: active, sections: T.parseSections(active), inboxContent: inbox, inboxItems: T.parseInbox(inbox), archiveItems: archive };
+  T.state = { token: 't', content: active, items: T.parseTasks(active), inboxContent: inbox, inboxItems: T.parseInbox(inbox), archiveItems: archive };
   const mk = (get, set) => ({ sha: 's0', commits: 0, async commit(op) { set(op(get())); this.commits++; } });
-  T.activeStore = mk(() => T.state.content, (c) => { T.state.content = c; T.state.sections = T.parseSections(c); });
+  T.activeStore = mk(() => T.state.content, (c) => { T.state.content = c; T.state.items = T.parseTasks(c); });
   T.inboxStore = mk(() => T.state.inboxContent, (c) => { T.state.inboxContent = c; T.state.inboxItems = T.parseInbox(c); });
   T.archiveStore = mk(() => T.state.archiveItems, (l) => { T.state.archiveItems = l; });
   return notices;
 }
+const setActive = (c) => { T.state.content = c; T.state.items = T.parseTasks(c); };
 const inboxMoveStep = (items, key) => T.removeStep('inboxRemove', [items], 'm', [{ k: 'activeHas', key, texts: items.map((i) => i.text) }]).journal;
 
 test('S6: 도착지에 원래 같은 글이 있으면 이동이 안 됐을 때 Inbox 항목을 지우지 않음', async () => {
-  const active = md('## 🔥 High', '- [ ] 우유', '', '## 🟡 Medium', '');
-  journalEnv({ active, inbox: md('# Inbox', '', '- 우유', '') });
-  T.addJournal(inboxMoveStep(T.state.inboxItems, 'high')); // Task 추가가 서버에 닿기 전 앱 종료(이 탭 기록 아님)
+  journalEnv({ active: md('- [ ] 우유 #ainote', ''), inbox: md('# Inbox', '', '- 우유', '') });
+  T.addJournal(inboxMoveStep(T.state.inboxItems, 'ainote')); // Task 추가가 서버에 닿기 전 앱 종료(이 탭 기록 아님)
   T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null })));
   await T.runJournal();
   eq(T.state.inboxItems.map((i) => i.text), ['우유']);
   eq(T.readJournal().length, 0);
 });
 
-test('S6: 이동이 실제로 됐으면(도착지 개수가 늘었으면) Inbox에서 마저 정리', async () => {
-  const active = md('## 🔥 High', '- [ ] 우유', '', '## 🟡 Medium', '');
-  journalEnv({ active, inbox: md('# Inbox', '', '- 우유', '- 빵', '') });
-  T.addJournal(inboxMoveStep([T.state.inboxItems[0]], 'high'));
+test('S6: 이동이 실제로 됐으면(그 카테고리에 같은 글이 늘었으면) Inbox에서 마저 정리', async () => {
+  journalEnv({ active: md('- [ ] 우유 #ainote', ''), inbox: md('# Inbox', '', '- 우유', '- 빵', '') });
+  T.addJournal(inboxMoveStep([T.state.inboxItems[0]], 'ainote'));
   T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null })));
-  T.state.content = md('## 🔥 High', '- [ ] 우유', '- [ ] 우유', '', '## 🟡 Medium', '');
-  T.state.sections = T.parseSections(T.state.content);
+  // 다른 카테고리(etc)에 같은 글이 생긴 것은 도착이 아니다
+  setActive(md('- [ ] 우유 #ainote', '- [ ] 우유', ''));
+  await T.runJournal();
+  eq(T.state.inboxItems.map((i) => i.text), ['우유', '빵']);
+  eq(T.readJournal().length, 0); // 도착 안 함 → 기록만 지움
+  journalEnv({ active: md('- [ ] 우유 #ainote', ''), inbox: md('# Inbox', '', '- 우유', '- 빵', '') });
+  T.addJournal(inboxMoveStep([T.state.inboxItems[0]], 'ainote'));
+  T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null })));
+  setActive(md('- [ ] 우유 #ainote', '- [ ] 우유 #ainote', ''));
   await T.runJournal();
   eq(T.state.inboxItems.map((i) => i.text), ['빵']);
 });
 
 test('S7: 결과 모름 기록 — 그 뒤 원격(sha)이 바뀌었으면(봇이 같은 글 추가 등) 자동으로 지우지 않고 안내', async () => {
-  const notices = journalEnv({ active: md('## 🔥 High', '', '## 🟡 Medium', ''), inbox: md('# Inbox', '', '- 우유', '') });
-  T.addJournal(inboxMoveStep(T.state.inboxItems, 'high'));
+  const notices = journalEnv({ active: md('# Active', ''), inbox: md('# Inbox', '', '- 우유', '') });
+  T.addJournal(inboxMoveStep(T.state.inboxItems, 'ainote'));
   T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: null, uncertain: true, sha: 's0' })));
-  T.state.content = md('## 🔥 High', '- [ ] 우유', '', '## 🟡 Medium', '');
-  T.state.sections = T.parseSections(T.state.content);
+  setActive(md('# Active', '', '- [ ] 우유 #ainote', ''));
   T.inboxStore.sha = 's9'; // 내 제거가 반영된 뒤 봇이 새 "우유"를 넣음 → 개수는 기록과 같음
   await T.runJournal();
   eq(T.inboxStore.commits, 0);
@@ -432,10 +516,10 @@ test('S7: 결과 모름 기록 — 그 뒤 원격(sha)이 바뀌었으면(봇이
 });
 
 test('S5: 다른 탭이 진행 중인 기록(beat 신선)은 실행하지 않음, 멈춘 지 오래면 실행', async () => {
-  journalEnv({ active: md('## 🔥 High', '- [ ] 보고서', '', '## 🟡 Medium', ''), inbox: md('# Inbox', '', '- 보고서', '') });
-  T.state.content = md('## 🔥 High', '', '## 🟡 Medium', ''); T.state.sections = T.parseSections(T.state.content);
-  T.addJournal(inboxMoveStep(T.state.inboxItems, 'high'));
-  T.state.content = md('## 🔥 High', '- [ ] 보고서', '', '## 🟡 Medium', ''); T.state.sections = T.parseSections(T.state.content);
+  journalEnv({ active: md('- [ ] 보고서 #ainote', ''), inbox: md('# Inbox', '', '- 보고서', '') });
+  setActive(md('# Active', ''));
+  T.addJournal(inboxMoveStep(T.state.inboxItems, 'ainote'));
+  setActive(md('- [ ] 보고서 #ainote', ''));
   T.writeJournal(T.readJournal().map((j) => ({ ...j, owner: 'other-tab', beat: Date.now() })));
   await T.runJournal();
   eq(T.inboxStore.commits, 0);
@@ -445,13 +529,14 @@ test('S5: 다른 탭이 진행 중인 기록(beat 신선)은 실행하지 않음
   eq(T.state.inboxItems.length, 0);
 });
 
-test('S20④: 옛 형식 기록(ver·도착지 개수 없음)은 실행하지 않고 지움', async () => {
-  const notices = journalEnv({ active: md('## 🔥 High', '- [ ] 우유', ''), inbox: md('# Inbox', '', '- 우유', '') });
-  T.writeJournal([{ id: 'old', at: new Date().toISOString(), type: 'inboxRemove', args: [T.state.inboxItems], verify: [{ k: 'activeHas', key: 'high', texts: ['우유'] }], expectCount: 1 }]);
+test('S20④: 옛 형식 기록(ver·도착지 개수 없음, 우선순위 key)은 실행하지 않고 지움', async () => {
+  const notices = journalEnv({ active: md('- [ ] 우유', ''), inbox: md('# Inbox', '', '- 우유', '') });
+  T.writeJournal([{ id: 'old', ver: 2, at: new Date().toISOString(), type: 'inboxRemove', args: [T.state.inboxItems], verify: [{ k: 'activeHas', key: 'high', texts: ['우유'], before: { 't:우유': 0 } }], expectCount: 1 }]);
   await T.runJournal();
   eq(T.state.inboxItems.length, 1);
   eq(T.readJournal().length, 0);
   eq(notices.length, 1);
+  if (T.JOURNAL_VER < 3) throw new Error('JOURNAL_VER는 3 이상(카테고리 형식)');
 });
 
 test('S10·S11: 붙여넣기 — 25줄도 하나도 버리지 않음, 번호는 모든 줄이 번호 목록일 때만 뗌', () => {
@@ -462,7 +547,7 @@ test('S10·S11: 붙여넣기 — 25줄도 하나도 버리지 않음, 번호는 
   if (!(T.PASTE_MAX >= 20)) throw new Error('PASTE_MAX');
 });
 
-// ---------- 3차 회의 E(묶음 추가)·F6(입력창 기본 High) ----------
+// ---------- 3차 회의 E(묶음 추가) ----------
 test('E1·E2: 묶음 해석 — 들여 쓴 줄은 바로 위 상위의 하위, 3단계 이상도 1단계, 목록 표시·체크 표시는 뗌', () => {
   const b = T.parseBundle('회의 준비\n  - 자료 출력\n\t\t- [x] 깊은 하위\n- [ ] 메일 보내기\n    1. 첨부');
   eq(b.blocks, [{ text: '회의 준비', children: ['자료 출력', '깊은 하위'] }, { text: '메일 보내기', children: ['1. 첨부'] }]);
@@ -482,88 +567,94 @@ test('E2: 정리된 모양으로 보여 준 글을 다시 해석해도 같은 �
   eq(T.parseBundle(text).blocks, blocks);
 });
 
-test('E5·E6: 묶음 추가 = 그 우선순위 끝에 한 번에, 되돌리기는 넣은 블록만(원래 같은 글 "부모"는 그대로)', () => {
-  const c = md('## 🔥 High', '- [ ] 부모', '  - [ ] 원래 하위', '', '## 🟡 Medium', '- [ ] m', '');
+test('E5·E6: 묶음 추가 = 목록 끝에 그 카테고리 태그로 한 번에, 되돌리기는 넣은 블록만(원래 같은 글 "부모"는 그대로)', () => {
+  const c = md('- [ ] 부모 #ainote', '  - [ ] 원래 하위', '- [ ] m #portal', '');
   const rec = {};
-  const op = T.opAppendBundle('high', [{ text: '부모', children: ['새 하위'] }, { text: '둘째', children: [] }], rec);
+  const op = T.opAppendBundle('ainote', [{ text: '부모', children: ['새 하위'] }, { text: '둘째', children: [] }], rec);
   const out = op(c);
-  eq(sectionLines(out, 'high'), ['- [ ] 부모', '  - [ ] 원래 하위', '- [ ] 부모', '  - [ ] 새 하위', '- [ ] 둘째']);
-  eq(sectionLines(out, 'medium'), ['- [ ] m']);
+  eq(out, md('- [ ] 부모 #ainote', '  - [ ] 원래 하위', '- [ ] m #portal', '- [ ] 부모 #ainote', '  - [ ] 새 하위', '- [ ] 둘째 #ainote', ''));
+  eq(catLines(out, 'ainote'), ['- [ ] 부모 #ainote', '  - [ ] 원래 하위', '- [ ] 부모 #ainote', '  - [ ] 새 하위', '- [ ] 둘째 #ainote']);
+  eq(catLines(out, 'portal'), ['- [ ] m #portal']);
   eq(rec.fps.length, 2);
   eq(T.opActiveRemoveRec(rec)(out), c);
   eq(op.isApplied(out, c), true);
   eq(op.isApplied(c, c), false);
 });
 
-test('F6: 입력창 우선순위 순환 🍅→🍋→🥝→🍅', () => {
-  eq(T.COMPOSER_PRI_ORDER[0], 'high');
-  eq([T.nextComposerPriority('high'), T.nextComposerPriority('medium'), T.nextComposerPriority('low')], ['medium', 'low', 'high']);
-});
-
-test('보관함 복구: 원래 자리(기준 줄 지문)로, 기준 줄이 다른 항목의 하위면 그 하위 뒤로, 못 찾으면 섹션 끝', () => {
-  const c = md('## 🔥 High', '- [ ] a', '  - [ ] a1', '- [x] 끝냄', '- [ ] b', '', '## 🟡 Medium', '');
+test('보관함 복구: 원래 자리(기준 줄 지문)로, 기준 줄이 다른 항목의 하위면 그 하위 뒤로, 못 찾으면 목록 끝', () => {
+  const c = md('- [ ] a #ainote', '  - [ ] a1', '- [x] 끝냄 #ainote', '- [ ] b #ainote', '- [ ] m #portal', '');
   const lines = c.split('\n');
-  const mid = [...lines.slice(0, 3), ...lines.slice(4)];
-  const entry = { priority: 'high', block: ['- [x] 끝냄'], after: T.anchorAt(mid, 3) };
+  const mid = [...lines.slice(0, 2), ...lines.slice(3)];
+  const entry = { category: 'ainote', block: ['- [x] 끝냄 #ainote'], after: T.anchorAt(mid, 2) };
   const back = mid.join('\n').split('\n');
   T.restoreBlockInto(back, entry);
   eq(back.join('\n'), c);
   // 그 뒤 a에 하위가 하나 더 생겼어도 a 블록 뒤(b 앞)로 — a2를 끝냄의 하위로 만들지 않음
-  const grown = md('## 🔥 High', '- [ ] a', '  - [ ] a1', '  - [ ] a2', '- [ ] b', '', '## 🟡 Medium', '').split('\n');
+  const grown = md('- [ ] a #ainote', '  - [ ] a1', '  - [ ] a2', '- [ ] b #ainote', '- [ ] m #portal', '').split('\n');
   T.restoreBlockInto(grown, entry);
-  eq(sectionLines(grown.join('\n'), 'high'), ['- [ ] a', '  - [ ] a1', '  - [ ] a2', '- [x] 끝냄', '- [ ] b']);
-  // 기준 줄이 없어졌으면 섹션 끝
-  const gone = md('## 🔥 High', '- [ ] b', '', '## 🟡 Medium', '').split('\n');
+  eq(catLines(grown.join('\n'), 'ainote'), ['- [ ] a #ainote', '  - [ ] a1', '  - [ ] a2', '- [x] 끝냄 #ainote', '- [ ] b #ainote']);
+  // 기준 줄이 없어졌으면 목록 끝
+  const gone = md('- [ ] b #ainote', '- [ ] m #portal', '').split('\n');
   T.restoreBlockInto(gone, entry);
-  eq(sectionLines(gone.join('\n'), 'high'), ['- [ ] b', '- [x] 끝냄']);
+  eq(gone.join('\n'), md('- [ ] b #ainote', '- [ ] m #portal', '- [x] 끝냄 #ainote', ''));
+  // 옛 보관 항목(priority: high, 태그 없는 블록)은 etc로 끝에
+  const old = md('- [ ] b #ainote', '').split('\n');
+  T.restoreBlockInto(old, { priority: 'high', block: ['- [ ] 옛 항목', '  - [ ] 옛 하위'] });
+  eq(old.join('\n'), md('- [ ] b #ainote', '- [ ] 옛 항목', '  - [ ] 옛 하위', ''));
+  eq(T.entryCat({ priority: 'low' }), 'etc');
+  eq(T.entryCat({ category: 'mail' }), 'mail');
 });
 
 // ---------- 핵심 연산 ----------
-test('토글: 체크/해제가 그 줄만 바꿈, 하위·형식 유지', () => {
-  const c = md('## 🔥 High', '- [ ] a', '  - [ ] b', '');
-  const a = items(c, '🔥 High')[0];
+test('토글: 체크/해제가 그 줄만 바꿈, 하위·형식·태그 유지', () => {
+  const c = md('- [ ] a #ainote', '  - [ ] b', '');
+  const a = items(c, 'ainote')[0];
   const out = T.opToggle(a, true)(c);
-  eq(out, md('## 🔥 High', '- [x] a', '  - [ ] b', ''));
+  eq(out, md('- [x] a #ainote', '  - [ ] b', ''));
   eq(T.opToggle(a, false)(out), c);
 });
 
-test('추가: 섹션 끝에 한 줄, 줄바꿈이 들어와도 한 줄로(R4 방어)', () => {
-  const c = md('## 🔥 High', '- [ ] a', '', '## 🟡 Medium', '');
-  eq(sectionLines(T.appendToSection('high', '줄1\n줄2', c), 'high'), ['- [ ] a', '- [ ] 줄1 줄2']);
+test('추가: 목록 끝에 한 줄, 줄바꿈이 들어와도 한 줄로(R4 방어)', () => {
+  const c = md('- [ ] a #ainote', '- [ ] m #portal', '');
+  eq(T.appendTask('ainote', '줄1\n줄2', c), md('- [ ] a #ainote', '- [ ] m #portal', '- [ ] 줄1 줄2 #ainote', ''));
   eq(T.splitPastedLines('회의 준비\n- 자료 출력\n\n- [ ] 셋째'), ['회의 준비', '자료 출력', '셋째']);
 });
 
-test('이동: 다른 섹션으로·하위로 넣기', () => {
-  const c = md('## 🔥 High', '- [ ] a', '', '## 🟢 Low', '- [ ] x', '- [ ] y', '');
-  const y = items(c, '🟢 Low').find((i) => i.text === 'y');
-  const lines = c.split('\n');
-  const toHigh = T.opMove(y, { sectionKey: 'high', beforeItem: null, intoItem: null })(c);
-  eq(sectionLines(toHigh, 'high'), ['- [ ] a', '- [ ] y']);
-  const xIdx = lines.indexOf('- [ ] x');
-  const into = T.opMove(y, { sectionKey: 'low', intoItem: { lineIndex: xIdx, raw: lines[xIdx] } })(c);
-  eq(sectionLines(into, 'low'), ['- [ ] x', '  - [ ] y']);
+test('이동: 다른 카테고리 묶음 끝으로·하위로 넣기', () => {
+  const c = md('- [ ] a #ainote', '- [ ] x', '- [ ] y', '');
+  const y = items(c, 'etc').find((i) => i.text === 'y');
+  const toAinote = T.opMove(y, { cat: 'ainote', afterItem: { lineIndex: 0, raw: '- [ ] a #ainote' } })(c);
+  eq(toAinote, md('- [ ] a #ainote', '- [ ] y #ainote', '- [ ] x', ''));
+  const into = T.opMove(y, { cat: 'etc', intoItem: { lineIndex: 1, raw: '- [ ] x' } })(c);
+  eq(catLines(into, 'etc'), ['- [ ] x', '  - [ ] y']);
+  // 목표가 자기 블록 안이면 거부
+  const a = items(c, 'ainote')[0];
+  let threw = false;
+  try { T.moveLineToPosition(0, { afterLine: 0 }, c); } catch (e) { threw = true; }
+  if (!threw) throw new Error('자기 블록 뒤로는 거부해야 함');
+  eq(T.opMove(a, { cat: 'ainote', beforeItem: { lineIndex: 0, raw: '- [ ] a #ainote' } })(c), c);
 });
 
-test('보관·복구: 하위 항목은 부모 아래로 복구(A6), 부모가 없으면 상위로', () => {
-  const c = md('## 🔥 High', '- [ ] 부모', '  - [ ] 다른 하위', '', '## 🟡 Medium', '');
+test('보관·복구: 하위 항목은 부모 아래로 복구(A6), 부모가 없으면 상위로(그 카테고리 태그)', () => {
+  const c = md('- [ ] 부모 #ainote', '  - [ ] 다른 하위', '- [ ] m #portal', '');
   const lines = c.split('\n');
-  T.restoreBlockInto(lines, { priority: 'high', parent: '부모', block: ['- [ ] 돌아온 하위'] });
-  eq(sectionLines(lines.join('\n'), 'high'), ['- [ ] 부모', '  - [ ] 다른 하위', '  - [ ] 돌아온 하위']);
-  const l2 = md('## 🔥 High', '- [ ] 남', '').split('\n');
-  T.restoreBlockInto(l2, { priority: 'high', parent: '없는 부모', block: ['- [ ] 고아'] });
-  eq(sectionLines(l2.join('\n'), 'high'), ['- [ ] 남', '- [ ] 고아']);
-  // 같은 글 부모가 둘이면 고르지 않고 상위로(섹션 끝)
-  const l3 = md('## 🔥 High', '- [ ] 부모', '- [ ] 부모', '').split('\n');
-  T.restoreBlockInto(l3, { priority: 'high', parent: '부모', block: ['- [ ] 하위'] });
-  eq(sectionLines(l3.join('\n'), 'high'), ['- [ ] 부모', '- [ ] 부모', '- [ ] 하위']);
-  const parent = items(c, '🔥 High')[0];
-  eq(sectionLines(T.opDeleteBlock(parent)(c), 'high'), []);
+  T.restoreBlockInto(lines, { category: 'ainote', parent: '부모 #ainote', block: ['- [ ] 돌아온 하위'] });
+  eq(catLines(lines.join('\n'), 'ainote'), ['- [ ] 부모 #ainote', '  - [ ] 다른 하위', '  - [ ] 돌아온 하위']);
+  const l2 = md('- [ ] 남 #ainote', '').split('\n');
+  T.restoreBlockInto(l2, { category: 'ainote', parent: '없는 부모', block: ['- [ ] 고아'] });
+  eq(catLines(l2.join('\n'), 'ainote'), ['- [ ] 남 #ainote', '- [ ] 고아 #ainote']);
+  // 같은 글 부모가 둘이면 고르지 않고 상위로(목록 끝)
+  const l3 = md('- [ ] 부모 #ainote', '- [ ] 부모 #ainote', '').split('\n');
+  T.restoreBlockInto(l3, { category: 'ainote', parent: '부모 #ainote', block: ['- [ ] 하위'] });
+  eq(catLines(l3.join('\n'), 'ainote'), ['- [ ] 부모 #ainote', '- [ ] 부모 #ainote', '- [ ] 하위 #ainote']);
+  const parent = items(c, 'ainote')[0];
+  eq(catLines(T.opDeleteBlock(parent)(c), 'ainote'), []);
 });
 
-test('하위 추가: 섹션 마지막 항목이어도 빈 줄 앞에(B-6)', () => {
-  const c = md('## 🔥 High', '- [ ] 마지막', '', '## 🟡 Medium', '');
-  const p = items(c, '🔥 High')[0];
-  eq(T.opAddChild(p, '하위')(c), md('## 🔥 High', '- [ ] 마지막', '  - [ ] 하위', '', '## 🟡 Medium', ''));
+test('하위 추가: 마지막 항목이어도 빈 줄 앞에(B-6), 하위에는 태그 없음', () => {
+  const c = md('- [ ] 마지막 #ainote', '', '- [ ] m #portal', '');
+  const p = items(c, 'ainote')[0];
+  eq(T.opAddChild(p, '하위')(c), md('- [ ] 마지막 #ainote', '  - [ ] 하위', '', '- [ ] m #portal', ''));
 });
 
 test('메모 열(A5): 모바일 2열에서 옮겨도 PC 3번째 열(col 2) 메모는 그대로', () => {

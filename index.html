@@ -125,18 +125,15 @@
 
   header {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; margin-bottom: 24px;
+    gap: 12px; margin-bottom: 14px;
   }
   .title-row h1 { font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
   .title-row h1.brand { display: inline-flex; align-items: center; gap: 9px; }
   .title-row h1.brand span { font-weight: 900; text-transform: lowercase; }
   .brand-logo { width: 32px; height: 32px; flex-shrink: 0; display: block; }
-  .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .title-row { min-width: 0; flex: 1; }
-  .meta { display: flex; gap: 4px; align-items: baseline; }
-  .meta .meta-date { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta .meta-count { flex-shrink: 0; white-space: nowrap; }
+  /* 오늘 날짜: 헤더 오른쪽, 더보기 버튼 왼쪽 */
+  .hdr-date { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; margin-right: 2px; }
   .icon-btn {
     appearance: none; -webkit-appearance: none;
     background: transparent; border: 1px solid transparent; color: var(--muted);
@@ -179,11 +176,83 @@
     display: flex; align-items: center; gap: 8px; padding-left: 4px;
   }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .section-title .sec-ic { font-size: 14px; line-height: 1; }
-  .pri-high .dot { background: var(--high); }
-  .pri-med  .dot { background: var(--med); }
-  .pri-low  .dot { background: var(--low); }
-  .count { color: var(--muted); margin-left: auto; font-weight: 500; }
+  .count { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .count.bump { animation: done-bump var(--dur-fast) ease-out; }
+  @keyframes done-bump { 50% { transform: scale(1.15); } }
+  /* 섹션 제목 줄: 왼쪽 제목·개수, 오른쪽 정렬 버튼(In progress) — Done 제목은 눌러서 접고 펼침 */
+  .section-title .sec-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+  .sec-toggle {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent; padding: 0;
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px; min-height: 28px; border-radius: 6px;
+  }
+  .sec-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sort-btn, .filter-btn {
+    appearance: none; -webkit-appearance: none; border: 1px solid transparent; background: transparent;
+    font: inherit; font-size: 12px; font-weight: 500; color: var(--muted); cursor: pointer;
+    min-height: 28px; padding: 0 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px;
+    transition: background var(--dur-fast), color var(--dur-fast);
+  }
+  .sort-btn:hover, .filter-btn:hover { background: var(--hover); color: var(--text); }
+  .sort-btn:focus-visible, .filter-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 공용 정삼각형(아래 방향): 필터·정렬 버튼(열리면 위), Done 제목(접히면 위) */
+  .tri {
+    display: inline-block; width: 0; height: 0; border-left: 2.5px solid transparent; border-right: 2.5px solid transparent;
+    border-top: 4.3px solid currentColor; opacity: 0.8; transition: transform var(--dur-fast);
+  }
+  .sort-btn .tri, .filter-btn .tri { margin-left: 1px; }
+  .sort-btn[aria-expanded="true"] .tri, .filter-btn[aria-expanded="true"] .tri { transform: rotate(180deg); }
+  .sec-toggle .tri { color: var(--muted); }
+  .sec-toggle:hover .tri { color: var(--text); }
+  .sec-toggle[aria-expanded="false"] .tri { transform: rotate(180deg); }
+  /* 하위 할 일 접기: SVG 선 꺾쇠(폭 8px, 선 1.5px). 끝 모양 square·좌표 0.25px 격자여야 2배율에서 좌우가 픽셀 단위로 대칭. 펼치면 아래, 접히면 위 */
+  .chev-ln { display: block; width: 8px; height: 5px; overflow: visible; shape-rendering: geometricPrecision; transition: transform var(--dur-fast); }
+  .task-toggle.collapsed .chev-ln { transform: rotate(180deg); }
+  .sort-btn[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+
+  /* 카테고리 아이콘(서비스 아이콘 20px). 행에서는 18px */
+  .cat-ic { width: 20px; height: 20px; flex-shrink: 0; display: block; }
+  .task .task-cat { width: 18px; height: 18px; margin: 2px 0 0 -4px; }
+  .task.done .task-cat { opacity: 0.45; }
+  .task.cat-gap { margin-top: 10px; }
+
+  /* 섹션 제목 오른쪽 필터 버튼: 전체(기본) 또는 고른 카테고리 아이콘+이름. 메뉴는 아래 .cat-menu 공용 */
+  .filter-btn.on { color: var(--text); font-weight: 600; }
+  .filter-btn .cat-ic { width: 16px; height: 16px; }
+  .filter-btn[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+
+  /* 카테고리 고르기 메뉴(입력창·편집 시트·Inbox 공용) — 누른 버튼 위(.up)나 아래에 뜨는 목록 */
+  .cat-anchor { position: relative; display: inline-flex; flex-shrink: 0; }
+  .cat-menu {
+    position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
+    min-width: 196px; max-height: min(520px, 72vh); overflow-y: auto; padding: 6px;
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-menu);
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .cat-menu.up { top: auto; bottom: calc(100% + 8px); }
+  .cat-menu.right { left: auto; right: 0; }
+  .cat-opt {
+    appearance: none; -webkit-appearance: none; border: 0; background: none; color: var(--text);
+    width: 100%; min-height: 40px; padding: 0 10px; border-radius: 8px; cursor: pointer; text-align: left;
+    font: inherit; font-size: 14px; display: flex; align-items: center; gap: 10px; white-space: nowrap;
+  }
+  .cat-opt:hover, .cat-opt:focus-visible { background: var(--surface-2); outline: none; }
+  .cat-opt.on { font-weight: 600; }
+  .cat-opt.on::after { content: "✓"; margin-left: auto; color: var(--accent-text); font-size: 13px; }
+  .cat-opt .opt-n { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cat-opt.has-n.on::after { margin-left: 10px; }
+  .cat-opt.all { padding-left: 12px; }
+  .cat-opt.all + .cat-opt { margin-top: 5px; position: relative; }
+  .cat-opt.all + .cat-opt::before { content: ""; position: absolute; left: 6px; right: 6px; top: -3px; height: 1px; background: var(--border); }
+  /* 시트의 카테고리 선택 버튼: 아이콘 + 이름 + 화살표 */
+  .cat-select {
+    appearance: none; -webkit-appearance: none; cursor: pointer; font: inherit; font-size: 15px; color: var(--text);
+    display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; min-width: 180px;
+  }
+  .cat-select .chev { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .cat-select:hover { background: var(--hover); }
+  .cat-select:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 
   .card {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -230,9 +299,10 @@
   .child-count {
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 16px; height: 16px; padding: 0 5px; margin-left: 6px;
-    border-radius: 8px; background: var(--surface-2); color: var(--muted);
+    border-radius: 8px; background: var(--accent); color: var(--accent-fg); /* 하위 개수는 메인 컬러로 강조 */
     font-size: 11px; font-weight: 600; vertical-align: middle;
   }
+  .task.done .child-count { opacity: 0.55; }
   .task-text {
     flex: 1; cursor: text; min-width: 0;
     word-break: break-word; padding: 1px 0;
@@ -250,7 +320,7 @@
     transition: opacity var(--dur-fast);
   }
   .task:hover .task-actions, .task.menu-open .task-actions, .task:focus-within .task-actions { opacity: 1; }
-  /* 모바일(hover 없음): 행에는 체크·글·펼침만. ⋮⋮·×는 없음 — 보관은 편집 시트, 순서는 길게 눌러 옮기기(B2) */
+  /* 모바일(hover 없음): 행에는 체크·글·펼침만. 끌기 핸들·×는 없음 — 보관은 편집 시트, 순서는 길게 눌러 옮기기(B2) */
   @media (hover: none) {
     .task-actions { display: none; }
     .task { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; transition: background var(--dur-fast), transform var(--dur-press) ease-out; }
@@ -265,25 +335,11 @@
   .row-btn:hover { background: var(--surface-2); color: var(--text); }
   .row-btn.danger:hover { background: var(--danger); color: white; }
 
-  /* 완료 접기 행(B3) — 높이 36px, 체크박스 줄에 맞춘 들여쓰기 */
-  .done-fold {
-    appearance: none; -webkit-appearance: none; border: 0; background: transparent;
-    width: 100%; min-height: 36px; padding: 0 10px 0 38px; text-align: left; cursor: pointer;
-    font: inherit; font-size: 13px; color: var(--muted); border-radius: var(--radius-sm);
-    display: flex; align-items: center; gap: 4px;
-  }
-  .done-fold:hover { background: var(--hover); color: var(--text); }
-  .done-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .done-fold .done-n { display: inline-block; font-variant-numeric: tabular-nums; }
-  .done-fold .done-n.bump { animation: done-bump var(--dur-fast) ease-out; }
-  @keyframes done-bump { 50% { transform: scale(1.15); } }
+  /* 완료된 행이 In progress에서 Done으로 옮겨 갈 때 접히며 사라짐(체크 후 800ms 머문 뒤) */
   .task.leaving { opacity: 0; max-height: 0; min-height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden;
     transition: opacity var(--dur) var(--ease), max-height var(--dur) var(--ease), padding 200ms; }
   .bullet { padding: 4px 10px 4px 40px; color: var(--muted); font-size: 13px; }
-  /* 한 목록 보기(3차 F1·F2): 우선순위 경계에만 간격, 상위 행의 과일 13px(완료 행은 흐리게) */
-  .task.pri-gap { margin-top: 10px; }
-  .pri-fruit { flex-shrink: 0; font-size: 13px; line-height: 22px; margin-left: -4px; }
-  .task.done .pri-fruit { opacity: 0.45; }
+  .section.done.collapsed .card { display: none; }
   .indent-1 { padding-left: 36px; }
   .indent-2 { padding-left: 60px; }
   .indent-3 { padding-left: 84px; }
@@ -312,15 +368,16 @@
     pointer-events: auto;
   }
   .composer-inner:focus-within { border-color: var(--accent); }
-  .composer-pri {
-    flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+  .composer-cat {
+    flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%; padding: 0;
     border: 0; background: var(--surface-2); cursor: pointer;
-    font-size: 19px; line-height: 1;
     display: inline-flex; align-items: center; justify-content: center;
     transition: background var(--dur-fast), transform var(--dur-fast);
   }
-  .composer-pri:hover { background: var(--hover); }
-  .composer-pri:active { transform: scale(0.9); }
+  .composer-cat:hover { background: var(--hover); }
+  .composer-cat:active { transform: scale(0.9); }
+  .composer-cat[aria-expanded="true"] { background: var(--accent-soft); }
+  .composer-cat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .composer-input {
     flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
     font-size: 15px; color: var(--text); font-family: inherit; line-height: 20px;
@@ -335,7 +392,7 @@
   }
   .composer-hint[hidden] { display: none; }
   .composer-hint.warn { color: var(--danger); }
-  .composer.mode-inbox .composer-pri, .composer.mode-memo .composer-pri { display: none; }
+  .composer.mode-inbox .cat-anchor, .composer.mode-memo .cat-anchor { display: none; }
   .composer.mode-inbox .composer-inner, .composer.mode-memo .composer-inner { padding-left: 14px; }
   body.no-composer { padding-bottom: calc(var(--safe-bottom) + 32px); }
   .memo.fade-in { animation: memo-in var(--dur) var(--ease); }
@@ -383,19 +440,6 @@
     outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent;
     background: var(--surface);
   }
-  .pri-picker { display: flex; gap: 8px; }
-  .pri-pill {
-    flex: 1; padding: 10px; border-radius: 8px; cursor: pointer;
-    background: var(--surface-2); border: 1.5px solid transparent;
-    text-align: center; font-size: 14px; font-weight: 500;
-    transition: all var(--dur-fast); user-select: none;
-    display: flex; align-items: center; justify-content: center; gap: 6px;
-  }
-  .pri-pill:hover { background: var(--hover); }
-  .pri-pill.selected { border-color: var(--accent); background: var(--surface); }
-  .pri-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .pri-pill .dot { width: 10px; height: 10px; }
-
   .actions { display: flex; gap: 8px; margin-top: 16px; }
   .sheet-err { color: var(--danger); font-size: 13px; margin-top: 12px; }
   .text-btn {
@@ -559,17 +603,16 @@
   }
   .inbox-text { flex: 1; word-break: break-word; font-size: 15px; }
   .inbox-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  /* Inbox 행의 "Task로" 버튼 — 누르면 카테고리 목록이 뜨고, 고르면 그 카테고리로 분류 */
   .pri-mini {
     appearance: none; -webkit-appearance: none;
     border: 1.5px solid var(--border); background: var(--surface-2); color: var(--muted);
-    font-size: 16px; line-height: 1; width: 28px; height: 28px; border-radius: 6px; padding: 0;
-    cursor: pointer; transition: all var(--dur-fast); position: relative;
-    display: inline-flex; align-items: center; justify-content: center;
+    font: inherit; font-size: 12px; font-weight: 600; line-height: 1; height: 28px; border-radius: 6px; padding: 0 8px;
+    cursor: pointer; transition: all var(--dur-fast); position: relative; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center; gap: 3px;
   }
-  .pri-mini:hover { border-color: var(--accent); color: var(--text); background: var(--surface); }
-  .pri-mini.h:hover { border-color: var(--high); }
-  .pri-mini.m:hover { border-color: var(--med); }
-  .pri-mini.l:hover { border-color: var(--low); }
+  .pri-mini:hover, .pri-mini[aria-expanded="true"] { border-color: var(--accent); color: var(--text); background: var(--surface); }
+  .pri-mini .chev { font-size: 10px; color: var(--muted); }
 
   /* 터치 타깃 확대 — 시각 크기는 유지하고 히트 영역을 최소 44px 높이로 넓힌다.
      행이 세로로 쌓이므로 세로 확장은 인접 버튼과 겹치지 않아 안전하다. */
@@ -611,17 +654,15 @@
     font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 8px;
     cursor: pointer; transition: all var(--dur-fast); font-family: inherit; white-space: nowrap;
   }
-  .bar-btn.h:hover { border-color: var(--high); color: var(--high); }
-  .bar-btn.m:hover { border-color: var(--med); color: var(--med); }
-  .bar-btn.l:hover { border-color: var(--low); color: var(--low); }
-  .bar-btn.h, .bar-btn.m, .bar-btn.l { font-size: 16px; line-height: 1; padding: 5px 10px; }
+  .bar-btn:hover, .bar-btn[aria-expanded="true"] { border-color: var(--accent); }
+  .bar-btn .chev { font-size: 10px; color: var(--muted); margin-left: 2px; }
   .bar-btn.danger { border-color: transparent; }
   .bar-btn.danger:hover { background: var(--danger); border-color: var(--danger); color: white; }
   .bar-btn.ghost { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
   .bar-btn.ghost:hover { background: var(--surface-2); color: var(--text); }
   /* 선택 끝내기 ✕(감사 B6): 44px */
   .bar-btn.bar-cancel { width: 44px; height: 44px; padding: 0; font-size: 16px; flex-shrink: 0; margin-left: -8px; }
-  /* 선택 중에는 행의 🍅🍋🥝·📥·↺·🗑를 숨긴다 — 선택 바와 같은 동작이 겹치지 않게(감사 B5) */
+  /* 선택 중에는 행의 Task로·📥·↺·🗑를 숨긴다 — 선택 바와 같은 동작이 겹치지 않게(감사 B5) */
   /* 자리는 그대로 두고 숨김(B-2: display:none이면 행 높이가 줄어 다음 탭이 빗나갔다) */
   .card.selecting .inbox-actions { visibility: hidden; pointer-events: none; }
 
@@ -629,8 +670,8 @@
   .drag-handle {
     cursor: grab; touch-action: none;
     user-select: none; -webkit-user-select: none;
-    font-size: 16px; line-height: 1;
   }
+  .drag-handle .drag-ic { display: block; width: 12px; height: 8px; pointer-events: none; }
   .drag-handle:active { cursor: grabbing; }
   .task.dragging { opacity: 0.3; }
   .drag-ghost {
@@ -672,9 +713,10 @@
   .archive-when { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .archive-badge {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 30px; height: 22px; flex-shrink: 0; /* 과일·"Inbox" 글자 모두 같은 폭 → 글 시작 위치가 맞음 */
+    width: 34px; height: 22px; flex-shrink: 0; /* 카테고리 아이콘·"Inbox" 글자 모두 같은 폭 → 글 시작 위치가 맞음 */
     font-size: 13px; line-height: 1;
   }
+  .archive-badge .cat-ic { width: 18px; height: 18px; }
 
   /* Memo board (masonry / column-based) */
   .memo-board {
@@ -772,7 +814,7 @@
       transition-duration: 120ms !important;
       scroll-behavior: auto !important;
     }
-    .task input[type="checkbox"].pop, .done-fold .done-n.bump, .skeleton, .sync-pill .dot { animation: none !important; }
+    .task input[type="checkbox"].pop, .count.bump, .skeleton, .sync-pill .dot { animation: none !important; }
     .memo-ghost, .drag-ghost { transform: none !important; }
   }
 </style>
@@ -798,7 +840,7 @@
   <!-- 묶음 안내(3차 E3): Task 입력창이 2줄 이상일 때만 -->
   <div class="composer-hint" id="composer-hint" hidden></div>
   <div class="composer-inner">
-    <button class="composer-pri" id="composer-pri" type="button" aria-label="우선순위 선택">🍅</button>
+    <div class="cat-anchor"><button class="composer-cat" id="composer-cat" type="button" aria-label="카테고리 선택" aria-haspopup="listbox" aria-expanded="false"><img class="cat-ic" id="composer-cat-ic" src="icons/etc.svg" alt=""></button></div>
     <textarea class="composer-input" id="composer-input" rows="1" placeholder="할 일 입력…" autocomplete="off" enterkeyhint="send" aria-label="할 일 입력" aria-describedby="composer-hint"></textarea>
     <button class="composer-send" id="composer-send" type="button" aria-label="추가" disabled>+</button>
   </div>
@@ -809,13 +851,9 @@
 <!-- Add/Edit sheet -->
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" inert>
   <h2 id="sheet-title" tabindex="-1">새 할 일</h2>
-  <div class="field">
-    <label id="pri-label">우선순위</label>
-    <div class="pri-picker" id="pri-picker" role="radiogroup" aria-labelledby="pri-label">
-      <div class="pri-pill pri-high" data-pri="high" role="radio" aria-checked="false" tabindex="-1"><span class="pri-ic" aria-hidden="true">🍅</span>High</div>
-      <div class="pri-pill pri-med selected" data-pri="medium" role="radio" aria-checked="true" tabindex="0"><span class="pri-ic" aria-hidden="true">🍋</span>Medium</div>
-      <div class="pri-pill pri-low" data-pri="low" role="radio" aria-checked="false" tabindex="-1"><span class="pri-ic" aria-hidden="true">🥝</span>Low</div>
-    </div>
+  <div class="field" id="cat-field">
+    <label id="cat-label">카테고리</label>
+    <div class="cat-anchor"><button type="button" class="cat-select" id="sheet-cat" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="cat-label sheet-cat-name"><img class="cat-ic" id="sheet-cat-ic" src="icons/etc.svg" alt=""><span id="sheet-cat-name">etc</span><span class="chev" aria-hidden="true">⌄</span></button></div>
   </div>
   <div class="field">
     <label>내용</label>
@@ -842,9 +880,7 @@
   <button class="bar-btn ghost bar-cancel" id="bar-cancel" aria-label="선택 끝내기" title="선택 끝내기">✕</button>
   <span class="inbox-bar-label" id="inbox-bar-label"></span>
   <button class="bar-btn ghost" id="bar-select-all">전체선택</button>
-  <button class="bar-btn h" id="bar-high" aria-label="High로 보내기" title="High로 보내기">🍅</button>
-  <button class="bar-btn m" id="bar-med" aria-label="Medium으로 보내기" title="Medium으로 보내기">🍋</button>
-  <button class="bar-btn l" id="bar-low" aria-label="Low로 보내기" title="Low로 보내기">🥝</button>
+  <div class="cat-anchor"><button class="bar-btn" id="bar-task" aria-haspopup="listbox" aria-expanded="false" title="카테고리를 골라 Task로 보내기">Task로<span class="chev" aria-hidden="true">▾</span></button></div>
   <button class="bar-btn" id="bar-delete" aria-label="보관함으로 옮기기" title="보관함으로 옮기기">📥</button>
 </div>
 
@@ -876,15 +912,46 @@ const API   = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE}`;
 const INBOX_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${INBOX_FILE}`;
 const ARCHIVE_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${ARCHIVE_FILE}`;
 const MEMOS_API = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${MEMOS_FILE}`;
-// 파일(active.md)의 섹션 헤더 — 봇·Skill이 쓰므로 절대 바꾸지 않는다
-const SECTION_KEYS = { high: '🔥 High', medium: '🟡 Medium', low: '🟢 Low' };
-// 화면에 보이는 우선순위 표기는 이것 하나로 통일(B10). 🥚(보관함의 Inbox 출처)는 우선순위가 아니라 별도
-const PRI = {
-  high: { icon: '🍅', label: 'High', to: 'High로' },
-  medium: { icon: '🍋', label: 'Medium', to: 'Medium으로' },
-  low: { icon: '🥝', label: 'Low', to: 'Low로' },
-};
-const PRI_ORDER = ['high', 'medium', 'low'];
+// 카테고리(서비스) — 우선순위(High/Medium/Low 섹션) 대신 쓴다.
+// 파일(active.md)은 섹션 없이 한 목록이고, 상위 할 일 줄 끝의 태그(" #portal" 등)가 카테고리다. 태그 없음 = etc.
+// 하위 줄에는 태그를 두지 않는다(부모를 따름). 파일 순서 = 등록 순서(새 항목은 늘 끝에).
+// 봇은 섹션 헤더에 의존하지 않고(키워드로 줄 삭제·전체 출력), 옛 헤더(## 🔥 High 등)가 남아 있어도 무시한다.
+const CATEGORIES = [
+  { key: 'ainote', label: 'AiNote' },
+  { key: 'paperon', label: 'PaperOn' },
+  { key: 'portal', label: 'Portal' },
+  { key: 'page', label: 'Page' },
+  { key: 'board', label: 'Board' },
+  { key: 'contact', label: 'Contact' },
+  { key: 'drive', label: 'Drive' },
+  { key: 'home', label: 'Home' },
+  { key: 'mail', label: 'Mail' },
+  { key: 'survey', label: 'Survey' },
+  { key: 'etc', label: 'etc' },
+];
+const CAT_ORDER = CATEGORIES.map((c) => c.key);
+const CAT = Object.fromEntries(CATEGORIES.map((c, i) => [c.key, { key: c.key, label: c.label, order: i, icon: `icons/${c.key}.svg` }]));
+const DEFAULT_CAT = 'etc';
+// 모르는 값(옛 보관 항목의 high/medium/low 포함) → etc
+const normCat = (k) => (k && CAT[k] ? k : DEFAULT_CAT);
+const TAG_RE = new RegExp(`\\s+#(${CAT_ORDER.join('|')})\\s*$`, 'i');
+// 줄 본문(체크 표시 뒤 글)에서 태그를 뗀다 → { text, cat } (cat은 태그가 있을 때만, 없으면 null)
+function parseTag(body) {
+  const m = String(body).match(TAG_RE);
+  return m ? { text: body.slice(0, m.index).trimEnd(), cat: m[1].toLowerCase() } : { text: body, cat: null };
+}
+const tagSuffix = (cat) => (cat && cat !== DEFAULT_CAT ? ` #${cat}` : '');
+// 할 일 한 줄 만들기(상위 줄에만 태그)
+const taskLine = (text, cat, indent = 0, checked = false) =>
+  `${'  '.repeat(indent)}- [${checked ? 'x' : ' '}] ${text}${indent === 0 ? tagSuffix(cat) : ''}`;
+// 줄의 태그만 바꾼다(cat null = 태그 없음 = etc). 할 일 줄이 아니면 그대로
+function setLineCat(line, cat) {
+  const m = line.match(/^(\s*- \[[ xX]\] )(.*)$/);
+  if (!m) return line;
+  return m[1] + parseTag(m[2]).text + tagSuffix(cat);
+}
+const lineCat = (line) => { const m = line.match(/^(\s*- \[[ xX]\] )(.*)$/); return m ? parseTag(m[2]).cat : null; };
+const catIconHTML = (key, cls = 'cat-ic') => `<img class="${cls}" src="${CAT[normCat(key)].icon}" alt="">`;
 function getMemoCols() { return window.innerWidth <= 600 ? 2 : 3; }
 const MEMO_MAX_COLS = 3;
 
@@ -894,7 +961,7 @@ const MEMO_MAX_COLS = 3;
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || null,
   content: '',
-  sections: [],
+  items: [], // active.md의 할 일·글머리 줄(파일 순서). 상위 줄은 cat(카테고리)·text(태그 뗀 글)·raw(원문 줄)
   inboxContent: '',
   inboxItems: [],
   archiveItems: [],
@@ -902,7 +969,10 @@ const state = {
 };
 
 let currentTab = 'active';
-let composerPriority = 'high'; // 플로팅 컴포저 우선순위 — 앱을 열 때·30분 넘게 비웠다 돌아올 때 🍅(3차 F6)
+// 플로팅 컴포저 카테고리 — 마지막에 고른 값을 기기에 기억(처음엔 목록 첫 번째 AiNote)
+const COMPOSER_CAT_KEY = lsKey('tako_composer_cat');
+let composerCat = CAT_ORDER[0];
+try { composerCat = normCat(localStorage.getItem(COMPOSER_CAT_KEY) || CAT_ORDER[0]); } catch (e) {}
 let selectedInbox = new Set();
 let selectedArchive = new Set();
 let sheetMode = 'edit'; // 시트는 이제 편집 전용(추가는 하단 입력창, R18)
@@ -1428,7 +1498,7 @@ const activeStore = createStore({
   serialize: (c) => c,
   onChange: (view) => {
     state.content = view;
-    state.sections = parseSections(view);
+    state.items = parseTasks(view);
   },
   onRebase: () => {
     notifyRebased();
@@ -1625,10 +1695,10 @@ function runTransfer({ adds, remove }) {
 //   ③ 24시간 이내인지
 const JOURNAL_KEY = lsKey('tako_pending_moves');
 const JOURNAL_MAX_AGE = 24 * 3600 * 1000;
+// 그 카테고리의 같은 줄 개수(raw = 태그까지 포함한 줄, taskLine으로 만든다)
 const countActiveLine = (key, raw) => {
   const want = normLine(raw.trim());
-  const sec = state.sections.find((x) => x.title === SECTION_KEYS[key]);
-  return sec ? sec.items.filter((i) => normLine(i.raw.trim()) === want).length : 0;
+  return state.items.filter((i) => i.cat === normCat(key) && normLine(i.raw.trim()) === want).length;
 };
 const countAllActive = (raw) => {
   const want = normLine(raw);
@@ -1645,15 +1715,18 @@ const JOURNAL_OPS = {
   activeDeleteBlocks: { store: () => activeStore, op: (items) => opDeleteBlocks(items),
     count: (items) => [...new Set(items.map((i) => normLine(i.raw)))].reduce((n, r) => n + countAllActive(r), 0) },
   activeRemoveAppended: { store: () => activeStore, op: (key, texts, fps) => opActiveRemoveAppended(key, texts, fps),
-    count: (key, texts) => [...new Set(texts)].reduce((n, t) => n + countActiveLine(key, `- [ ] ${t}`), 0) },
+    count: (key, texts) => [...new Set(texts)].reduce((n, t) => n + countActiveLine(key, taskLine(t, key)), 0) },
 };
 // 도착지 확인(verify) 종류 — 도착지의 같은 글(id) 개수. 기록할 때의 개수(before)보다 "늘었을 때만" 이동된 것으로 본다(S6:
 // 도착지에 원래 같은 글이 있으면 "있는지"만으로는 이동이 안 됐어도 통과해 원래 자리 항목을 지웠다)
 const JOURNAL_DEST = {
   archiveHas: (v) => v.ids.map((id) => ['a:' + id, () => state.archiveItems.filter((e) => e.id === id).length]),
   inboxHas: (v) => v.texts.map((t) => ['i:' + t, () => countInbox(t)]),
-  activeHas: (v) => v.texts.map((t) => ['t:' + t, () => countActiveLine(v.key, `- [ ] ${t}`)]),
-  activeHasFirst: (v) => v.list.map((x) => [`f:${x.priority}:${x.first}`, () => countActiveLine(x.priority, x.first)]),
+  activeHas: (v) => v.texts.map((t) => ['t:' + t, () => countActiveLine(v.key, taskLine(t, v.key))]),
+  // 하위로 복구되는 항목(any)은 부모의 카테고리를 따르므로 카테고리를 가리지 않고 같은 줄(들여쓰기 무시)을 센다
+  activeHasFirst: (v) => v.list.map((x) => [`f:${x.any ? '*' : x.cat}:${x.first}`, () => (x.any
+    ? state.items.filter((i) => normLine(i.raw.trim()) === normLine(x.first.trim())).length
+    : countActiveLine(x.cat, x.first))]),
 };
 function destCounts(v) {
   const m = {};
@@ -1668,7 +1741,11 @@ function destArrived(v) {
 function restoreVerify(entries) {
   const out = [];
   const act = entries.filter((e) => e.source === 'active' && e.block && e.block[0]);
-  if (act.length) out.push({ k: 'activeHasFirst', list: act.map((e) => ({ priority: e.priority, first: e.block[0] })) });
+  if (act.length) {
+    out.push({ k: 'activeHasFirst', list: act.map((e) => (e.parent
+      ? { any: true, first: setLineCat(e.block[0], null) }
+      : { cat: entryCat(e), first: setLineCat(e.block[0], entryCat(e)) })) });
+  }
   const inb = entries.filter((e) => e.source === 'inbox').map((e) => e.text);
   if (inb.length) out.push({ k: 'inboxHas', texts: inb });
   return out;
@@ -1692,7 +1769,7 @@ const liveJournal = new Set(); // 이 탭에서 아직 진행 중인 이동(다�
 const TAB_ID = genArchiveId();
 const JOURNAL_BEAT_MS = 15000;
 const JOURNAL_STALE_MS = 90000;
-const JOURNAL_VER = 2; // verify.before·expectCount를 남기는 형식. 그 전 기록은 확인할 근거가 없어 실행하지 않음(S20④)
+const JOURNAL_VER = 3; // 3: 카테고리 태그 형식(도착지 key가 카테고리). 2: verify.before·expectCount. 그 전 기록은 확인할 근거가 없어 실행하지 않음(S20④)
 let journalBeatTimer = null;
 function journalBeat() {
   if (!liveJournal.size) { clearInterval(journalBeatTimer); journalBeatTimer = null; return; }
@@ -1805,13 +1882,6 @@ const undoGone = () => {
   const msg = '되돌릴 항목이 그새 바뀌었어요';
   return Object.assign(new Error(msg), { userMessage: msg, gone: true });
 };
-const sectionRange = (lines, key) => {
-  const header = sectionHeaderIndex(lines, key);
-  if (header === -1) return null;
-  let end = lines.length;
-  for (let i = header + 1; i < lines.length; i++) if (lines[i].startsWith('## ')) { end = i; break; }
-  return { header, end };
-};
 // 넣은 그 줄들(기록한 지문 fps)을 찾아 지운다 — 추가·복구의 되돌리기와 실패 되돌림(S1·S12).
 // 글로 찾지 않으므로 같은 글의 원래 항목을 지우지 않는다. 저장되는 사이 체크하거나 하위를 붙였어도 찾음(체크 무시, 하위 포함).
 // 하나라도 정확히 못 찾으면 gone(Q7)
@@ -1860,37 +1930,37 @@ const lineOf = (item, content) => resolveLineIndex(item, content.split('\n'));
 const opToggle = (item, checked) => (c) => toggleAt(lineOf(item, c), checked, c);
 const opAppend = (key, text, rec = null) => withApplied((c) => {
   const info = {};
-  const out = appendToSection(key, text, c, info);
+  const out = appendTask(key, text, c, info);
   if (rec) rec.fps = [lineFp(out.split('\n'), info.at)];
   return out;
-}, (now, before) => countExactLines(now, `- [ ] ${text}`) > countExactLines(before, `- [ ] ${text}`));
-// 여러 줄을 한 섹션 끝에(Inbox → Task 분류)
+}, (now, before) => countExactLines(now, taskLine(text, key)) > countExactLines(before, taskLine(text, key)));
+// 여러 줄을 목록 끝에 같은 카테고리로(Inbox → Task 분류)
 const opAppendMany = (key, texts, rec = null) => (c) => {
   let out = c;
   const ats = [];
   texts.forEach((t) => {
     const info = {};
-    out = appendToSection(key, t, out, info);
+    out = appendTask(key, t, out, info);
     ats.push(info.at);
   });
   if (rec) { const ls = out.split('\n'); rec.fps = ats.map((a) => lineFp(ls, a)); }
   return out;
 };
-// 묶음(부모 + 하위)을 한 섹션 끝에 한 번에(3차 E). rec.fps = 넣은 상위 줄들의 지문(하위는 블록으로 함께 지워짐)
+// 묶음(부모 + 하위)을 목록 끝에 한 번에(3차 E). rec.fps = 넣은 상위 줄들의 지문(하위는 블록으로 함께 지워짐)
 const opAppendBundle = (key, blocks, rec = null) => withApplied((c) => {
   const one = (t) => String(t).replace(/\s*[\r\n]+\s*/g, ' ').trim();
   const block = [];
   const tops = [];
   blocks.forEach((b) => {
     tops.push(block.length);
-    block.push(`- [ ] ${one(b.text)}`);
-    b.children.forEach((ch) => block.push(`  - [ ] ${one(ch)}`));
+    block.push(taskLine(one(b.text), key));
+    b.children.forEach((ch) => block.push(taskLine(one(ch), key, 1)));
   });
   const lines = c.split('\n');
-  const at = insertIntoSection(lines, key, block);
+  const at = appendBlock(lines, block);
   if (rec) rec.fps = tops.map((k) => lineFp(lines, at + k));
   return lines.join('\n');
-}, (now, before) => countExactLines(now, `- [ ] ${blocks[0].text}`) > countExactLines(before, `- [ ] ${blocks[0].text}`));
+}, (now, before) => countExactLines(now, taskLine(blocks[0].text, key)) > countExactLines(before, taskLine(blocks[0].text, key)));
 // ---- 되돌리기 기록(S1·S13) ----
 // 되돌리기는 글로 다시 찾지 않는다. 연산이 실행될 때 "그 연산이 만든 줄"의 지문(locate용)과
 // 원래 자리(바로 위 기준 줄의 지문)를 rec에 남기고, 되돌릴 때 그 지문으로만 찾는다(못 고르면 gone).
@@ -1924,32 +1994,27 @@ const recordMove = (rec, info, out) => {
   if (!rec || info.at == null) return;
   rec.fp = lineFp(out.split('\n'), info.at);
   rec.indent = info.from.indent;
+  rec.cat = info.from.cat; // 원래 상위 줄이었으면 그 태그(없으면 null)로 되돌린다
   rec.anchor = anchorAt(info.from.mid, info.from.start);
 };
-const opEdit = (item, text, rec = null) => (c) => {
+// 글 고치기(+ 카테고리 바꾸기). cat이 undefined면 태그는 그대로, 값이면 그 카테고리 태그로(제자리에서)
+const opEdit = (item, text, rec = null, cat = undefined) => (c) => {
   const idx = lineOf(item, c);
-  const out = editLine(idx, text, c);
+  const out = editLine(idx, text, c, cat);
   if (rec) rec.fp = lineFp(out.split('\n'), idx);
   return out;
 };
-// 글 고치기 되돌리기: 고친 그 줄(기록한 지문)을 원래 글로
-const opEditBack = (rec, backText) => (c) => {
+// 글 고치기 되돌리기: 고친 그 줄(기록한 지문)을 원래 글(·원래 카테고리)로
+const opEditBack = (rec, backText, backCat = undefined) => (c) => {
   if (!rec || !rec.fp) throw undoGone();
   let idx;
   try { idx = locate(c.split('\n'), rec.fp); } catch (e) { throw undoGone(); }
-  return editLine(idx, backText, c);
-};
-const opEditMove = (item, text, key, rec = null) => (c) => {
-  const idx = lineOf(item, c);
-  const info = {};
-  const out = moveLineToSection(idx, key, editLine(idx, text, c), info);
-  recordMove(rec, info, out);
-  return out;
+  return editLine(idx, backText, c, backCat);
 };
 const opDeleteBlock = (item) => withApplied((c) => deleteAt(lineOf(item, c), c),
   (now, before) => removedVerdict([normLine(item.raw)], countKeyLines(normLine), now, before));
-// 옮기기·우선순위 변경 되돌리기(D2·S1): 옮긴 그 블록(기록한 지문)을 "지금 모습 그대로"(그 사이 체크·하위 변경 유지)
-// 빼서 원래 기준 줄 다음, 원래 들여쓰기로 다시 넣는다. backText: 글도 함께 고쳤으면 원래 글로
+// 옮기기(·카테고리 변경) 되돌리기(D2·S1): 옮긴 그 블록(기록한 지문)을 "지금 모습 그대로"(그 사이 체크·하위 변경 유지)
+// 빼서 원래 기준 줄 다음, 원래 들여쓰기·원래 태그로 다시 넣는다. backText: 글도 함께 고쳤으면 원래 글로
 const opUndoMove = (rec, { backText = null } = {}) => (c) => {
   if (!rec || !rec.fp) throw undoGone();
   const lines = c.split('\n');
@@ -1959,6 +2024,7 @@ const opUndoMove = (rec, { backText = null } = {}) => (c) => {
   let block = lines.splice(r.start, r.end - r.start + 1);
   block = adjustBlockIndent(block, rec.indent - getLineIndent(block[0]));
   if (backText != null) block[0] = editLine(0, backText, block[0]);
+  block[0] = setLineCat(block[0], rec.indent === 0 ? rec.cat : null);
   const at = anchorIndex(lines, rec.anchor);
   lines.splice(at, 0, ...block);
   return lines.join('\n');
@@ -2010,6 +2076,7 @@ const opMove = (srcItem, target, rec = null) => (c) => {
   const lines = c.split('\n');
   const t = { ...target };
   if (target.beforeItem) t.beforeLine = resolveLineIndex(target.beforeItem, lines);
+  if (target.afterItem) t.afterLine = resolveLineIndex(target.afterItem, lines);
   if (target.intoItem) t.intoLine = resolveLineIndex(target.intoItem, lines);
   const info = {};
   const out = moveLineToPosition(resolveLineIndex(srcItem, lines), t, c, info);
@@ -2069,25 +2136,23 @@ function removeInboxLines(items, content = state.inboxContent, { strict = false 
 // (A8 연타 잠금은 B9 즉시 반영 + C1 자리 탭 무시 + strict 제거(Q14)로 대체하고 없앴다 — R8)
 
 
-function parseSections(text) {
+// active.md 해석: 섹션 없이 파일 전체의 할 일(- [ ])·글머리(- ) 줄. 옛 섹션 헤더(## …)는 무시한다.
+// 상위 줄: cat = 줄 끝 태그(없으면 etc), text = 태그 뗀 글. 하위 줄: 부모의 cat을 따른다(태그 없음)
+function parseTasks(text) {
   const lines = text.split('\n');
-  const sections = [];
-  let cur = null;
+  const items = [];
   lines.forEach((line, idx) => {
-    const hd = line.match(/^##\s+(.+)$/);
-    if (hd) {
-      cur = { title: hd[1].trim(), items: [], headerLine: idx };
-      sections.push(cur);
-      return;
-    }
-    if (!cur) return;
     const cb = line.match(/^(\s*)- \[([ xX])\] (.*)$/);
     if (cb) {
-      cur.items.push({
+      const indent = Math.floor(cb[1].length / 2);
+      // 태그는 상위 줄에서만 뗀다(하위 줄 끝의 #mail 같은 글은 그대로 글)
+      const { text: body, cat } = indent === 0 ? parseTag(cb[3]) : { text: cb[3], cat: null };
+      items.push({
         type: 'task',
-        indent: Math.floor(cb[1].length / 2),
+        indent,
         checked: cb[2].toLowerCase() === 'x',
-        text: cb[3],
+        text: body,
+        tag: cat,
         lineIndex: idx,
         raw: line, // 저장 직전 실제 줄 위치를 다시 확인하는 기준값
       });
@@ -2095,77 +2160,52 @@ function parseSections(text) {
     }
     const bl = line.match(/^(\s*)- (.+)$/);
     if (bl && bl[2].trim() !== '') {
-      cur.items.push({
+      items.push({
         type: 'bullet',
         indent: Math.floor(bl[1].length / 2),
         text: bl[2],
+        tag: null,
         lineIndex: idx,
         raw: line,
       });
     }
   });
-  // 같은 글의 줄이 여럿일 때 구분할 단서(Q2): 섹션, 부모 줄, 파일 안에서 같은 글 중 몇 번째인지
+  // 같은 글의 줄이 여럿일 때 구분할 단서(Q2): (옛) 섹션, 부모 줄, 파일 안에서 같은 글 중 몇 번째인지
   const same = new Map();
   lines.forEach((l, i) => { const k = normLine(l); if (!same.has(k)) same.set(k, []); same.get(k).push(i); });
-  sections.forEach((sec) => {
-    const stack = [];
-    sec.items.forEach((it) => {
-      while (stack.length && stack[stack.length - 1].indent >= it.indent) stack.pop();
-      it.section = sec.title;
-      it.parentRaw = stack.length ? stack[stack.length - 1].raw : null;
-      const list = same.get(normLine(it.raw)) || [];
-      it.ordinal = list.indexOf(it.lineIndex);
-      it.sameCount = list.length;
-      Object.assign(it, lineSig(lines, it.lineIndex));
-      stack.push(it);
-    });
+  const stack = [];
+  items.forEach((it) => {
+    while (stack.length && stack[stack.length - 1].indent >= it.indent) stack.pop();
+    it.section = lineContext(lines, it.lineIndex).section;
+    it.parentRaw = stack.length ? stack[stack.length - 1].raw : null;
+    // 카테고리: 상위 줄은 자기 태그(없으면 etc), 하위 줄은 가장 가까운 상위의 것
+    it.cat = it.indent === 0 || !stack.length ? normCat(it.tag) : stack[0].cat;
+    const list = same.get(normLine(it.raw)) || [];
+    it.ordinal = list.indexOf(it.lineIndex);
+    it.sameCount = list.length;
+    Object.assign(it, lineSig(lines, it.lineIndex));
+    stack.push(it);
   });
-  return sections;
+  return items;
 }
 
-function findSectionByKey(key) {
-  const want = SECTION_KEYS[key];
-  return state.sections.find((s) => s.title === want);
+// 새 줄을 넣을 자리 = 마지막 비어 있지 않은 줄 다음(파일 끝의 빈 줄 앞). 파일 순서가 곧 등록 순서
+function appendIndex(lines) {
+  let last = -1;
+  lines.forEach((l, i) => { if (l.trim() !== '') last = i; });
+  return last + 1;
 }
 
-function sectionHeaderIndex(lines, key) {
-  const want = SECTION_KEYS[key];
-  return lines.findIndex((l) => l.match(/^##\s+(.+)$/)?.[1]?.trim() === want);
-}
-
-// 섹션 헤더가 사라진 파일에서도 막히지 않도록, 없으면 정해진 순서에 맞춰 다시 만든다.
-// (헤더가 지워진 채로 두면 그 우선순위로는 추가·이동·복구가 전부 실패한다)
-function ensureSectionHeader(lines, key) {
-  const found = sectionHeaderIndex(lines, key);
-  if (found !== -1) return found;
-  const order = ['high', 'medium', 'low'];
-  const laterIdx = order
-    .slice(order.indexOf(key) + 1)
-    .map((k) => sectionHeaderIndex(lines, k))
-    .filter((i) => i !== -1);
-  const at = laterIdx.length ? Math.min(...laterIdx) : lines.length;
-  lines.splice(at, 0, `## ${SECTION_KEYS[key]}`);
-  return at;
-}
-
-// 섹션 안에서 새 줄을 넣을 기준 위치(마지막 비어있지 않은 줄)
-function sectionInsertAfter(lines, key) {
-  const headerIdx = ensureSectionHeader(lines, key);
-  let insertAfter = headerIdx;
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('## ')) break;
-    if (lines[i].trim() !== '') insertAfter = i;
-  }
-  return insertAfter;
-}
-
-// 섹션 끝에 블록을 넣는다. 마지막 줄이 "- " 자리표시자면 그 줄을 대체한다.
+// 목록 끝에 블록을 넣는다. 마지막 줄이 "- " 자리표시자면 그 줄을 대체하고,
+// 마지막 줄이 할 일이 아닌 글(제목·설명)이면 빈 줄을 하나 두고 넣는다.
 // 반환: 넣은 블록 첫 줄의 번호(되돌리기 기록용)
-function insertIntoSection(lines, key, block) {
-  const at = sectionInsertAfter(lines, key);
-  if (lines[at].trim() === '-' || lines[at].trim() === '- ') { lines.splice(at, 1, ...block); return at; }
-  lines.splice(at + 1, 0, ...block);
-  return at + 1;
+function appendBlock(lines, block) {
+  let at = appendIndex(lines);
+  const prev = at > 0 ? lines[at - 1] : null;
+  if (prev != null && (prev.trim() === '-' || prev.trim() === '- ')) { lines.splice(at - 1, 1, ...block); return at - 1; }
+  if (prev != null && prev.trim() !== '' && !/^\s*- /.test(prev)) { lines.splice(at, 0, ''); at++; }
+  lines.splice(at, 0, ...block);
+  return at;
 }
 
 // 렌더 시점의 lineIndex는 그 뒤 다른 저장이 끝나면 어긋난다(줄이 늘거나 줄어듦).
@@ -2194,7 +2234,7 @@ function lineContext(ls, idx) {
 // 규칙: 후보가 정확히 하나로 정해질 때만 그 줄. 조금이라도 애매하면 추측하지 않고 gone
 //      ("목록이 바뀌었어요 · 새로 불러오기") — 유실·오삭제보다 멈춤이 낫다.
 // 대상(지문) = 줄 원문 raw + 섹션 section + 부모 줄 parentRaw + 같은 글 중 순번 ordinal / 개수 sameCount
-//            + 앞 줄 prev + 블록 다음 줄 next + 하위 줄 kids. parseSections·parseInbox·lineFp가 만든다.
+//            + 앞 줄 prev + 블록 다음 줄 next + 하위 줄 kids. parseTasks·parseInbox·lineFp가 만든다.
 const locateGone = () => {
   const msg = '목록이 바뀌었어요. 새로 불러온 뒤 다시 해 주세요';
   return Object.assign(new Error(msg), { userMessage: msg, gone: true });
@@ -2296,20 +2336,23 @@ function toggleAt(lineIndex, checked, content = state.content) {
   return lines.join('\n');
 }
 
-function appendToSection(key, text, content = state.content, info = null) {
+// 할 일 한 줄을 목록 끝에 그 카테고리 태그로
+function appendTask(key, text, content = state.content, info = null) {
   text = String(text).replace(/\s*[\r\n]+\s*/g, ' ').trim(); // 한 줄 보장(R4 방어 — md 형식이 깨지지 않게)
   const lines = content.split('\n');
-  const at = insertIntoSection(lines, key, [`- [ ] ${text}`]);
+  const at = appendBlock(lines, [taskLine(text, key)]);
   if (info) info.at = at;
   return lines.join('\n');
 }
 
-function editLine(lineIndex, newText, content = state.content) {
+// 글 고치기. cat: undefined = 태그 그대로, 값(etc 포함)·null = 그 카테고리 태그로 바꿈(하위 줄은 태그를 두지 않음)
+function editLine(lineIndex, newText, content = state.content, cat = undefined) {
   const lines = content.split('\n');
   const line = lines[lineIndex];
   const m = line.match(/^(\s*- \[[ xX]\] )(.*)$/);
   if (!m) throw new Error('not a task line');
-  lines[lineIndex] = m[1] + newText;
+  const keep = cat === undefined ? parseTag(m[2]).cat : cat;
+  lines[lineIndex] = m[1] + newText + (getLineIndent(line) === 0 ? tagSuffix(keep) : '');
   return lines.join('\n');
 }
 
@@ -2384,63 +2427,54 @@ function topLevelSlot(lines, at) {
   while (at < lines.length && lines[at].trim() !== '' && !lines[at].startsWith('## ') && getLineIndent(lines[at]) > 0) at++;
   return at;
 }
-// at 자리(그 앞 줄 기준)가 속한 섹션 제목
-function sectionTitleAt(lines, at) {
-  for (let i = Math.min(at, lines.length) - 1; i >= 0; i--) { const m = lines[i].match(/^##\s+(.+)$/); if (m) return m[1].trim(); }
-  return null;
-}
+// 보관 항목의 카테고리: 새 항목은 category, 옛 항목은 priority(high/medium/low → etc)
+const entryCat = (entry) => normCat(entry.category || entry.priority);
 // 반환: 넣은 블록 첫 줄 번호(없으면 -1)
 function restoreBlockInto(lines, entry) {
-  const block = entry.block || [];
+  let block = entry.block || [];
   if (!block.length) return -1;
-  // 원래 자리(보관할 때 남긴 바로 위 기준 줄 지문 entry.after): 같은 섹션에서 정확히 하나로 찾으면 그 아래로.
-  // 애매하거나 섹션이 다르면 아래 규칙(부모 아래·섹션 끝)대로(사용성 2차)
+  block = adjustBlockIndent(block, -getLineIndent(block[0]));
+  // 원래 자리(보관할 때 남긴 바로 위 기준 줄 지문 entry.after): 정확히 하나로 찾으면 그 아래로.
+  // 애매하면 아래 규칙(부모 아래·목록 끝)대로(사용성 2차)
   if (!entry.parent && entry.after) {
+    block[0] = setLineCat(block[0], entryCat(entry));
     let at = -1;
     try { at = anchorIndex(lines, entry.after); } catch (e) { at = -1; }
     if (at >= 0) at = topLevelSlot(lines, at);
-    if (at >= 0 && sectionTitleAt(lines, at) === SECTION_KEYS[entry.priority]) {
-      lines.splice(at, 0, ...adjustBlockIndent(block, -getLineIndent(block[0])));
+    if (at >= 0) {
+      lines.splice(at, 0, ...block);
       return at;
     }
   }
   if (entry.parent) {
-    // 부모는 섹션 안에서 그 글의 줄이 정확히 하나일 때만(같은 글 부모가 둘이면 고르지 않고 섹션 끝 상위로 — locate 원칙)
-    const headerIdx = ensureSectionHeader(lines, entry.priority);
+    // 부모는 그 글의 줄이 정확히 하나일 때만(같은 글 부모가 둘이면 고르지 않고 목록 끝 상위로 — locate 원칙)
+    const want = parseTag(entry.parent).text;
     const parents = [];
-    for (let i = headerIdx + 1; i < lines.length && !lines[i].startsWith('## '); i++) {
+    for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/^(\s*)- \[[ xX]\] (.*)$/);
-      if (m && m[2] === entry.parent) parents.push(i);
+      if (m && parseTag(m[2]).text === want) parents.push(i);
     }
     if (parents.length === 1) {
       const i = parents[0];
       const at = childInsertIndex(lines, i);
-      const indented = adjustBlockIndent(block, getLineIndent(lines[i]) + 1 - getLineIndent(block[0]));
+      const indented = adjustBlockIndent(block.map((l, k) => (k === 0 ? setLineCat(l, null) : l)), getLineIndent(lines[i]) + 1);
       lines.splice(at, 0, ...indented);
       return at;
     }
   }
-  return insertIntoSection(lines, entry.priority, adjustBlockIndent(block, -getLineIndent(block[0])));
-}
-
-// info(선택): { at } = 옮긴 블록 첫 줄의 새 번호, { from } = 블록을 뺀 직후 줄 배열·원래 시작 번호(되돌리기 기록용)
-function moveLineToSection(lineIndex, targetKey, content = state.content, info = null) {
-  const lines = content.split('\n');
-  const { start, end } = extractBlock(lines, lineIndex);
-  const block = lines.splice(start, end - start + 1);
-  if (info) info.from = { mid: [...lines], start, indent: getLineIndent(block[0]) };
-  const at = insertIntoSection(lines, targetKey, block);
-  if (info) info.at = at;
-  return lines.join('\n');
+  block[0] = setLineCat(block[0], entryCat(entry));
+  return appendBlock(lines, block);
 }
 
 // Move a task block.
-// target: { sectionKey, beforeLine?, intoLine?, indent? }
+// target: { cat?, beforeLine?, afterLine?, intoLine?, indent? }
 //   - beforeLine: insert before this line at the target line's indent (sibling)
+//   - afterLine: insert right after this line's block (하위 포함) at that line's indent
 //   - intoLine: insert as the last child of this line (indent = target + 1)
-//   - neither: append at end of section as a main task (indent 0)
+//   - none of the three: append at end of the list as a main task (indent 0)
 //   - indent: optional explicit depth override (used for the depth-ambiguous gap below a
 //     last child, where the next line's indent alone can't express "stay as the last child")
+//   - cat: 상위 줄로 놓일 때의 카테고리 태그(없으면 태그 그대로). 하위로 놓이면 태그를 뗀다(부모를 따름)
 function moveLineToPosition(srcLineIndex, target, content = state.content, info = null) {
   const lines = content.split('\n');
   const { start, end } = extractBlock(lines, srcLineIndex);
@@ -2449,47 +2483,46 @@ function moveLineToPosition(srcLineIndex, target, content = state.content, info 
   if (target.beforeLine != null && target.beforeLine > start && target.beforeLine <= end) {
     throw new Error('invalid drop: before-target is inside source block');
   }
+  if (target.afterLine != null && target.afterLine >= start && target.afterLine <= end) {
+    throw new Error('invalid drop: after-target is inside source block');
+  }
   if (target.intoLine != null && target.intoLine >= start && target.intoLine <= end) {
     throw new Error('invalid drop: cannot make self/descendant into a child');
   }
 
   const srcBaseIndent = getLineIndent(lines[start]);
   let block = lines.splice(start, blockLen);
-  if (info) info.from = { mid: [...lines], start, indent: srcBaseIndent };
+  if (info) info.from = { mid: [...lines], start, indent: srcBaseIndent, cat: srcBaseIndent === 0 ? lineCat(block[0]) : null };
 
+  const shifted = (n) => (n > start ? n - blockLen : n);
   let targetIndent;
   if (target.intoLine != null) {
-    let intoIdx = target.intoLine;
-    if (intoIdx > start) intoIdx -= blockLen;
-    targetIndent = getLineIndent(lines[intoIdx]) + 1;
+    targetIndent = getLineIndent(lines[shifted(target.intoLine)]) + 1;
   } else if (target.beforeLine != null) {
-    let beforeIdx = target.beforeLine;
-    if (beforeIdx > start) beforeIdx -= blockLen;
-    targetIndent = getLineIndent(lines[beforeIdx]);
+    targetIndent = getLineIndent(lines[shifted(target.beforeLine)]);
+  } else if (target.afterLine != null) {
+    targetIndent = getLineIndent(lines[shifted(target.afterLine)]);
   } else {
     targetIndent = 0;
   }
   if (target.indent != null && target.intoLine == null) targetIndent = target.indent;
   block = adjustBlockIndent(block, targetIndent - srcBaseIndent);
+  if (targetIndent > 0) block[0] = setLineCat(block[0], null);
+  else if (target.cat !== undefined) block[0] = setLineCat(block[0], target.cat);
 
+  let at;
   if (target.intoLine != null) {
-    let parentIdx = target.intoLine;
-    if (parentIdx > start) parentIdx -= blockLen;
-    const at = childInsertIndex(lines, parentIdx);
+    at = childInsertIndex(lines, shifted(target.intoLine));
     lines.splice(at, 0, ...block);
-    if (info) info.at = at;
-    return lines.join('\n');
+  } else if (target.beforeLine != null) {
+    at = shifted(target.beforeLine);
+    lines.splice(at, 0, ...block);
+  } else if (target.afterLine != null) {
+    at = blockEndAt(lines, shifted(target.afterLine)) + 1;
+    lines.splice(at, 0, ...block);
+  } else {
+    at = appendBlock(lines, block);
   }
-
-  if (target.beforeLine != null) {
-    let insertAt = target.beforeLine;
-    if (insertAt > start) insertAt -= blockLen;
-    lines.splice(insertAt, 0, ...block);
-    if (info) info.at = insertAt;
-    return lines.join('\n');
-  }
-
-  const at = insertIntoSection(lines, target.sectionKey, block);
   if (info) info.at = at;
   return lines.join('\n');
 }
@@ -2549,13 +2582,13 @@ function renderInboxItem(item) {
   // 버튼 이름에 항목 글을 넣어 스크린리더에서 어느 항목인지 알 수 있게(R17)
   const t = escAttr(item.text);
   actions.innerHTML = `
-    <button class="pri-mini h" title="High로 보내기" aria-label="High로 보내기: ${t}">🍅</button>
-    <button class="pri-mini m" title="Medium으로 보내기" aria-label="Medium으로 보내기: ${t}">🍋</button>
-    <button class="pri-mini l" title="Low로 보내기" aria-label="Low로 보내기: ${t}">🥝</button>
+    <div class="cat-anchor"><button class="pri-mini" title="카테고리를 골라 Task로 보내기" aria-label="Task로 보내기: ${t}" aria-haspopup="listbox" aria-expanded="false">Task로<span class="chev" aria-hidden="true">▾</span></button></div>
     <button class="row-btn" title="보관함으로 옮기기" aria-label="보관함으로 옮기기: ${t}">📥</button>
   `;
-  actions.querySelectorAll('.pri-mini').forEach((btn) => {
-    btn.addEventListener('click', (e) => { e.stopPropagation(); onMoveToActive(item, btn.classList.contains('h') ? 'high' : btn.classList.contains('m') ? 'medium' : 'low'); });
+  const toTask = actions.querySelector('.pri-mini');
+  toTask.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openCatMenu(toTask, { current: null, label: `Task로 보내기: ${item.text}`, onPick: (key) => onMoveToActive(item, key) });
   });
   actions.querySelector('.row-btn').addEventListener('click', (e) => { e.stopPropagation(); onDeleteFromInbox(item); });
 
@@ -2612,12 +2645,11 @@ function renderArchiveItem(entry) {
   const meta = document.createElement('span');
   meta.className = 'archive-badge';
   if (entry.source === 'active') {
-    meta.classList.add('pri-' + entry.priority);
-    const p = PRI[entry.priority] || PRI.medium;
-    meta.textContent = p.icon;
+    const p = CAT[entryCat(entry)];
+    meta.innerHTML = catIconHTML(p.key);
     meta.title = `Task · ${p.label}`;
   } else {
-    // 과일 아이콘은 우선순위 전용 — Inbox 출신은 11px 회색 글자 "Inbox"(D5, 이전 🥚는 뜻이 안 보였다)
+    // 카테고리 아이콘은 Task 출신 전용 — Inbox 출신은 11px 회색 글자 "Inbox"(D5, 이전 🥚는 뜻이 안 보였다)
     meta.textContent = 'Inbox';
     meta.classList.add('from-inbox');
     meta.title = 'Inbox에서 보관함으로 옮긴 항목';
@@ -2731,7 +2763,7 @@ async function onBulkRestore() {
 
 // 복구 뒤 어디로 갔는지 짧게 알림(사용성 2차 — 복구 뒤 안내가 없었다)
 function restoredNotice(entries) {
-  const dests = [...new Set(entries.map((e) => (e.source === 'active' ? `${(PRI[e.priority] || PRI.medium).icon} ${(PRI[e.priority] || PRI.medium).label}` : 'Inbox')))];
+  const dests = [...new Set(entries.map((e) => (e.source === 'active' ? `Task(${CAT[entryCat(e)].label})` : 'Inbox')))];
   const where = dests.length === 1 ? dests[0] : '원래 자리';
   notify.info(entries.length > 1 ? `${entries.length}개를 ${where}에 되살렸어요` : `${where}에 되살렸어요`);
 }
@@ -2774,13 +2806,12 @@ function archiveActiveTask(item) {
   const lines = state.content.split('\n');
   const { start, end } = extractBlock(lines, lineIndex);
   const block = lines.slice(start, end + 1);
-  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === lineIndex));
-  const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
+  const cur = state.items.find((i) => i.lineIndex === lineIndex);
   const entry = {
     id: genArchiveId(),
     deletedAt: new Date().toISOString(),
     source: 'active',
-    priority,
+    category: cur ? cur.cat : normCat(item.cat),
     block,
   };
   // 하위 할 일: 들여쓰기를 0으로 맞춰 보관하고, 복구할 자리를 찾도록 부모 글을 함께 남긴다(A6)
@@ -3277,9 +3308,8 @@ function bindBarEvents() {
     }
     renderInbox();
   });
-  $('#bar-high')?.addEventListener('click', () => onBulkMove('high'));
-  $('#bar-med')?.addEventListener('click',  () => onBulkMove('medium'));
-  $('#bar-low')?.addEventListener('click',  () => onBulkMove('low'));
+  const barTask = $('#bar-task');
+  barTask?.addEventListener('click', () => openCatMenu(barTask, { current: null, label: '선택한 항목을 보낼 카테고리', onPick: onBulkMove }));
   $('#bar-delete')?.addEventListener('click', onBulkDelete);
 }
 
@@ -3288,7 +3318,7 @@ async function onMoveToActive(item, priority) {
   const work = moveInboxToActive([item], priority);
   selectedInbox.clear();
   vanishRows(rows, renderInbox);
-  offerUndo(`${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive([item], priority, work.rec));
+  offerUndo(`Task(${CAT[priority].label})에 보냈어요`, work, () => undoMoveToActive([item], priority, work.rec));
   try {
     await work;
   } catch (e) {
@@ -3305,7 +3335,7 @@ async function onBulkMove(priority) {
   const work = moveInboxToActive(items, priority);
   selectedInbox.clear();
   vanishRows(rows, renderInbox);
-  offerUndo(`${items.length}개를 ${PRI[priority].icon} ${PRI[priority].to} 보냈어요`, work, () => undoMoveToActive(items, priority, work.rec));
+  offerUndo(`${items.length}개를 Task(${CAT[priority].label})에 보냈어요`, work, () => undoMoveToActive(items, priority, work.rec));
   try {
     await work;
   } catch (e) {
@@ -3574,7 +3604,7 @@ function bindTabEvents() {
 // ============ Rendering ============
 // 네 탭이 공유하는 헤더·탭 줄. 탭 이름·배지·저장 표시는 여기 한 곳만 고친다.
 const TABS = [['active', 'Task'], ['inbox', 'Inbox'], ['memo', 'Memo'], ['archive', 'Archive']];
-function renderShell(tab, { meta = '', sort = false } = {}) {
+function renderShell(tab, { sort = false } = {}) {
   const inboxCount = state.inboxItems.length;
   const tabsHtml = TABS.map(([id, label]) => {
     const badge = id === 'inbox' && inboxCount ? ` <span class="badge">${inboxCount}</span>` : '';
@@ -3585,9 +3615,8 @@ function renderShell(tab, { meta = '', sort = false } = {}) {
     <header>
       <div class="title-row">
         <h1 class="brand">${TAKO_LOGO}<span>tako</span></h1>
-        ${meta ? `<div class="meta">${meta}</div>` : ''}
       </div>
-      <div class="header-actions"><span class="sync-slot">${syncPillHTML()}</span>${headerActions({ sort })}</div>
+      <div class="header-actions"><span class="sync-slot">${syncPillHTML()}</span><span class="hdr-date">${fmtDate(new Date())}</span>${headerActions({ sort })}</div>
     </header>
     <div class="tabs" role="tablist" aria-label="화면">${tabsHtml}</div>`;
 }
@@ -3709,10 +3738,10 @@ function renderSync() {
   announce(el.classList.contains('show') ? label.textContent : '');
 }
 
-// 첫 로딩 스켈레톤 — 섹션마다 회색 줄 3개
+// 첫 로딩 스켈레톤 — In progress·Done 자리에 회색 줄 3개씩
 function skeletonHTML() {
-  return ['high', 'medium', 'low'].map(() => `
-    <div class="section"><div class="card" style="padding:10px 14px">
+  return ['In progress', 'Done'].map((t) => `
+    <div class="section"><div class="section-title">${t}</div><div class="card" style="padding:10px 14px">
       <div class="skeleton" style="width:72%"></div>
       <div class="skeleton" style="width:54%"></div>
       <div class="skeleton" style="width:63%"></div>
@@ -3730,11 +3759,7 @@ function headerActions({ sort = false } = {}) {
 
 // 완료(체크)된 최상위 할 일 개수
 function countDoneTopLevel() {
-  let n = 0;
-  state.sections.forEach((s) => s.items.forEach((i) => {
-    if (i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()) n++;
-  }));
-  return n;
+  return state.items.filter((i) => i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()).length;
 }
 
 function openMoreMenu(btn) {
@@ -3745,8 +3770,6 @@ function openMoreMenu(btn) {
   if (currentTab === 'active') {
     const doneN = countDoneTopLevel();
     rows.push(`<button class="menu-item" role="menuitem" id="menu-archive-done"${doneN ? '' : ' disabled'}><span class="mi-ic">📥</span>완료 항목 보관${doneN ? `<span class="mi-count">${doneN}</span>` : ''}</button>`);
-    // 보기 전환(3차 F3) — 다크 모드 항목처럼 지금 보기의 반대를 문구로
-    rows.push(`<button class="menu-item" role="menuitem" id="menu-view"><span class="mi-ic">${taskView === 'one' ? '🗂️' : '☰'}</span>${taskView === 'one' ? '우선순위별로 나눠 보기' : '한 목록으로 보기'}</button>`);
   }
   rows.push(`<div class="menu-sep"></div>`);
   const isDark = effectiveTheme() === 'dark';
@@ -3766,15 +3789,8 @@ function closeMoreMenu() {
 
 // 완료된 최상위 할 일을 블록(하위 포함) 단위로 한 번에 보관함 이동
 async function onBulkArchiveDone() {
-  const targets = [];
-  state.sections.forEach((sec) => {
-    const priority = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec.title) || 'medium';
-    sec.items.forEach((i) => {
-      if (i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()) {
-        targets.push({ ...i, priority }); // 섹션·부모·순번 단서까지 함께(Q1·Q2)
-      }
-    });
-  });
+  // 부모·순번 단서까지 함께(Q1·Q2)
+  const targets = state.items.filter((i) => i.type === 'task' && i.checked && i.indent === 0 && i.text.trim()).map((i) => ({ ...i }));
   if (!targets.length) return;
   try {
     const lines = state.content.split('\n');
@@ -3788,7 +3804,7 @@ async function onBulkArchiveDone() {
         id: genArchiveId(),
         deletedAt: new Date().toISOString(),
         source: 'active',
-        priority: t.priority,
+        category: t.cat,
         block: lines.slice(start, end + 1),
         after: anchor, // 복구할 때 원래 자리(사용성 2차)
       };
@@ -3867,157 +3883,128 @@ function renderApp() {
   const ae = document.activeElement;
   const focusRow = ae && ae.closest && ae.closest('#sections .task');
   const focusKey = focusRow ? { key: focusRow.dataset.key, kind: ae.matches('input[type="checkbox"]') ? 'cb' : 'text' } : null;
-  const focusSection = ae && ae.closest && (ae.closest('#sections .done-fold') || focusRow) ? ae.closest('.section')?.classList[1] : null;
-  // 헤더 진행률(C4): 하위까지 세던 "4/17 완료"는 "완료 항목 보관 n"(상위 기준)과 숫자가 안 맞았다.
-  // 상위 할 일 기준 남은 개수 하나만 보여 준다
-  const remaining = state.sections.reduce((acc, s) => {
-    return acc + s.items.filter((i) => i.type === 'task' && i.indent === 0 && !i.checked && i.text.trim()).length;
-  }, 0);
-
+  const focusSection = ae && ae.closest && (ae.closest('#sections .sec-toggle') || focusRow) ? ae.closest('.section')?.classList[1] : null;
   app.innerHTML = `
-    ${renderShell('active', {
-      // 저장 실패 알약이 떠도 "남은 할 일 n"은 잘리지 않게 날짜 쪽만 줄어든다(다듬기)
-      meta: `<span class="meta-date">${fmtDate(new Date())} ·</span> <span class="meta-count">${remaining ? `남은 할 일 ${remaining}` : '남은 할 일 없음'}</span>`,
-    })}
+    ${renderShell('active')}
     <div id="sections"></div>
   `;
   bindTabEvents();
 
   const root = $('#sections');
-  if (syncStatus.loading && !state.sections.length) {
+  if (syncStatus.loading && !state.items.length) {
     root.innerHTML = skeletonHTML();
     setComposerMode('active');
     return;
   }
-  if (taskView === 'one') renderOneList(root);
-  else renderSplitSections(root);
+  renderTaskSections(root);
   setComposerMode('active');
   restoreTaskFocus(focusKey, focusSection);
 }
 
-// 우선순위별로 나눠 보기(3차 F3에서 고를 수 있는 보기): 섹션 제목 + 섹션마다 "완료 n개"
-function renderSplitSections(root) {
-  ['high','medium','low'].forEach((key) => {
-    const sec = findSectionByKey(key);
-    if (!sec) return;
-    const cls = key === 'high' ? 'pri-high' : key === 'medium' ? 'pri-med' : 'pri-low';
-    const realItems = sec.items.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim());
-    const taskCount = sec.items.filter((i) => i.type === 'task' && i.text.trim()).length;
-
-    const div = document.createElement('div');
-    div.className = `section ${cls}`;
-    const secIcon = PRI[key].icon;
-    div.innerHTML = `
-      <div class="section-title">
-        <span class="sec-ic" aria-hidden="true">${secIcon}</span>${PRI[key].label}
-        ${taskCount ? `<span class="count">${taskCount}</span>` : ''}
-      </div>
-      <div class="card"></div>
-    `;
-    const card = div.querySelector('.card');
-    if (realItems.length === 0) {
-      const e = document.createElement('div');
-      e.className = 'empty';
-      e.textContent = `${PRI[key].icon} 비어 있어요`;
-      card.appendChild(e);
-    } else {
-      // 완료된 상위 할 일(하위 포함)은 섹션 아래 "완료 n개" 접기 행으로 모은다(B3).
-      // 방금 체크한 항목은 800ms 동안 제자리에 머문다(lingering)
-      const blocks = splitBlocks(sec.items.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim()));
-      const isDoneBlock = (b) => b.root.type === 'task' && b.root.checked && !doneLinger.has(lingerKey(b.root));
-      const open = blocks.filter((b) => !isDoneBlock(b));
-      const done = blocks.filter(isDoneBlock);
-      appendRows(card, open.flatMap((b) => [b.root, ...b.children]), key);
-      if (done.length) {
-        // 드래그 "섹션 끝"은 미완료 마지막 블록 바로 뒤로. 그 다음 줄이 (완료) 항목이면 그 앞에 넣는다
-        const lastOpen = open[open.length - 1];
-        const lastLine = lastOpen ? (lastOpen.children.length ? lastOpen.children[lastOpen.children.length - 1] : lastOpen.root).lineIndex : null;
-        const nextItem = lastLine == null ? done[0].root : sec.items.find((i) => i.lineIndex === lastLine + 1);
-        if (nextItem) div.dataset.firstDone = nextItem.lineIndex;
-        const expanded = isDoneOpen(key);
-        const fold = document.createElement('button');
-        fold.type = 'button';
-        fold.className = 'done-fold';
-        fold.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        const prev = lastDoneCount[key];
-        fold.innerHTML = `<span>완료 <span class="done-n">${done.length}</span>개</span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>`;
-        if (prev != null && done.length > prev) fold.querySelector('.done-n').classList.add('bump');
-        fold.addEventListener('click', () => { setDoneOpen(key, !expanded); renderApp(); });
-        card.appendChild(fold);
-        if (expanded) appendRows(card, done.flatMap((b) => [b.root, ...b.children]), key);
-      }
-      lastDoneCount[key] = done.length;
-    }
-    root.appendChild(div);
-  });
-}
-
-// ---- 보기 방식(3차 F3): 'one' 한 목록(기본) | 'split' 우선순위별로 나눠 보기. 기기에 기억 ----
-const TASK_VIEW_KEY = lsKey('tako_task_view');
-let taskView = 'one';
-try { if (localStorage.getItem(TASK_VIEW_KEY) === 'split') taskView = 'split'; } catch (e) {}
-function setTaskView(v) {
-  taskView = v;
-  try { localStorage.setItem(TASK_VIEW_KEY, v); } catch (e) {}
+// ---- 정렬·필터(기기에 기억) ----
+// 정렬 'cat' 카테고리순(기본: 카테고리 목록 순서, 같은 카테고리 안은 등록순) | 'reg' 등록순(파일 순서 = 추가된 순서)
+const TASK_SORT_KEY = lsKey('tako_task_sort');
+let taskSort = 'cat';
+try { if (localStorage.getItem(TASK_SORT_KEY) === 'reg') taskSort = 'reg'; } catch (e) {}
+function setTaskSort(v) {
+  taskSort = v;
+  try { localStorage.setItem(TASK_SORT_KEY, v); } catch (e) {}
   renderApp();
 }
+const SORT_LABEL = { cat: '카테고리순', reg: '등록순' };
+// 필터 'all' 또는 카테고리 key
+const TASK_FILTER_KEY = lsKey('tako_task_filter');
+let taskFilter = 'all';
+try { const f = localStorage.getItem(TASK_FILTER_KEY); if (f && CAT[f]) taskFilter = f; } catch (e) {}
+function setTaskFilter(v) {
+  taskFilter = v === 'all' || !CAT[v] ? 'all' : v;
+  try { if (taskFilter === 'all') localStorage.removeItem(TASK_FILTER_KEY); else localStorage.setItem(TASK_FILTER_KEY, taskFilter); } catch (e) {}
+  renderApp();
+}
+// 카테고리별 진행 중 상위 할 일 개수(필터 메뉴에 표시)
+function openCountByCat() {
+  const n = {};
+  state.items.forEach((i) => { if (i.type === 'task' && i.indent === 0 && !i.checked && i.text.trim()) n[i.cat] = (n[i.cat] || 0) + 1; });
+  n.all = Object.values(n).reduce((a, b) => a + b, 0);
+  return n;
+}
 
-// 한 목록 보기(3차 F1·F2·F5): 파일 순서 그대로(High → Medium → Low) 섹션 제목만 없앤다 — 보기를 바꿔도 항목이
-// 움직이지 않는다. 우선순위가 바뀌는 경계에만 10px 간격, 상위 행마다 과일(renderTask). 완료는 맨 아래 "완료 n개" 하나
-function renderOneList(root) {
-  const div = document.createElement('div');
-  div.className = 'section one-list';
-  div.innerHTML = '<div class="card"></div>';
-  const card = div.querySelector('.card');
-  const open = [], done = [];
-  const firstDone = {}; // 드래그 "그 우선순위의 끝" = 미완료 마지막 블록 바로 뒤(완료 항목 앞). 나눠 보기의 data-first-done과 같은 규칙
-  PRI_ORDER.forEach((key) => {
-    const sec = findSectionByKey(key);
-    if (!sec) return;
-    const blocks = splitBlocks(sec.items.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim()));
-    const isDoneBlock = (b) => b.root.type === 'task' && b.root.checked && !doneLinger.has(lingerKey(b.root));
-    const o = blocks.filter((b) => !isDoneBlock(b));
-    const d = blocks.filter(isDoneBlock);
-    o.forEach((b) => open.push({ key, b }));
-    d.forEach((b) => done.push({ key, b }));
-    if (d.length) {
-      const lastOpen = o[o.length - 1];
-      const lastLine = lastOpen ? (lastOpen.children.length ? lastOpen.children[lastOpen.children.length - 1] : lastOpen.root).lineIndex : null;
-      const nextItem = lastLine == null ? d[0].root : sec.items.find((i) => i.lineIndex === lastLine + 1);
-      if (nextItem) firstDone[key] = nextItem.lineIndex;
-    }
-  });
-  div.dataset.firstDone = JSON.stringify(firstDone);
-  if (!open.length && !done.length) {
+// Task 탭 본문: In progress(미완료 상위 할 일 + 하위) / Done(완료 상위 할 일 + 하위) 두 섹션.
+// 방금 체크한 항목은 800ms 동안 In progress에 머문다(lingering). 정렬·필터는 두 섹션에 똑같이 적용
+function renderTaskSections(root) {
+  const real = state.items.filter((i) => (i.type === 'task' || i.type === 'bullet') && i.text.trim());
+  let blocks = splitBlocks(real);
+  if (taskFilter !== 'all') blocks = blocks.filter((b) => b.root.cat === taskFilter);
+  if (taskSort === 'cat') blocks = blocks.map((b, i) => [b, i]).sort((a, b) => (CAT[a[0].root.cat].order - CAT[b[0].root.cat].order) || (a[1] - b[1])).map((x) => x[0]);
+  const isDoneBlock = (b) => b.root.type === 'task' && b.root.checked && !doneLinger.has(lingerKey(b.root));
+  const open = blocks.filter((b) => !isDoneBlock(b));
+  const done = blocks.filter(isDoneBlock);
+  const filterLabel = taskFilter === 'all' ? '' : `${CAT[taskFilter].label}에 `;
+
+  // In progress
+  const sec1 = document.createElement('div');
+  sec1.className = 'section open';
+  sec1.innerHTML = `
+    <div class="section-title">In progress${open.length ? `<span class="count">${open.length}</span>` : ''}
+      <span class="sec-right">
+        <span class="cat-anchor"><button type="button" class="filter-btn${taskFilter === 'all' ? '' : ' on'}" id="filter-btn" aria-haspopup="listbox" aria-expanded="false" title="카테고리로 거르기" aria-label="카테고리 필터: ${taskFilter === 'all' ? '전체' : CAT[taskFilter].label}">${taskFilter === 'all' ? '전체' : catIconHTML(taskFilter) + esc(CAT[taskFilter].label)}<span class="tri" aria-hidden="true"></span></button></span>
+        <span class="cat-anchor"><button type="button" class="sort-btn" id="sort-btn" aria-haspopup="listbox" aria-expanded="false" title="정렬 바꾸기" aria-label="정렬: ${SORT_LABEL[taskSort]}">${SORT_LABEL[taskSort]}<span class="tri" aria-hidden="true"></span></button></span>
+      </span>
+    </div>
+    <div class="card" data-list="open"></div>`;
+  // 정렬 메뉴: 카테고리순 / 등록순
+  const sbtn = sec1.querySelector('#sort-btn');
+  sbtn.addEventListener('click', () => openOptMenu(sbtn, {
+    items: Object.keys(SORT_LABEL).map((k) => ({ key: k, label: SORT_LABEL[k] })),
+    current: taskSort, label: '정렬', align: 'right',
+    onPick: (k) => { if (k !== taskSort) setTaskSort(k); },
+  }));
+  // 필터 메뉴: 전체 + 카테고리 11개(진행 중 개수 표시). 고르면 버튼 글자가 그 카테고리로 바뀐다
+  const fbtn = sec1.querySelector('#filter-btn');
+  fbtn.addEventListener('click', () => openCatMenu(fbtn, {
+    current: taskFilter, label: '카테고리 필터', align: 'right',
+    allOption: { key: 'all', label: '전체' }, counts: openCountByCat(),
+    onPick: (k) => { if (k !== taskFilter) setTaskFilter(k); },
+  }));
+  const card1 = sec1.querySelector('.card');
+  if (!open.length) {
     const e = document.createElement('div');
     e.className = 'empty';
-    e.textContent = '비어 있어요';
-    card.appendChild(e);
-  }
-  appendKeyedBlocks(card, open);
-  if (done.length) {
-    const expanded = isDoneOpen('all');
-    const fold = document.createElement('button');
-    fold.type = 'button';
-    fold.className = 'done-fold';
-    fold.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    const prev = lastDoneCount.all;
-    fold.innerHTML = `<span>완료 <span class="done-n">${done.length}</span>개</span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>`;
-    if (prev != null && done.length > prev) fold.querySelector('.done-n').classList.add('bump');
-    fold.addEventListener('click', () => { setDoneOpen('all', !expanded); renderApp(); });
-    card.appendChild(fold);
-    if (expanded) appendKeyedBlocks(card, done);
-  }
+    e.textContent = `${filterLabel}진행 중인 할 일이 없어요`;
+    card1.appendChild(e);
+  } else appendBlocks(card1, open);
+  root.appendChild(sec1);
+
+  // Done — 제목을 눌러 접고 펼침(기기에 기억). 개수가 늘면 살짝 튐
+  const expanded = isDoneOpen('all');
+  const sec2 = document.createElement('div');
+  sec2.className = 'section done' + (expanded ? '' : ' collapsed');
+  const prev = lastDoneCount.all;
+  sec2.innerHTML = `
+    <div class="section-title">
+      <button type="button" class="sec-toggle" aria-expanded="${expanded}" aria-controls="done-card">Done${done.length ? `<span class="count">${done.length}</span>` : ''}<span class="tri" aria-hidden="true"></span></button>
+    </div>
+    <div class="card" id="done-card" data-list="done"></div>`;
+  if (prev != null && done.length > prev) sec2.querySelector('.count')?.classList.add('bump');
   lastDoneCount.all = done.length;
-  root.appendChild(div);
+  sec2.querySelector('.sec-toggle').addEventListener('click', () => { setDoneOpen('all', !expanded); renderApp(); });
+  const card2 = sec2.querySelector('.card');
+  if (!done.length) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.textContent = `${filterLabel}완료한 할 일이 없어요`;
+    card2.appendChild(e);
+  } else appendBlocks(card2, done);
+  root.appendChild(sec2);
 }
-// 블록들을 차례로 그리고, 우선순위가 바뀌는 첫 행에 간격(pri-gap)
-function appendKeyedBlocks(card, list) {
+// 블록들을 차례로 그리고, 카테고리순일 때 카테고리가 바뀌는 첫 행에 간격(cat-gap)
+function appendBlocks(card, list) {
   let prevKey = null;
-  list.forEach(({ key, b }) => {
+  list.forEach((b) => {
+    const key = b.root.cat;
     const before = card.childElementCount;
     appendRows(card, [b.root, ...b.children], key);
-    if (prevKey && prevKey !== key) card.children[before]?.classList.add('pri-gap');
+    if (taskSort === 'cat' && prevKey && prevKey !== key) card.children[before]?.classList.add('cat-gap');
     prevKey = key;
   });
 }
@@ -4031,8 +4018,8 @@ function restoreTaskFocus(focusKey, sectionCls) {
       return;
     }
   }
-  // 완료되어 접기 행 속으로 들어갔거나 접기 행을 눌렀으면 그 섹션의 접기 행으로
-  if (sectionCls) document.querySelector(`#sections .section.${sectionCls} .done-fold`)?.focus({ preventScroll: true });
+  // 완료되어 Done으로 들어갔거나 Done 제목을 눌렀으면 Done 제목으로
+  if (sectionCls) document.querySelector('#sections .section.done .sec-toggle')?.focus({ preventScroll: true });
 }
 
 
@@ -4057,11 +4044,12 @@ function appendRows(card, rows, key) {
     const hasChildren = !!next && next.indent > item.indent;
     const collapsedNow = hasChildren && isCollapsed(item);
     if (item.type === 'task') {
-      let hiddenCount = 0;
-      if (collapsedNow) {
-        for (let j = idx + 1; j < rows.length && rows[j].indent > item.indent; j++) hiddenCount++;
+      // 하위 항목 개수(모든 깊이) — 펼쳐 있어도 상위 글 옆에 표시
+      let childCount = 0;
+      if (hasChildren) {
+        for (let j = idx + 1; j < rows.length && rows[j].indent > item.indent; j++) childCount++;
       }
-      card.appendChild(renderTask(item, key, { hasChildren, collapsed: collapsedNow, hiddenCount }));
+      card.appendChild(renderTask(item, key, { hasChildren, collapsed: collapsedNow, childCount }));
     } else {
       const b = document.createElement('div');
       b.className = `bullet indent-${Math.min(item.indent, 3)}`;
@@ -4072,11 +4060,11 @@ function appendRows(card, rows, key) {
   });
 }
 
-// ---- 완료 접기(B3) ----
+// ---- Done 섹션 접기(B3) — 기본 펼침 ----
 const DONE_OPEN_KEY = lsKey('tako_done_open');
 let doneOpen = {};
 try { doneOpen = JSON.parse(localStorage.getItem(DONE_OPEN_KEY) || '{}') || {}; } catch (e) { doneOpen = {}; }
-function isDoneOpen(key) { return !!doneOpen[key]; } // 기본 접힘
+function isDoneOpen(key) { return doneOpen[key] !== false; }
 function setDoneOpen(key, v) {
   doneOpen[key] = v;
   try { localStorage.setItem(DONE_OPEN_KEY, JSON.stringify(doneOpen)); } catch (e) {}
@@ -4142,21 +4130,22 @@ const suppressRowClick = (row, ms) => { if (row && row.dataset.key) suppressedRo
 const rowClickSuppressed = (row) => !!row && (suppressedRows.get(row.dataset.key) || 0) > Date.now();
 
 function renderTask(item, key, opts = {}) {
-  const { hasChildren = false, collapsed = false, hiddenCount = 0 } = opts;
+  const { hasChildren = false, collapsed = false, childCount = 0 } = opts;
   const t = document.createElement('div');
   t.className = `task indent-${Math.min(item.indent, 3)}` + (item.checked ? ' done' : '');
   t.dataset.line = item.lineIndex;
   t.dataset.indent = item.indent;
   t.dataset.key = lingerKey(item);
   t.dataset.raw = item.raw; // 원문 줄(R21) — 새 행 찾기·깜빡임에 사용
-  t.dataset.pri = key; // 한 목록 보기에서 행마다 우선순위(드래그·새 행 찾기)
+  t.dataset.cat = key; // 행마다 카테고리(드래그·새 행 찾기)
 
   // 접기/펼치기 토글 — 자식 있는 항목만 화살표, 나머지는 정렬용 빈 자리
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'task-toggle' + (hasChildren ? '' : ' leaf');
   if (hasChildren) {
-    toggle.textContent = collapsed ? '▸' : '▾';
+    toggle.innerHTML = '<svg class="chev-ln" viewBox="0 0 8 5" width="8" height="5" aria-hidden="true" focusable="false"><path d="M1.25 1 L4 3.75 L6.75 1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"/></svg>';
+    toggle.classList.toggle('collapsed', collapsed);
     toggle.title = collapsed ? '펼치기' : '접기';
     toggle.setAttribute('aria-label', toggle.title);
     toggle.addEventListener('click', (e) => { e.stopPropagation(); toggleCollapse(item); });
@@ -4167,9 +4156,9 @@ function renderTask(item, key, opts = {}) {
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = item.checked;
-  // 한 목록 보기의 상위 행은 과일로 우선순위를 보이므로 스크린리더에도 우선순위를 함께 읽어 준다(3차 F2)
-  const showFruit = taskView === 'one' && item.indent === 0;
-  cb.setAttribute('aria-label', `완료: ${item.text}` + (showFruit ? ` (${PRI[key].label})` : ''));
+  // 상위 행은 카테고리 아이콘을 보이므로 스크린리더에도 카테고리를 함께 읽어 준다
+  const showCat = item.indent === 0;
+  cb.setAttribute('aria-label', `완료: ${item.text}` + (showCat ? ` (${CAT[normCat(key)].label})` : ''));
   cb.addEventListener('change', (e) => {
     if (e.target.checked) {
       cb.classList.remove('pop');
@@ -4182,11 +4171,11 @@ function renderTask(item, key, opts = {}) {
   const span = document.createElement('div');
   span.className = 'task-text';
   span.innerHTML = highlightMeta(item.text);
-  if (collapsed && hiddenCount) {
+  if (childCount) {
     const badge = document.createElement('span');
     badge.className = 'child-count';
-    badge.textContent = hiddenCount;
-    badge.title = `숨겨진 하위 항목 ${hiddenCount}개`;
+    badge.textContent = childCount;
+    badge.title = collapsed ? `숨겨진 하위 항목 ${childCount}개` : `하위 항목 ${childCount}개`;
     span.appendChild(badge);
   }
   span.title = '눌러서 고치기';
@@ -4223,7 +4212,8 @@ function renderTask(item, key, opts = {}) {
   handle.className = 'row-btn drag-handle';
   handle.title = '끌어서 옮기기';
   handle.setAttribute('aria-label', '끌어서 옮기기');
-  handle.innerHTML = '⋮⋮';
+  // 가로선 두 개(12×8, 선 1.5px — 2배율에서 선이 픽셀에 딱 맞는 y 좌표)
+  handle.innerHTML = '<svg class="drag-ic" viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" focusable="false"><path d="M0.75 1.75 H11.25 M0.75 6.25 H11.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></svg>';
   handle.addEventListener('pointerdown', (e) => onDragStart(e, item, key, t));
   handle.addEventListener('click', (e) => e.stopPropagation());
   actions.appendChild(handle);
@@ -4242,12 +4232,14 @@ function renderTask(item, key, opts = {}) {
   hit.appendChild(cb);
   t.appendChild(toggle);
   t.appendChild(hit);
-  if (showFruit) {
-    const fruit = document.createElement('span');
-    fruit.className = 'pri-fruit';
-    fruit.setAttribute('aria-hidden', 'true');
-    fruit.textContent = PRI[key].icon;
-    t.appendChild(fruit);
+  if (showCat) {
+    const ic = document.createElement('img');
+    ic.className = 'cat-ic task-cat';
+    ic.src = CAT[normCat(key)].icon;
+    ic.alt = '';
+    ic.title = CAT[normCat(key)].label;
+    ic.draggable = false;
+    t.appendChild(ic);
   }
   t.appendChild(span);
   t.appendChild(actions);
@@ -4344,12 +4336,12 @@ const opSetChecks = (list) => (c) => list.reduce((acc, { item, checked }) => tog
 
 // 부모 아래 미완료 하위(모든 깊이)
 function incompleteDescendants(item) {
-  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex && i.raw === item.raw));
-  if (!sec) return [];
-  const pos = sec.items.findIndex((i) => i.lineIndex === item.lineIndex);
+  const all = state.items;
+  const pos = all.findIndex((i) => i.lineIndex === item.lineIndex && i.raw === item.raw);
+  if (pos === -1) return [];
   const out = [];
-  for (let k = pos + 1; k < sec.items.length && sec.items[k].indent > item.indent; k++) {
-    const it = sec.items[k];
+  for (let k = pos + 1; k < all.length && all[k].indent > item.indent; k++) {
+    const it = all[k];
     if (it.type === 'task' && !it.checked) out.push(it);
   }
   return out;
@@ -4490,6 +4482,7 @@ function onDragStart(e, item, key, taskEl) {
   dragCtx.srcEnd = blockRange.end;
   dragCtx.srcKey = key;
   dragCtx.srcEl = taskEl;
+  dragCtx.srcSection = taskEl.closest('.section'); // In progress ↔ Done 사이로는 옮기지 않는다(완료는 체크로)
   dragCtx.ghost = ghost;
   dragCtx.indicator = null; // 지금 열린 빈 자리(gapAt)
   dragCtx.gapH = Math.min(52, Math.max(36, Math.round(rect.height))); // 벌어지는 높이 = 옮기는 행 높이(36~52px)
@@ -4593,7 +4586,12 @@ function onDragMove(e) {
   if (dragCtx.lastSection && dragCtx.lastSection !== section) {
     dragCtx.lastSection.classList.remove('drop-active');
   }
-  if (!section) {
+  const clearInto = () => {
+    if (dragCtx.intoEl) { dragCtx.intoEl.classList.remove('drop-into'); dragCtx.intoEl = null; }
+  };
+  // 출발한 섹션(In progress 또는 Done) 안에서만 놓을 수 있다
+  if (!section || section !== dragCtx.srcSection) {
+    clearInto();
     closeGap();
     dragCtx.target = null;
     dragCtx.lastSection = null;
@@ -4601,9 +4599,6 @@ function onDragMove(e) {
   }
   section.classList.add('drop-active');
   dragCtx.lastSection = section;
-
-  const sectionKey = section.classList.contains('pri-high') ? 'high'
-                   : section.classList.contains('pri-med') ? 'medium' : 'low';
 
   const card = section.querySelector('.card');
   const taskUnder = el.closest('.task');
@@ -4613,121 +4608,63 @@ function onDragMove(e) {
     const ln = +el2.dataset.line;
     return ln >= dragCtx.srcStart && ln <= dragCtx.srcEnd;
   };
-  const clearInto = () => {
-    if (dragCtx.intoEl) { dragCtx.intoEl.classList.remove('drop-into'); dragCtx.intoEl = null; }
-  };
   // 행이 아닌 카드 빈 곳(닫히는 빈 자리 자리 등)인데 이 카드에 열린 자리가 있으면 그대로 둔다
   if (!taskUnder && dragCtx.indicator && dragCtx.indicator.parentNode === card) {
     const lastRow = [...card.querySelectorAll('.task')].pop();
     if (lastRow && e.clientY < lastRow.getBoundingClientRect().bottom) return;
   }
-  if (section.classList.contains('one-list')) { dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto); return; }
-
-  if (taskUnder && card.contains(taskUnder) && isOwnBlock(taskUnder)) {
-    // 자기 블록 위 = 제자리(B-3): 놓으면 아무 일도 없음
-    clearInto();
-    closeGap();
-    dragCtx.target = null;
-  } else if (taskUnder && card.contains(taskUnder) && !isOwnBlock(taskUnder)) {
-    const zone = dropZone(e, taskUnder);
-    if (zone === 'into') {
-      markInto(card, taskUnder);
-      dragCtx.target = { sectionKey, intoLine: +taskUnder.dataset.line };
-    } else if (zone === 'before') {
-      clearInto();
-      gapAt(card, taskUnder);
-      dragCtx.target = { sectionKey, beforeLine: +taskUnder.dataset.line };
-    } else {
-      clearInto();
-      let next = taskUnder.nextElementSibling;
-      // "완료 n개" 접기 행에서 멈춘다(R10 — 펼친 완료 행을 기준으로 잡으면 파일상 미완료 행들 사이에 들어갔다)
-      while (next && !next.classList.contains('done-fold') && (!next.classList.contains('task') || isOwnBlock(next))) next = next.nextElementSibling;
-      if (next && next.classList.contains('done-fold')) next = null;
-      const underIndent = +taskUnder.dataset.indent || 0;
-      const nextIndent = next ? (+next.dataset.indent || 0) : 0;
-      if (nextIndent < underIndent) {
-        // taskUnder is the last item of its sub-list, so the gap below it is depth-ambiguous:
-        // it could attach to any ancestor between the next line's level and taskUnder's own.
-        // Let the horizontal cursor position pick the depth — drag left to pop out toward
-        // nextIndent, keep it under the row to stay as the last child (default).
-        const chosenIndent = pickDepth(e, card, nextIndent, underIndent);
-        gapAt(card, afterEl(taskUnder), chosenIndent);
-        dragCtx.depth = { card, min: nextIndent, max: underIndent };
-        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : sectionEndLine(section, taskUnder), indent: chosenIndent };
-      } else {
-        gapAt(card, afterEl(taskUnder));
-        dragCtx.target = { sectionKey, beforeLine: next ? +next.dataset.line : sectionEndLine(section, taskUnder) };
-      }
-    }
-  } else {
-    clearInto();
-    const fold = card.querySelector('.done-fold');
-    gapAt(card, fold || null);
-    dragCtx.target = { sectionKey, beforeLine: sectionEndLine(section, null) };
-  }
+  dragRows(e, card, taskUnder, isOwnBlock, clearInto);
 }
 
-// 한 목록 보기의 드래그(3차 F4): 다른 우선순위 사이로도 끌 수 있고, 놓인 자리 바로 위 상위 행의 우선순위를 따른다
-// (맨 위면 아래 행). 나눠 보기의 "섹션 사이로 옮기면 우선순위 변경"과 같은 규칙. 끄는 동안 고스트의 과일이 미리 바뀐다
-function dragOneList(e, section, card, taskUnder, isOwnBlock, clearInto) {
+// 놓을 자리 정하기. 화면 순서(정렬된 순서)의 위 행(above)·아래 행(below)으로 파일상 자리를 정한다.
+//  - 카테고리순: 아래 행이 같은 카테고리면 그 행 앞(같은 묶음), 아니면 위 행 묶음의 끝(위 행 블록 바로 뒤).
+//    묶음 사이·다른 묶음으로 끌면 카테고리가 바뀐다(위 행의 것, 맨 위면 아래 행의 것) — 고스트의 아이콘이 미리 바뀐다
+//  - 등록순: 아래 행 앞(없으면 위 행 뒤). 순서만 바뀌고 카테고리는 그대로
+//  - 하위로 넣기: 그 행 아래 마지막 하위로, 카테고리는 부모를 따른다
+function dragRows(e, card, taskUnder, isOwnBlock, clearInto) {
   if (taskUnder && card.contains(taskUnder) && isOwnBlock(taskUnder)) {
     clearInto(); closeGap(); dragCtx.target = null; // 자기 블록 위 = 제자리(B-3)
     return;
   }
-  const fold = card.querySelector('.done-fold');
-  const inDone = (r) => !!fold && !!(fold.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const byCat = taskSort === 'cat';
   const rows = [...card.querySelectorAll('.task')].filter((r) => !isOwnBlock(r));
-  const setFruit = (key) => { const f = dragCtx.ghost && dragCtx.ghost.querySelector('.pri-fruit'); if (f) f.textContent = PRI[key].icon; };
-  let above = null, below = null, done = false;
+  const setIcon = (key) => { const f = dragCtx.ghost && dragCtx.ghost.querySelector('.task-cat'); if (f) f.src = CAT[normCat(key)].icon; };
+  let above = null, below = null;
   if (taskUnder && card.contains(taskUnder)) {
     const zone = dropZone(e, taskUnder);
-    if (zone === 'into') { // 하위로 넣기 — 그 행의 우선순위로
+    if (zone === 'into') {
       markInto(card, taskUnder);
-      dragCtx.target = { sectionKey: taskUnder.dataset.pri, intoLine: +taskUnder.dataset.line };
-      setFruit(taskUnder.dataset.pri);
+      dragCtx.target = { cat: taskUnder.dataset.cat, intoLine: +taskUnder.dataset.line };
+      setIcon(taskUnder.dataset.cat);
       return;
     }
     clearInto();
-    // 펼친 완료 영역과 미완료 영역은 따로 본다(R10과 같은 이유 — 서로 섞어 기준을 잡으면 파일상 엉뚱한 자리)
-    done = inDone(taskUnder);
-    const list = rows.filter((r) => inDone(r) === done);
-    const i = list.indexOf(taskUnder);
-    if (zone === 'before') { above = list[i - 1] || null; below = taskUnder; }
-    else { above = taskUnder; below = list[i + 1] || null; }
+    const i = rows.indexOf(taskUnder);
+    if (zone === 'before') { above = rows[i - 1] || null; below = taskUnder; }
+    else { above = taskUnder; below = rows[i + 1] || null; }
   } else {
     clearInto();
-    const list = rows.filter((r) => !inDone(r));
-    above = list[list.length - 1] || null;
+    above = rows[rows.length - 1] || null;
   }
   if (!above && !below) { closeGap(); dragCtx.target = null; return; }
-  const key = (above || below).dataset.pri;
-  const sameSec = !!below && below.dataset.pri === key;
-  const ref = below || (!done && fold) || null;
-  // 아래 행이 같은 우선순위면 그 앞, 아니면 그 우선순위의 끝(미완료 마지막 뒤. 펼친 완료 영역이면 진짜 끝)
-  const firstDone = JSON.parse(section.dataset.firstDone || '{}');
-  const beforeLine = sameSec ? +below.dataset.line : (done ? null : (firstDone[key] ?? null));
+  let key, sameGroup;
+  if (byCat) { key = (above || below).dataset.cat; sameGroup = !!below && below.dataset.cat === key; }
+  else { key = dragCtx.srcKey; sameGroup = !!below; }
+  const pos = sameGroup ? { beforeLine: +below.dataset.line } : { afterLine: +above.dataset.line };
+  const ref = below || null;
   const aboveIndent = above ? (+above.dataset.indent || 0) : 0;
-  const nextIndent = sameSec ? (+below.dataset.indent || 0) : 0;
+  const nextIndent = sameGroup ? (+below.dataset.indent || 0) : 0;
   if (above && nextIndent < aboveIndent) {
-    // 위 행이 하위 목록의 마지막이면 깊이가 애매 — 나눠 보기와 같이 가로 위치로 고른다
+    // 위 행이 하위 목록의 마지막이면 깊이가 애매 — 가로 위치로 고른다(왼쪽으로 끌면 상위로 빠져나옴)
     const chosenIndent = pickDepth(e, card, nextIndent, aboveIndent);
     gapAt(card, ref, chosenIndent);
     dragCtx.depth = { card, min: nextIndent, max: aboveIndent };
-    dragCtx.target = { sectionKey: key, beforeLine, indent: chosenIndent };
+    dragCtx.target = { cat: key, ...pos, indent: chosenIndent };
   } else {
     gapAt(card, ref);
-    dragCtx.target = sameSec ? { sectionKey: key, beforeLine } : { sectionKey: key, beforeLine, indent: 0 };
+    dragCtx.target = sameGroup ? { cat: key, ...pos } : { cat: key, ...pos, indent: 0 };
   }
-  setFruit(key);
-}
-
-// "섹션 끝"에 놓을 때의 기준 줄: 완료 항목이 있으면 미완료 마지막 뒤, 펼친 완료 영역 안이면 진짜 끝(B3)
-function sectionEndLine(section, taskUnder) {
-  const first = section.dataset.firstDone;
-  if (first == null || first === '') return null;
-  const fold = section.querySelector('.done-fold');
-  if (taskUnder && fold && (fold.compareDocumentPosition(taskUnder) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
-  return +first;
+  setIcon(key);
 }
 
 function onDragEnd(e) {
@@ -4753,6 +4690,7 @@ function onDragEnd(e) {
   if (cancelled || !target) return;
   if (target.beforeLine === srcLine) return;
   if (target.intoLine === srcLine) return;
+  if (target.afterLine === srcLine) return;
 
   // 드래그 중 화면이 그려진 뒤 줄이 밀렸다면(다른 기기 변경 재적용 등) 목표 위치도 어긋난다 → 다시 그림
   let stillValid = true;
@@ -4761,7 +4699,7 @@ function onDragEnd(e) {
   // 드롭 시점의 원문 줄로 출발·목표를 기억해 두고, 저장 직전에 다시 찾는다(그 사이 줄이 밀려도 안전)
   const lines = state.content.split('\n');
   const ref = (n) => (n == null || lines[n] == null ? null : lineFp(lines, n)); // 지문으로(locate)
-  const t = { sectionKey: target.sectionKey, indent: target.indent, beforeItem: ref(target.beforeLine), intoItem: ref(target.intoLine) };
+  const t = { cat: target.cat, indent: target.indent, beforeItem: ref(target.beforeLine), afterItem: ref(target.afterLine), intoItem: ref(target.intoLine) };
   // 옮겨도 내용이 그대로면(제자리·바로 위아래 틈) 저장하지 않음(B-3 — 섹션 끝으로 가던 문제)
   try {
     if (opMove(srcItem || ref(srcLine), t)(state.content) === state.content) { renderApp(); return; }
@@ -4771,16 +4709,16 @@ function onDragEnd(e) {
   const record = reserveUndo();
   const pr = safeMutate(
     opMove(srcItem || ref(srcLine), t, rec),
-    `move: ${SECTION_KEYS[target.sectionKey]}`,
+    `move: ${CAT[normCat(target.cat)].label}`,
     null,
     { flash: srcItem ? srcItem.text : null, failMsg: '옮기지 못했어요' }
   );
-  const priChanged = taskView === 'one' && target.sectionKey !== dragCtx.srcKey;
+  const catChanged = target.intoLine == null && normCat(target.cat) !== normCat(dragCtx.srcKey);
   pr.then((ok) => {
     if (!ok || !srcItem) return;
     const undo = () => { safeMutate(opUndoMove(rec), 'undo move', null, { failMsg: '되돌리지 못했어요' }); };
-    // 한 목록 보기에서는 우선순위 변경이 섹션 제목으로 드러나지 않으므로 토스트로 알린다(3차 F4). 순서만 바뀌면 지금처럼 Cmd/Ctrl+Z만
-    if (priChanged) notify.undo(`${PRI[target.sectionKey].icon} ${PRI[target.sectionKey].to} 옮겼어요`, undo);
+    // 카테고리가 바뀌는 이동은 토스트로 알린다(3차 F4). 순서만 바뀌면 지금처럼 Cmd/Ctrl+Z만
+    if (catChanged) notify.undo(`${CAT[normCat(target.cat)].label} 카테고리로 옮겼어요`, undo);
     else record(undo, srcItem.text);
   });
   return pr;
@@ -4788,26 +4726,87 @@ function onDragEnd(e) {
 
 // ============ Sheet (add/edit) ============
 
-// 우선순위 라디오 선택 상태(class·aria-checked·roving tabindex)를 일괄 갱신
-function selectPriority(pri) {
-  $('#pri-picker').querySelectorAll('.pri-pill').forEach((p) => {
-    const on = p.dataset.pri === pri;
-    p.classList.toggle('selected', on);
-    p.setAttribute('aria-checked', on ? 'true' : 'false');
-    p.tabIndex = on ? 0 : -1;
+// ---- 고르기 메뉴(카테고리: 입력창·편집 시트·Inbox·필터 / 정렬) ----
+// 누른 버튼(anchor, .cat-anchor 안에 있어야 함) 위나 아래에 목록을 띄운다. 한 번에 하나만.
+// 방향: up을 주면 위로, 아니면 남은 공간이 큰 쪽. 키보드: ↑↓·Home·End 이동, Enter/Space 고르기, Esc·Tab 닫기
+let catMenu = null;
+// 카테고리 메뉴: 11개(+ allOption을 주면 맨 위에 '전체' 같은 항목, counts를 주면 오른쪽에 개수)
+function openCatMenu(anchor, { allOption = null, counts = null, label = '카테고리', ...rest } = {}) {
+  const item = (key, lab, icon = '', cls = '') => ({ key, label: lab, icon, cls, count: counts ? counts[key] || 0 : null });
+  const items = (allOption ? [item(allOption.key, allOption.label, '', ' all')] : []).concat(CAT_ORDER.map((k) => item(k, CAT[k].label, catIconHTML(k))));
+  openOptMenu(anchor, { items, label, ...rest });
+}
+// 일반 항목 메뉴: items = [{ key, label, icon?, count?, cls? }]
+function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', up = null, align = null } = {}) {
+  if (catMenu && catMenu.anchor === anchor) { closeCatMenu(); return; }
+  closeCatMenu({ focus: false });
+  const wrap = anchor.closest('.cat-anchor') || anchor.parentElement;
+  const r = anchor.getBoundingClientRect();
+  const openUp = up != null ? up : (r.top > window.innerHeight - r.bottom);
+  const alignRight = align != null ? align === 'right' : (r.left > window.innerWidth / 2);
+  const menu = document.createElement('div');
+  menu.className = 'cat-menu' + (openUp ? ' up' : '') + (alignRight ? ' right' : '');
+  menu.setAttribute('role', 'listbox');
+  menu.setAttribute('aria-label', label);
+  const room = (openUp ? r.top : window.innerHeight - r.bottom) - 16;
+  menu.style.maxHeight = Math.max(120, Math.min(520, room)) + 'px';
+  menu.innerHTML = items.map(({ key, label: text, icon = '', count = null, cls = '' }) =>
+    `<button type="button" class="cat-opt${key === current ? ' on' : ''}${count ? ' has-n' : ''}${cls}" role="option" aria-selected="${key === current}" data-cat="${key}" tabindex="-1">${icon}${esc(text)}${count ? `<span class="opt-n">${count}</span>` : ''}</button>`).join('');
+  wrap.appendChild(menu);
+  anchor.setAttribute('aria-expanded', 'true');
+  catMenu = { menu, anchor, onPick };
+  const opts = [...menu.querySelectorAll('.cat-opt')];
+  const pick = (k) => { closeCatMenu(); onPick && onPick(k); };
+  menu.addEventListener('click', (e) => { const b = e.target.closest('.cat-opt'); if (!b) return; e.stopPropagation(); pick(b.dataset.cat); });
+  menu.addEventListener('keydown', (e) => {
+    const i = opts.indexOf(document.activeElement);
+    const go = (n) => { e.preventDefault(); opts[(n + opts.length) % opts.length].focus(); };
+    if (e.key === 'ArrowDown') go(i + 1);
+    else if (e.key === 'ArrowUp') go(i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(opts.length - 1);
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i >= 0) pick(opts[i].dataset.cat); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCatMenu(); }
+    else if (e.key === 'Tab') closeCatMenu({ focus: false });
   });
+  (opts.find((o) => o.classList.contains('on')) || opts[0]).focus({ preventScroll: true });
+  opts.find((o) => o.classList.contains('on'))?.scrollIntoView({ block: 'nearest' });
+}
+function closeCatMenu({ focus = true } = {}) {
+  if (!catMenu) return;
+  const { menu, anchor } = catMenu;
+  catMenu = null;
+  menu.remove();
+  anchor.setAttribute('aria-expanded', 'false');
+  if (focus && anchor.isConnected) anchor.focus({ preventScroll: true });
+}
+// 메뉴 밖을 누르면 닫힘(열어 준 버튼 자체는 버튼의 click이 토글)
+document.addEventListener('pointerdown', (e) => {
+  if (!catMenu) return;
+  if (e.target.closest('.cat-menu') || e.target === catMenu.anchor || catMenu.anchor.contains(e.target)) return;
+  closeCatMenu({ focus: false });
+}, true);
+
+// 편집 시트의 카테고리 선택 버튼(아이콘 + 이름)
+let sheetCat = DEFAULT_CAT;
+function selectSheetCat(key) {
+  sheetCat = normCat(key);
+  const ic = $('#sheet-cat-ic');
+  if (ic) ic.src = CAT[sheetCat].icon;
+  const name = $('#sheet-cat-name');
+  if (name) name.textContent = CAT[sheetCat].label;
 }
 
 // ---- 편집 시트의 하위 할 일(B7) ----
 function childrenOf(item) {
-  const sec = state.sections.find((s) => s.items.some((i) => i.raw === item.raw || i.lineIndex === item.lineIndex));
-  if (!sec) return [];
+  const all = state.items;
   let idx;
   try { idx = resolveLineIndex(item); } catch (e) { return []; }
-  const pos = sec.items.findIndex((i) => i.lineIndex === idx);
+  const pos = all.findIndex((i) => i.lineIndex === idx);
+  if (pos === -1) return [];
   const out = [];
-  for (let k = pos + 1; k < sec.items.length && sec.items[k].indent > sec.items[pos].indent; k++) {
-    if (sec.items[k].indent === sec.items[pos].indent + 1) out.push(sec.items[k]);
+  for (let k = pos + 1; k < all.length && all[k].indent > all[pos].indent; k++) {
+    if (all[k].indent === all[pos].indent + 1) out.push(all[k]);
   }
   return out;
 }
@@ -4880,16 +4879,13 @@ function openEditSheet(item) {
   $('#sheet-cancel').textContent = '취소';
   closeSubInput();
   if (!editingIsSub) renderSubList(item);
-  // 하위 할 일은 우선순위(섹션) 개념이 없으므로 우선순위 선택을 숨긴다
-  const priField = $('#pri-picker').closest('.field');
+  // 하위 할 일은 부모의 카테고리를 따르므로 카테고리 선택을 숨긴다
+  const catField = $('#cat-field');
   if (editingIsSub) {
-    priField.hidden = true;
+    catField.hidden = true;
   } else {
-    priField.hidden = false;
-    // current section
-    const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === item.lineIndex));
-    const cur = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
-    selectPriority(cur);
+    catField.hidden = false;
+    selectSheetCat(item.cat);
   }
   showSheet();
 }
@@ -4912,11 +4908,12 @@ function showSheet() {
 }
 function hideSheet() {
   if (sheetSaving) return; // 저장 중에는 닫지 않는다(글 보호)
+  closeCatMenu({ focus: false });
   setSheetError('');
   const sheet = $('#sheet');
   $('#scrim').classList.remove('show');
   sheet.classList.remove('show');
-  $('#pri-picker').closest('.field').hidden = false;
+  $('#cat-field').hidden = false;
   // 닫힌 시트를 탭 순서·접근성 트리에서 제외하고, 포커스를 열었던 요소로 되돌린다
   sheet.setAttribute('inert', '');
   if (sheetLastFocus && sheetLastFocus.isConnected && typeof sheetLastFocus.focus === 'function') {
@@ -4962,7 +4959,7 @@ async function sheetSave() {
   if (sheetSaving) return;
   const text = $('#sheet-text').value.trim();
   if (!text) return;
-  const pri = $('#pri-picker .pri-pill.selected')?.dataset.pri || 'medium';
+  const pri = sheetCat;
   const btn = $('#sheet-save');
   setSheetError('');
   sheetSaving = true;
@@ -5001,61 +4998,44 @@ async function runSheetSave(text, pri) {
     return false;
   }
   if (editingIsSub) {
-    // 하위 할 일: 우선순위(섹션) 개념이 없으므로 텍스트만 수정
+    // 하위 할 일: 카테고리는 부모를 따르므로 텍스트만 수정
     return onEdit(editingItem, text, quiet);
   }
-  // Edit: if priority changed, also move
-  const sec = state.sections.find((s) => s.items.some((i) => i.lineIndex === line));
-  const curKey = Object.keys(SECTION_KEYS).find((k) => SECTION_KEYS[k] === sec?.title) || 'medium';
-  // 되돌리기(D2·S1·S13): 연산이 고친·옮긴 줄의 지문과 원래 자리를 rec에 기록
+  // 글 수정 + 카테고리 변경을 한 줄 고치기로 한 번에 저장(태그만 바뀌고 자리는 그대로)
+  const curKey = (state.items.find((i) => i.lineIndex === line) || editingItem).cat;
+  const catChanged = normCat(curKey) !== normCat(pri);
+  // 되돌리기(D2·S1·S13): 연산이 고친 줄의 지문을 rec에 기록
   const oldText = editingItem.text;
   const rec = {};
   const record = reserveUndo();
-  if (curKey !== pri) {
-    // 글 수정 + 섹션 이동을 한 번에 저장. 실패해도 로컬 상태를 바꿔 두지 않는다.
-    const ok = await safeMutate(opEditMove(editingItem, text, pri, rec), `edit+move: ${text}`, '수정됨', quiet);
-    if (ok) {
-      const back = text !== oldText ? oldText : null;
-      record(() => { safeMutate(opUndoMove(rec, { backText: back }), 'undo edit+move', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
-    }
-    return ok;
-  }
-  const ok = await onEdit(editingItem, text, quiet, rec);
-  if (ok && text !== oldText) {
-    record(() => { safeMutate(opEditBack(rec, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+  const ok = await safeMutate(opEdit(editingItem, text, rec, catChanged ? pri : undefined), catChanged ? `edit+cat: ${text}` : `edit: ${text}`, '수정됨', quiet);
+  if (ok && (text !== oldText || catChanged)) {
+    record(() => { safeMutate(opEditBack(rec, oldText, catChanged ? curKey : undefined), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
   }
   return ok;
 }
 
 
 // ============ 플로팅 컴포저 (Task 탭 빠른 추가) ============
-// 순환 순서(3차 F6): 기본 🍅에서 한 번 누르면 🍋, 두 번이면 🥝 (2차 D1의 🍋 기준 순서를 바꿈)
-const COMPOSER_PRI_ORDER = ['high', 'medium', 'low'];
-// 30분 넘게 앱을 비웠다 돌아오면 다시 🍅로. 그 사이에는 고른 값 유지(디자이너 안 채택, 소수 의견: 매번 🍅)
-const COMPOSER_PRI_RESET_MS = 30 * 60 * 1000;
-let composerHiddenAt = 0;
-function resetComposerPriorityIfAway() {
-  if (!composerHiddenAt || Date.now() - composerHiddenAt <= COMPOSER_PRI_RESET_MS) return;
-  composerHiddenAt = 0;
-  composerPriority = 'high';
-  updateComposerPriBtn();
-}
-const nextComposerPriority = (p) => COMPOSER_PRI_ORDER[(COMPOSER_PRI_ORDER.indexOf(p) + 1) % COMPOSER_PRI_ORDER.length];
-
-function updateComposerPriBtn() {
-  const btn = $('#composer-pri');
+// 왼쪽 버튼 = 지금 고른 카테고리 아이콘. 누르면 카테고리 목록(드롭다운)이 위로 뜬다(선택지가 11개라 순환 토글 대신).
+// 고른 값은 기기에 기억(이전의 "30분 비우면 🍅로" 규칙은 카테고리에는 맞지 않아 없앰)
+function updateComposerCatBtn() {
+  const btn = $('#composer-cat');
   if (!btn) return;
-  const p = PRI[composerPriority];
-  const n = PRI[nextComposerPriority(composerPriority)];
-  btn.textContent = p.icon;
-  btn.title = `우선순위: ${p.icon} ${p.label} · 누르면 ${n.icon} ${n.label}`;
+  const p = CAT[composerCat];
+  $('#composer-cat-ic').src = p.icon;
+  btn.title = `카테고리: ${p.label} · 누르면 고르기`;
   btn.setAttribute('aria-label', btn.title);
 }
-
-function cycleComposerPriority() {
-  composerPriority = nextComposerPriority(composerPriority);
-  updateComposerPriBtn();
+function setComposerCat(key) {
+  composerCat = normCat(key);
+  try { localStorage.setItem(COMPOSER_CAT_KEY, composerCat); } catch (e) {}
+  updateComposerCatBtn();
   updateComposerHint();
+}
+function openComposerCatMenu() {
+  const btn = $('#composer-cat');
+  openCatMenu(btn, { current: composerCat, up: true, align: 'left', label: '새 할 일의 카테고리', onPick: (k) => { setComposerCat(k); $('#composer-input').focus(); } });
 }
 
 // 저장 순서·409 충돌은 activeStore가 맡는다.
@@ -5105,7 +5085,7 @@ function setComposerMode(mode) {
     fillComposerFromQueue(); // 이 탭에서 저장 못 한 글이 있으면 입력창에(R1)
   }
   $('#composer-send').disabled = input.value.trim() === '';
-  if (mode === 'active') updateComposerPriBtn();
+  if (mode === 'active') updateComposerCatBtn();
   updateComposerHint();
   syncComposerVisibility();
 }
@@ -5140,8 +5120,8 @@ function updateComposerHint() {
   }
   hint.classList.remove('warn');
   const subs = blocks.reduce((n, b) => n + b.children.length, 0);
-  const p = PRI[composerPriority];
-  hint.textContent = `${p.icon} ${p.label}에 할 일 ${blocks.length}개${subs ? ` + 하위 ${subs}개` : ''} · ${IS_PC ? 'Enter' : '보내기'}로 추가`;
+  const p = CAT[composerCat];
+  hint.textContent = `${p.label}에 할 일 ${blocks.length}개${subs ? ` + 하위 ${subs}개` : ''} · ${IS_PC ? 'Enter' : '보내기'}로 추가`;
 }
 // 커서가 있는 줄(들) 번호
 function caretLines(input) {
@@ -5188,14 +5168,14 @@ function quickAdd() {
   composerIme.sentWhileComposing = true; // 전송 뒤 되돌아오는 조합 잔여 문자 제거용
   $('#composer-send').disabled = true;
   if (bundle && (bundle.blocks.length > 1 || bundle.blocks[0].children.length)) {
-    submitComposerJob({ mode: 'active', text: serializeBundle(bundle.blocks), blocks: bundle.blocks, pri: composerPriority });
+    submitComposerJob({ mode: 'active', text: serializeBundle(bundle.blocks), blocks: bundle.blocks, cat: composerCat });
   } else if (bundle) {
-    submitComposerJob({ mode: 'active', text: bundle.blocks[0].text, pri: composerPriority });
+    submitComposerJob({ mode: 'active', text: bundle.blocks[0].text, cat: composerCat });
   } else if (composerMode !== 'memo' && /\n/.test(text)) {
     // 붙여넣은 여러 줄(R4): 한 줄 = 한 항목. 앞의 목록 표시(-, •, *, [ ])는 떼고 빈 줄은 무시.
     // 한 번에 PASTE_MAX개까지 — 넘는 줄은 버리지 않고 입력창에 남겨 둔다(S10)
     const parts = splitPastedLines(text);
-    parts.slice(0, PASTE_MAX).forEach((t) => submitComposerJob({ mode: composerMode, text: t, pri: composerPriority }));
+    parts.slice(0, PASTE_MAX).forEach((t) => submitComposerJob({ mode: composerMode, text: t, cat: composerCat }));
     if (parts.length > PASTE_MAX) {
       input.value = parts.slice(PASTE_MAX).join('\n');
       composerIme.sentWhileComposing = false; // 남긴 줄을 조합 잔여로 보고 지우지 않게
@@ -5203,7 +5183,7 @@ function quickAdd() {
       notify.info(`${PASTE_MAX}개까지 넣었어요. 나머지 ${parts.length - PASTE_MAX}줄은 입력창에 남겨 뒀어요`, 4000);
     }
   } else {
-    submitComposerJob({ mode: composerMode, text, pri: composerPriority });
+    submitComposerJob({ mode: composerMode, text, cat: composerCat });
   }
   autoGrowComposer();
   saveComposerDraft();
@@ -5280,10 +5260,13 @@ const serializeBundle = (blocks) => blocks.flatMap((b) => [b.text, ...b.children
 function composerCount(job) {
   if (job.mode === 'inbox') return countInbox(job.text);
   if (job.mode === 'memo') return (state.memos || []).filter((m) => m.text === job.text).length;
-  return countActiveLine(job.pri, `- [ ] ${job.blocks ? job.blocks[0].text : job.text}`);
+  return countActiveLine(job.cat, taskLine(job.blocks ? job.blocks[0].text : job.text, job.cat));
 }
+// 저장 못 한 옛 기록(pri: high/medium/low)도 카테고리로 읽는다 → etc
+const jobCat = (job) => normCat(job.cat || job.pri);
 function submitComposerJob(job) {
   job.id = job.id || genArchiveId();
+  if (job.mode === 'active') job.cat = jobCat(job);
   job.before = composerCount(job);
   if (job.mode === 'inbox') addInboxFromComposer(job);
   else if (job.mode === 'memo') addMemoFromComposer(job);
@@ -5359,12 +5342,13 @@ function addFromComposer(job) {
   if (job.blocks) { addBundleFromComposer(job); return; }
   const rec = {};
   const record = reserveUndo();
-  const pr = activeStore.apply(opAppend(job.pri, job.text, rec), { msg: `add: ${job.text}` });
+  const pr = activeStore.apply(opAppend(job.cat, job.text, rec), { msg: `add: ${job.text}` });
   // 되돌리기는 저장이 성공한 뒤에만, 넣은 그 줄(지문)만 지운다(S12 — 실패한 추가로 기존 같은 글 항목이 지워지던 문제)
   pr.then(() => record(() => { safeMutate(opActiveRemoveRec(rec), 'undo add', null, { failMsg: '되돌리지 못했어요' }); }, null), () => {});
+  revealAfterAdd(job); // 다른 카테고리로 걸러 보고 있었으면 새 항목이 보이게 필터를 푼다
   renderApp(); // 컴포저는 #app 밖 정적 요소라 포커스 유지됨
-  const wantRaw = `- [ ] ${job.text}`;
-  revealNewRow([...document.querySelectorAll(`#sections .task[data-pri="${job.pri}"]`)]
+  const wantRaw = taskLine(job.text, job.cat);
+  revealNewRow([...document.querySelectorAll(`#sections .task[data-cat="${job.cat}"]`)]
     .filter((r) => r.dataset.raw === wantRaw).pop());
   const inp = $('#composer-input');
   if (inp && currentTab === 'active' && document.activeElement !== inp) inp.focus();
@@ -5377,20 +5361,28 @@ function addBundleFromComposer(job) {
   const rec = {};
   reserveUndo(); // 앞 동작의 Cmd/Ctrl+Z 기록을 지움 — 이 묶음의 되돌리기는 저장 성공 뒤 토스트가 맡는다
   const total = job.blocks.reduce((n, b) => n + 1 + b.children.length, 0);
-  const pr = activeStore.apply(opAppendBundle(job.pri, job.blocks, rec), { msg: `add: ${job.blocks[0].text} 외 ${total - 1}개` });
+  const pr = activeStore.apply(opAppendBundle(job.cat, job.blocks, rec), { msg: `add: ${job.blocks[0].text} 외 ${total - 1}개` });
   const undo = () => {
     safeMutate(opActiveRemoveRec(rec), 'undo add', null, { failMsg: '되돌리지 못했어요' })
       .then((ok) => { if (ok) returnToComposer(job); });
   };
-  pr.then(() => notify.undo(`${PRI[job.pri].icon} ${PRI[job.pri].label}에 ${total}개 추가했어요`, undo), () => {});
+  pr.then(() => notify.undo(`${CAT[job.cat].label}에 ${total}개 추가했어요`, undo), () => {});
+  revealAfterAdd(job);
   renderApp();
-  const raws = new Set(job.blocks.map((b) => `- [ ] ${b.text}`));
-  const rows = [...document.querySelectorAll(`#sections .task[data-pri="${job.pri}"]`)].filter((r) => raws.has(r.dataset.raw));
+  const raws = new Set(job.blocks.map((b) => taskLine(b.text, job.cat)));
+  const rows = [...document.querySelectorAll(`#sections .task[data-cat="${job.cat}"]`)].filter((r) => raws.has(r.dataset.raw));
   rows.slice(0, -1).forEach(flashEl);
   revealNewRow(rows.pop());
   const inp = $('#composer-input');
   if (inp && currentTab === 'active' && document.activeElement !== inp) inp.focus();
   pr.catch((e) => reportComposerFailure(job, e));
+}
+// 추가한 항목이 지금 필터에 가려지면 필터를 전체로(추가했는데 안 보이는 혼란 방지). 같은 카테고리면 그대로
+function revealAfterAdd(job) {
+  if (currentTab === 'active' && taskFilter !== 'all' && taskFilter !== job.cat) {
+    taskFilter = 'all';
+    try { localStorage.removeItem(TASK_FILTER_KEY); } catch (e) {}
+  }
 }
 // 되돌린 묶음의 글을 입력창으로(비어 있으면 바로, 쓰는 중이면 대기열에 — 비워지면 차례로 돌아옴, R1과 같은 길)
 function returnToComposer(job) {
@@ -5432,7 +5424,7 @@ function fillComposerFromQueue() {
   if (!job) return;
   input.value = job.text;
   saveComposerDraft(); // 입력창에 돌려놓은 글도 앱을 닫았다 열면 그대로(S8)
-  if (job.mode === 'active' && job.pri) { composerPriority = job.pri; updateComposerPriBtn(); }
+  if (job.mode === 'active') setComposerCat(jobCat(job));
   $('#composer-send').disabled = false;
   autoGrowComposer();
   try { input.setSelectionRange(job.text.length, job.text.length); } catch (e) {}
@@ -5478,8 +5470,12 @@ function init() {
   $('#archive-bar-cancel')?.addEventListener('click', () => { selectedArchive.clear(); renderArchive(); });
   $('#archive-bar-purge')?.addEventListener('click', onBulkPurge);
   // 플로팅 컴포저
-  updateComposerPriBtn();
-  $('#composer-pri').addEventListener('click', cycleComposerPriority);
+  updateComposerCatBtn();
+  $('#composer-cat').addEventListener('click', openComposerCatMenu);
+  // 편집 시트의 카테고리 선택
+  $('#sheet-cat').addEventListener('click', () => {
+    openCatMenu($('#sheet-cat'), { current: sheetCat, up: true, align: 'left', label: '할 일의 카테고리', onPick: selectSheetCat });
+  });
   $('#composer-send').addEventListener('click', quickAdd);
   const composerInput = $('#composer-input');
   composerInput.addEventListener('input', (e) => {
@@ -5566,7 +5562,7 @@ function init() {
   // 단축키 공통 규칙(S2·S14): 글을 입력하는 요소에 포커스가 있을 때만 양보한다(체크박스·버튼 포커스는 해당 없음 —
   // 체크한 뒤 포커스가 체크박스에 남아도 Cmd/Ctrl+Z·/·N이 동작). 시트·더보기 메뉴가 열려 있으면 뒤 화면을 건드리지 않음
   const shortcutBlocked = () => isTextEntry(document.activeElement) || $('#sheet').classList.contains('show')
-    || !!document.querySelector('#more-menu.show');
+    || !!document.querySelector('#more-menu.show') || !!catMenu;
   // 입력창 포커스 단축키(D3): / 또는 N. e.code(한글 입력 상태)와 e.key(/ 자리가 다른 자판·가상 키보드) 모두 받음
   document.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
@@ -5626,30 +5622,6 @@ function init() {
     e.preventDefault();
     sheetSave();
   });
-  $('#pri-picker').addEventListener('click', (e) => {
-    const pill = e.target.closest('.pri-pill');
-    if (!pill) return;
-    selectPriority(pill.dataset.pri);
-    pill.focus();
-  });
-  $('#pri-picker').addEventListener('keydown', (e) => {
-    const pills = [...$('#pri-picker').querySelectorAll('.pri-pill')];
-    if (e.key === ' ' || e.key === 'Enter') {
-      const pill = e.target.closest('.pri-pill');
-      if (pill) { e.preventDefault(); selectPriority(pill.dataset.pri); }
-      return;
-    }
-    const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
-    const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
-    if (!fwd && !back) return;
-    e.preventDefault();
-    const cur = $('#pri-picker .pri-pill.selected')?.dataset.pri;
-    const idx = pills.findIndex((p) => p.dataset.pri === cur);
-    const nextIdx = (idx + (fwd ? 1 : -1) + pills.length) % pills.length;
-    selectPriority(pills[nextIdx].dataset.pri);
-    pills[nextIdx].focus();
-  });
-
   document.addEventListener('click', (e) => {
 
     const moreBtn = e.target.closest('#more-btn');
@@ -5666,7 +5638,6 @@ function init() {
       closeMoreMenu();
       if (mi.id === 'menu-refresh') refresh();
       else if (mi.id === 'menu-archive-done') onBulkArchiveDone();
-      else if (mi.id === 'menu-view') setTaskView(taskView === 'one' ? 'split' : 'one');
       else if (mi.id === 'menu-theme') toggleTheme();
       else if (mi.id === 'menu-token') openSettings();
       return;
@@ -5679,7 +5650,7 @@ function init() {
 
   // Esc로 메뉴 닫기
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeMoreMenu();
+    if (e.key === 'Escape') { closeMoreMenu(); closeCatMenu(); }
   });
 
   // PWA SW
@@ -5696,8 +5667,7 @@ function init() {
     });
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { composerHiddenAt = Date.now(); flushOnLeave(); return; }
-    resetComposerPriorityIfAway();
+    if (document.hidden) { flushOnLeave(); return; }
     if (state.token) refresh();
   });
   window.addEventListener('pagehide', () => { flushOnLeave(); releaseJournal(); });
