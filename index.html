@@ -239,13 +239,22 @@
   .opt-scrim.show { opacity: 1; }
   .cat-menu.sheet-mode {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 71;
-    max-width: 560px; margin: 0 auto; min-width: 0; max-height: min(85vh, 660px) !important;
-    border-radius: 16px 16px 0 0; padding: 6px 12px calc(var(--safe-bottom) + 12px); gap: 2px;
-    overscroll-behavior: contain; transform: translateY(100%); transition: transform var(--dur) var(--ease);
+    max-width: 560px; margin: 0 auto; min-width: 0; max-height: min(75vh, 600px); /* 실제 값은 열 때 보이는 화면(visualViewport)의 75%로 다시 계산 */
+    border-radius: 16px 16px 0 0; padding: 0 12px calc(var(--safe-bottom) + 12px); gap: 2px;
+    overscroll-behavior: contain; touch-action: pan-y; transform: translateY(100%); transition: transform var(--dur) var(--ease);
   }
   .cat-menu.sheet-mode.show { transform: translateY(0); }
-  .cat-menu.sheet-mode .opt-grab { flex-shrink: 0; width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 4px auto 8px; }
-  .cat-menu.sheet-mode .opt-title { flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--muted); padding: 0 10px 8px; }
+  .cat-menu.sheet-mode.fits { touch-action: none; } /* 목록이 다 들어가면 어디를 잡고 끌어도 닫힘 */
+  /* 손잡이·제목 줄: 여기를 잡고 끌어 내리면 닫힘(스크롤과 안 겹치게 touch-action: none) */
+  .cat-menu.sheet-mode .opt-grab { flex-shrink: 0; height: 22px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+  .cat-menu.sheet-mode .opt-grab::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: var(--border); }
+  .cat-menu.sheet-mode .opt-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 0 6px 10px; touch-action: none; }
+  .cat-menu.sheet-mode .opt-title { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .cat-menu.sheet-mode .opt-close {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    width: 40px; height: 40px; border-radius: 10px; font-size: 16px; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .cat-menu.sheet-mode .opt-close:hover, .cat-menu.sheet-mode .opt-close:focus-visible { background: var(--surface-2); color: var(--text); outline: none; }
   .cat-menu.sheet-mode .cat-opt { flex-shrink: 0; min-height: 48px; font-size: 15px; border-radius: 10px; }
   .cat-menu.sheet-mode .cat-opt .cat-ic { width: 22px; height: 22px; }
   .cat-menu.sheet-mode .cat-opt.all + .cat-opt { margin-top: 8px; }
@@ -4776,16 +4785,23 @@ function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', 
     const room = (openUp ? r.top : window.innerHeight - r.bottom) - 16;
     menu.style.maxHeight = Math.max(120, Math.min(520, room)) + 'px';
   }
-  const head = sheetMode ? `<div class="opt-grab" aria-hidden="true"></div><div class="opt-title" aria-hidden="true">${esc(label)}</div>` : '';
+  const head = sheetMode ? `<div class="opt-grab" aria-hidden="true"></div><div class="opt-head"><span class="opt-title" aria-hidden="true">${esc(label)}</span><button type="button" class="opt-close" aria-label="닫기">✕</button></div>` : '';
   menu.innerHTML = head + items.map(({ key, label: text, icon = '', count = null, cls = '' }) =>
     `<button type="button" class="cat-opt${key === current ? ' on' : ''}${count ? ' has-n' : ''}${cls}" role="option" aria-selected="${key === current}" data-cat="${key}" tabindex="-1">${icon}${esc(text)}${count ? `<span class="opt-n">${count}</span>` : ''}</button>`).join('');
   let scrim = null;
   if (sheetMode) {
     scrim = document.createElement('div');
     scrim.className = 'opt-scrim';
-    scrim.addEventListener('click', () => closeCatMenu());
+    // 바탕을 누르는 즉시 닫힘(click까지 기다리지 않음 — 터치에서 확실하게)
+    scrim.addEventListener('pointerdown', (e) => { e.preventDefault(); closeCatMenu({ focus: false }); });
+    scrim.addEventListener('click', () => closeCatMenu({ focus: false }));
+    // 높이: 지금 보이는 화면(키보드가 떠 있으면 그만큼 줄어든 visualViewport)의 75%까지만 — 바탕이 항상 남게
+    const vvh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    menu.style.maxHeight = Math.max(220, Math.min(Math.round(vvh * 0.75), 600)) + 'px';
     document.body.appendChild(scrim);
     document.body.appendChild(menu);
+    if (menu.scrollHeight <= menu.clientHeight + 1) menu.classList.add('fits');
+    attachSheetDrag(menu);
     void menu.offsetHeight; // 시작 위치를 먼저 그리게 한 뒤 올라오는 전환
     scrim.classList.add('show'); menu.classList.add('show');
   } else {
@@ -4795,7 +4811,11 @@ function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', 
   catMenu = { menu, anchor, onPick, scrim };
   const opts = [...menu.querySelectorAll('.cat-opt')];
   const pick = (k) => { closeCatMenu(); onPick && onPick(k); };
-  menu.addEventListener('click', (e) => { const b = e.target.closest('.cat-opt'); if (!b) return; e.stopPropagation(); pick(b.dataset.cat); });
+  menu.addEventListener('click', (e) => {
+    if (menu._dragged) { menu._dragged = false; return; } // 끌어 내린 손가락을 뗄 때 생기는 click은 고르기가 아님
+    if (e.target.closest('.opt-close')) { e.stopPropagation(); closeCatMenu({ focus: false }); return; }
+    const b = e.target.closest('.cat-opt'); if (!b) return; e.stopPropagation(); pick(b.dataset.cat);
+  });
   menu.addEventListener('keydown', (e) => {
     const i = opts.indexOf(document.activeElement);
     const go = (n) => { e.preventDefault(); opts[(n + opts.length) % opts.length].focus(); };
@@ -4809,6 +4829,47 @@ function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', 
   });
   (opts.find((o) => o.classList.contains('on')) || opts[0]).focus({ preventScroll: true });
   opts.find((o) => o.classList.contains('on'))?.scrollIntoView({ block: 'nearest' });
+}
+// 바텀시트 끌어 내려 닫기: 손잡이·제목 줄은 언제나, 목록 부분은 맨 위로 스크롤돼 있을 때 아래로 끌면 따라 내려오고,
+// 90px 넘게 내리면(또는 빠르게 튕기면) 닫힌다. 덜 내리면 제자리로
+function attachSheetDrag(menu) {
+  let pid = null, startY = 0, startT = 0, dy = 0, dragging = false;
+  menu.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pid = e.pointerId; startY = e.clientY; startT = Date.now(); dy = 0; dragging = false;
+  });
+  menu.addEventListener('pointermove', (e) => {
+    if (pid !== e.pointerId) return;
+    const d = e.clientY - startY;
+    if (!dragging) {
+      const onHead = !!e.target.closest('.opt-grab, .opt-head');
+      if (d > 6 && (onHead || menu.scrollTop <= 0)) {
+        dragging = true;
+        try { menu.setPointerCapture(pid); } catch (err) {}
+        menu.style.transition = 'none';
+      } else if (d < -6) { pid = null; return; } // 위로 올리는 건 스크롤에 맡긴다
+      else return;
+    }
+    dy = Math.max(0, d);
+    menu.style.transform = `translateY(${dy}px)`;
+    e.preventDefault();
+  });
+  const end = (e) => {
+    if (pid !== e.pointerId) return;
+    const was = dragging; pid = null; dragging = false;
+    if (!was) return;
+    menu._dragged = true; setTimeout(() => { menu._dragged = false; }, 300);
+    menu.style.transition = '';
+    const fast = dy > 30 && (Date.now() - startT) < 250;
+    if ((dy > 90 || fast) && e.type !== 'pointercancel') {
+      menu.style.transform = 'translateY(100%)'; // 지금 위치에서 그대로 내려간다
+      closeCatMenu({ focus: false });
+    } else {
+      menu.style.transform = '';
+    }
+  };
+  menu.addEventListener('pointerup', end);
+  menu.addEventListener('pointercancel', end);
 }
 function closeCatMenu({ focus = true } = {}) {
   if (!catMenu) return;
