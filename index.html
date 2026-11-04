@@ -341,6 +341,20 @@
     word-break: break-word; padding: 1px 0;
   }
   .task-text:focus { outline: none; }
+  /* 제자리 편집: 글 자리에 textarea(한 줄처럼, 글이 길면 늘어남) + 아래 작은 도구 줄 */
+  .task-text.editing { cursor: auto; }
+  .inline-edit {
+    display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden;
+    font: inherit; line-height: inherit; color: var(--text); background: transparent; border: 0; padding: 0; margin: 0;
+    outline: none; min-height: 1.5em;
+  }
+  .inline-edit::placeholder { color: var(--muted); }
+  .inline-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; }
+  .inline-tools .text-btn { min-height: 32px; padding: 0 8px; margin: 0 -8px 0 0; font-size: 13px; }
+  .inline-tools .text-btn + .text-btn { margin-left: 8px; }
+  .inline-tools .hint { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .task.new-sub .task-toggle { visibility: hidden; }
+  .task.new-sub .cb-hit input { opacity: 0.4; pointer-events: none; }
   .task-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .task input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -4092,6 +4106,169 @@ function appendRows(card, rows, key) {
     }
     if (collapsedNow) collapseAtIndent = item.indent;
   });
+  // 만들고 있는 하위 할 일(아직 저장 전): 부모 블록 맨 아래에 입력 행
+  if (pendingChild) {
+    const parentRow = [...card.querySelectorAll('.task')].find((r) => +r.dataset.line === pendingChild.parentLine);
+    const parent = parentRow && rows.find((i) => i.lineIndex === pendingChild.parentLine);
+    if (parentRow && parent) {
+      let last = parentRow;
+      for (let n = parentRow.nextElementSibling; n && n.classList.contains('task') && +n.dataset.indent > parent.indent; n = n.nextElementSibling) last = n;
+      last.after(renderNewChildRow(parent));
+    }
+  }
+}
+
+// ---- 제자리 편집(행의 글을 눌러 그 자리에서 고치기) ----
+// inlineEdit: 지금 고치는 중인 줄(lineIndex·raw로 식별) + 초안. 다시 그려져도 유지된다
+let inlineEdit = null;
+// pendingChild: 만들고 있는 하위 할 일(부모 줄 번호 + 초안). 글을 넣고 Enter 하면 그때 저장
+let pendingChild = null;
+const inlineHint = () => (IS_PC ? 'Enter 저장 · Esc 취소 · Shift+Enter 하위 할 일' : '');
+function autosize(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+function startInlineEdit(item, row) {
+  if (inlineEdit && inlineEdit.line === item.lineIndex && inlineEdit.raw === item.raw) return;
+  pendingChild = null;
+  inlineEdit = { line: item.lineIndex, raw: item.raw, draft: item.text };
+  const span = row.querySelector('.task-text');
+  if (span) mountInlineEditor(span, item, row); else renderApp();
+}
+// 부모 줄 번호(하위 줄이면 가장 가까운 덜 들여쓴 상위 줄)
+function parentLineOf(item) {
+  if (item.indent === 0) return item.lineIndex;
+  const i = state.items.indexOf(item);
+  for (let k = (i >= 0 ? i : state.items.length) - 1; k >= 0; k--) {
+    const p = state.items[k];
+    if (p.type === 'task' && p.indent < item.indent) return p.lineIndex;
+  }
+  return null;
+}
+function mountInlineEditor(span, item, row) {
+  span.classList.add('editing');
+  span.innerHTML = '';
+  span.title = '';
+  span.removeAttribute('role');
+  span.tabIndex = -1;
+  const ta = document.createElement('textarea');
+  ta.className = 'inline-edit';
+  ta.rows = 1;
+  ta.value = inlineEdit.draft;
+  ta.setAttribute('aria-label', `고치기: ${item.text}`);
+  ta.setAttribute('enterkeyhint', 'done');
+  ta.autocomplete = 'off';
+  span.appendChild(ta);
+  const tools = document.createElement('div');
+  tools.className = 'inline-tools';
+  tools.innerHTML = `<button type="button" class="text-btn" data-act="sub">${item.indent === 0 ? '+ 하위 할 일' : '+ 다음 하위 할 일'}</button><button type="button" class="text-btn" data-act="archive">보관함으로</button>${inlineHint() ? `<span class="hint">${inlineHint()}</span>` : ''}`;
+  span.appendChild(tools);
+  let done = false;
+  const finish = async (mode) => {
+    if (done) return; done = true;
+    const text = ta.value.trim();
+    const changed = !!text && text !== item.text;
+    inlineEdit = null;
+    const pLine = parentLineOf(item);
+    if (changed) await saveInlineEdit(item, text); else renderApp();
+    if (mode === 'sub' && pLine != null) startNewChild(pLine);
+    else if (mode === 'archive') onDelete(item, taskRowFor(item));
+    else if (mode !== 'blur') focusTaskText(changed ? text : item.text);
+  };
+  ta.addEventListener('input', () => { inlineEdit && (inlineEdit.draft = ta.value); autosize(ta); });
+  ta.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'Enter') { e.preventDefault(); finish(e.shiftKey || e.metaKey || e.ctrlKey ? 'sub' : 'enter'); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done = true; inlineEdit = null; renderApp(); focusTaskText(item.text); }
+  });
+  ta.addEventListener('blur', () => { setTimeout(() => { if (!done && inlineEdit && inlineEdit.line === item.lineIndex) finish('blur'); }, 0); });
+  tools.addEventListener('pointerdown', (e) => e.preventDefault()); // 버튼을 눌러도 textarea가 blur로 먼저 저장되지 않게
+  tools.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); finish(b.dataset.act); });
+  autosize(ta);
+  ta.focus({ preventScroll: true });
+  try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
+}
+// 고친 글 저장(태그·자리는 그대로) + 되돌리기
+async function saveInlineEdit(item, text) {
+  const rec = {};
+  const record = reserveUndo();
+  const oldText = item.text;
+  const ok = await safeMutate(opEdit(item, text, rec), `edit: ${text}`, null, { flash: oldText, failMsg: '고치지 못했어요' });
+  if (ok) record(() => { safeMutate(opEditBack(rec, oldText), 'undo edit', null, { failMsg: '되돌리지 못했어요' }); }, oldText);
+  return ok;
+}
+function focusTaskText(text) {
+  const row = [...document.querySelectorAll('#sections .task')].find((r) => r.dataset.key === String(text).trim());
+  row?.querySelector('.task-text')?.focus({ preventScroll: true });
+}
+// 새 하위 할 일 입력 행 만들기(부모는 펼친 채로)
+function startNewChild(parentLine) {
+  const parent = state.items.find((i) => i.lineIndex === parentLine && i.type === 'task');
+  if (!parent) return;
+  collapsedSet.delete(collapseKeyOf(parent));
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsedSet])); } catch (e) {}
+  inlineEdit = null;
+  pendingChild = { parentLine, draft: '' };
+  renderApp();
+  const ta = document.querySelector('#sections .task.new-sub textarea');
+  if (ta) { ta.focus({ preventScroll: true }); ta.scrollIntoView({ block: 'nearest' }); }
+}
+function renderNewChildRow(parent) {
+  const t = document.createElement('div');
+  t.className = 'task indent-1 new-sub';
+  t.dataset.indent = parent.indent + 1;
+  const toggle = document.createElement('span');
+  toggle.className = 'task-toggle leaf';
+  const hit = document.createElement('label');
+  hit.className = 'cb-hit';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.tabIndex = -1; cb.disabled = true;
+  hit.appendChild(cb);
+  const span = document.createElement('div');
+  span.className = 'task-text editing';
+  const ta = document.createElement('textarea');
+  ta.className = 'inline-edit';
+  ta.rows = 1;
+  ta.placeholder = '하위 할 일';
+  ta.value = pendingChild.draft;
+  ta.setAttribute('aria-label', `${parent.text}의 새 하위 할 일`);
+  ta.setAttribute('enterkeyhint', 'done');
+  ta.autocomplete = 'off';
+  span.appendChild(ta);
+  const tools = document.createElement('div');
+  tools.className = 'inline-tools';
+  tools.innerHTML = `<button type="button" class="text-btn" data-act="save">추가</button><button type="button" class="text-btn" data-act="cancel">취소</button>${IS_PC ? '<span class="hint">Enter 추가 · Esc 취소 · Shift+Enter 추가하고 하나 더</span>' : ''}`;
+  span.appendChild(tools);
+  t.appendChild(toggle); t.appendChild(hit); t.appendChild(span);
+  let done = false;
+  const finish = (mode) => {
+    if (done) return; done = true;
+    const text = ta.value.trim();
+    if (mode === 'cancel' || !text) { pendingChild = null; renderApp(); if (mode !== 'blur') focusTaskText(parent.text); return; }
+    saveNewChild(parent, text, mode === 'sub');
+  };
+  ta.addEventListener('input', () => { pendingChild && (pendingChild.draft = ta.value); autosize(ta); });
+  ta.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'Enter') { e.preventDefault(); finish(e.shiftKey || e.metaKey || e.ctrlKey ? 'sub' : 'save'); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish('cancel'); }
+  });
+  ta.addEventListener('blur', () => { setTimeout(() => { if (!done && pendingChild && pendingChild.parentLine === parent.lineIndex) finish('blur'); }, 0); });
+  tools.addEventListener('pointerdown', (e) => e.preventDefault());
+  tools.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); finish(b.dataset.act); });
+  setTimeout(() => autosize(ta), 0);
+  return t;
+}
+// 하위 할 일 저장(부모 블록 맨 끝에 한 줄). again이면 저장 뒤 바로 다음 입력 행
+function saveNewChild(parent, text, again) {
+  const parentLine = parent.lineIndex;
+  pendingChild = again ? { parentLine, draft: '' } : null;
+  clearLastUndo();
+  const pr = activeStore.apply(opAddChild(parent, text), { msg: `add sub: ${text}` });
+  renderApp();
+  if (again) document.querySelector('#sections .task.new-sub textarea')?.focus({ preventScroll: true });
+  else focusTaskText(text);
+  pr.catch((e) => {
+    renderApp();
+    notifyError(e, { retry: () => saveNewChild(parent, text, false) });
+  });
 }
 
 // ---- Done 섹션 접기(B3) — 기본 펼침 ----
@@ -4169,6 +4346,7 @@ function renderTask(item, key, opts = {}) {
   t.className = `task indent-${Math.min(item.indent, 3)}` + (item.checked ? ' done' : '');
   t.dataset.line = item.lineIndex;
   t.dataset.indent = item.indent;
+  t.dataset.line = item.lineIndex;
   t.dataset.key = lingerKey(item);
   t.dataset.raw = item.raw; // 원문 줄(R21) — 새 행 찾기·깜빡임에 사용
   t.dataset.cat = key; // 행마다 카테고리(드래그·새 행 찾기)
@@ -4213,18 +4391,20 @@ function renderTask(item, key, opts = {}) {
     span.appendChild(badge);
   }
   span.title = '눌러서 고치기';
-  // 키보드: Tab으로 글에 가서 Enter(또는 Space)로 편집 시트(D1)
+  // 키보드: Tab으로 글에 가서 Enter(또는 Space)로 제자리 편집
   span.tabIndex = 0;
   span.setAttribute('role', 'button');
   span.setAttribute('aria-label', `고치기: ${item.text}`);
   span.addEventListener('keydown', (e) => {
     if (e.target !== span) return;
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditSheet(item); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startInlineEdit(item, t); }
   });
+  // 다시 그려져도 편집 중이던 행은 편집 상태 유지(초안 포함)
+  if (inlineEdit && inlineEdit.line === item.lineIndex && inlineEdit.raw === item.raw) mountInlineEditor(span, item, t);
   // 터치: 행을 길게 눌러 옮기기(B2). 체크박스·펼침 화살표는 제외
   t.addEventListener('pointerdown', (e) => {
     if (!e.pointerType || e.pointerType === 'mouse') return;
-    if (e.target.closest('input, .cb-hit, .task-toggle, a, .task-actions, .cat-anchor')) return;
+    if (e.target.closest('input, .cb-hit, .task-toggle, a, .task-actions, .cat-anchor, textarea, .inline-tools')) return;
     longPress(e, t, {
       onStart: (ev) => {
         suppressRowClick(t, 600); // 놓은 뒤 따라오는 클릭이 편집 시트를 열지 않게(이 행만)
@@ -4235,8 +4415,8 @@ function renderTask(item, key, opts = {}) {
   span.addEventListener('click', (e) => {
     if (e.target.closest('a')) { e.stopPropagation(); return; } // 링크는 열기만, 편집 안 함
     if (rowClickSuppressed(t)) return;
-    if (e.target.tagName === 'INPUT') return;
-    openEditSheet(item);
+    if (e.target.tagName === 'INPUT' || span.classList.contains('editing')) return;
+    startInlineEdit(item, t);
   });
 
   const actions = document.createElement('div');
@@ -4250,7 +4430,6 @@ function renderTask(item, key, opts = {}) {
   handle.innerHTML = '<svg class="drag-ic" viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" focusable="false"><path d="M0.75 1.75 H11.25 M0.75 6.25 H11.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></svg>';
   handle.addEventListener('pointerdown', (e) => onDragStart(e, item, key, t));
   handle.addEventListener('click', (e) => e.stopPropagation());
-  actions.appendChild(handle);
 
   const del = document.createElement('button');
   // PC hover의 빨간 채움은 영구 삭제(보관함 🗑)에만 — 보관은 회색 📥(다듬기, C7과 같은 기호)
@@ -4260,6 +4439,7 @@ function renderTask(item, key, opts = {}) {
   del.innerHTML = '📥';
   del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(item, t); });
   actions.appendChild(del);
+  actions.appendChild(handle); // 핸들은 맨 오른쪽(보관함 버튼 다음)
 
   const hit = document.createElement('label');
   hit.className = 'cb-hit';
