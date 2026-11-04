@@ -231,6 +231,26 @@
   }
   .cat-menu.up { top: auto; bottom: calc(100% + 8px); }
   .cat-menu.right { left: auto; right: 0; }
+  /* 모바일(좁은 화면·터치): 같은 메뉴를 화면 아래 바텀시트로. body 바로 아래에 붙인다(시트 안 transform 영향 회피) */
+  .opt-scrim {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 70; touch-action: none;
+    opacity: 0; transition: opacity var(--dur) var(--ease);
+  }
+  .opt-scrim.show { opacity: 1; }
+  .cat-menu.sheet-mode {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 71;
+    max-width: 560px; margin: 0 auto; min-width: 0; max-height: min(85vh, 660px) !important;
+    border-radius: 16px 16px 0 0; padding: 6px 12px calc(var(--safe-bottom) + 12px); gap: 2px;
+    overscroll-behavior: contain; transform: translateY(100%); transition: transform var(--dur) var(--ease);
+  }
+  .cat-menu.sheet-mode.show { transform: translateY(0); }
+  .cat-menu.sheet-mode .opt-grab { flex-shrink: 0; width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 4px auto 8px; }
+  .cat-menu.sheet-mode .opt-title { flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--muted); padding: 0 10px 8px; }
+  .cat-menu.sheet-mode .cat-opt { flex-shrink: 0; min-height: 48px; font-size: 15px; border-radius: 10px; }
+  .cat-menu.sheet-mode .cat-opt .cat-ic { width: 22px; height: 22px; }
+  .cat-menu.sheet-mode .cat-opt.all + .cat-opt { margin-top: 8px; }
+  .cat-menu.sheet-mode .cat-opt.all + .cat-opt::before { top: -4px; }
+  @media (prefers-reduced-motion: reduce) { .opt-scrim, .cat-menu.sheet-mode { transition: none; } }
   .cat-opt {
     appearance: none; -webkit-appearance: none; border: 0; background: none; color: var(--text);
     width: 100%; min-height: 40px; padding: 0 10px; border-radius: 8px; cursor: pointer; text-align: left;
@@ -3371,7 +3391,7 @@ const tapGuards = [];
 // 막은 누름 뒤에 오는 click 하나만 먹는다(S16): 같은 자리(10px 안)·짧은 시간 안의 click만, 그 손가락이 취소되면(스크롤 시작) 해제
 let swallowClick = null;
 // 떠 있는 요소(토스트·입력창·선택 바·시트·헤더·탭)는 막지 않는다 — 되돌리기 버튼 등. pointerdown·click이 같은 목록을 씀
-const TAP_GUARD_EXEMPT = '#toast, #composer, .inbox-bar, #archive-bar, #sheet, #scrim, header, .tabs';
+const TAP_GUARD_EXEMPT = '#toast, #composer, .inbox-bar, #archive-bar, #sheet, #scrim, header, .tabs, .cat-menu, .opt-scrim';
 function guardTapsAt(el, ms = 650) {
   const r = el.getBoundingClientRect();
   tapGuards.push({ left: r.left, right: r.right, top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, until: Date.now() + ms });
@@ -4737,24 +4757,41 @@ function openCatMenu(anchor, { allOption = null, counts = null, label = '카테�
   openOptMenu(anchor, { items, label, ...rest });
 }
 // 일반 항목 메뉴: items = [{ key, label, icon?, count?, cls? }]
+// 모바일(좁은 화면 또는 터치 전용 기기)에서는 버튼 옆 드롭다운 대신 바텀시트
+const isSheetMenu = () => !!(window.matchMedia && (window.matchMedia('(max-width: 600px)').matches || window.matchMedia('(hover: none) and (pointer: coarse)').matches));
 function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', up = null, align = null } = {}) {
   if (catMenu && catMenu.anchor === anchor) { closeCatMenu(); return; }
   closeCatMenu({ focus: false });
+  const sheetMode = isSheetMenu();
   const wrap = anchor.closest('.cat-anchor') || anchor.parentElement;
   const r = anchor.getBoundingClientRect();
   const openUp = up != null ? up : (r.top > window.innerHeight - r.bottom);
   const alignRight = align != null ? align === 'right' : (r.left > window.innerWidth / 2);
   const menu = document.createElement('div');
-  menu.className = 'cat-menu' + (openUp ? ' up' : '') + (alignRight ? ' right' : '');
+  menu.className = sheetMode ? 'cat-menu sheet-mode' : 'cat-menu' + (openUp ? ' up' : '') + (alignRight ? ' right' : '');
   menu.setAttribute('role', 'listbox');
   menu.setAttribute('aria-label', label);
-  const room = (openUp ? r.top : window.innerHeight - r.bottom) - 16;
-  menu.style.maxHeight = Math.max(120, Math.min(520, room)) + 'px';
-  menu.innerHTML = items.map(({ key, label: text, icon = '', count = null, cls = '' }) =>
+  if (!sheetMode) {
+    const room = (openUp ? r.top : window.innerHeight - r.bottom) - 16;
+    menu.style.maxHeight = Math.max(120, Math.min(520, room)) + 'px';
+  }
+  const head = sheetMode ? `<div class="opt-grab" aria-hidden="true"></div><div class="opt-title" aria-hidden="true">${esc(label)}</div>` : '';
+  menu.innerHTML = head + items.map(({ key, label: text, icon = '', count = null, cls = '' }) =>
     `<button type="button" class="cat-opt${key === current ? ' on' : ''}${count ? ' has-n' : ''}${cls}" role="option" aria-selected="${key === current}" data-cat="${key}" tabindex="-1">${icon}${esc(text)}${count ? `<span class="opt-n">${count}</span>` : ''}</button>`).join('');
-  wrap.appendChild(menu);
+  let scrim = null;
+  if (sheetMode) {
+    scrim = document.createElement('div');
+    scrim.className = 'opt-scrim';
+    scrim.addEventListener('click', () => closeCatMenu());
+    document.body.appendChild(scrim);
+    document.body.appendChild(menu);
+    void menu.offsetHeight; // 시작 위치를 먼저 그리게 한 뒤 올라오는 전환
+    scrim.classList.add('show'); menu.classList.add('show');
+  } else {
+    wrap.appendChild(menu);
+  }
   anchor.setAttribute('aria-expanded', 'true');
-  catMenu = { menu, anchor, onPick };
+  catMenu = { menu, anchor, onPick, scrim };
   const opts = [...menu.querySelectorAll('.cat-opt')];
   const pick = (k) => { closeCatMenu(); onPick && onPick(k); };
   menu.addEventListener('click', (e) => { const b = e.target.closest('.cat-opt'); if (!b) return; e.stopPropagation(); pick(b.dataset.cat); });
@@ -4774,9 +4811,16 @@ function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', 
 }
 function closeCatMenu({ focus = true } = {}) {
   if (!catMenu) return;
-  const { menu, anchor } = catMenu;
+  const { menu, anchor, scrim } = catMenu;
   catMenu = null;
-  menu.remove();
+  if (scrim) {
+    // 바텀시트: 내려가는 동작을 보여 준 뒤 지운다
+    menu.classList.remove('show'); scrim.classList.remove('show');
+    menu.style.pointerEvents = 'none'; scrim.style.pointerEvents = 'none';
+    setTimeout(() => { menu.remove(); scrim.remove(); }, 220);
+  } else {
+    menu.remove();
+  }
   anchor.setAttribute('aria-expanded', 'false');
   if (focus && anchor.isConnected) anchor.focus({ preventScroll: true });
 }
