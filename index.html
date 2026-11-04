@@ -352,7 +352,6 @@
   .inline-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; }
   .inline-tools .text-btn { min-height: 32px; padding: 0 8px; margin: 0 -8px 0 0; font-size: 13px; }
   .inline-tools .text-btn + .text-btn { margin-left: 8px; }
-  .inline-tools .hint { font-size: 12px; color: var(--muted); margin-left: auto; }
   .task.new-sub .task-toggle { visibility: hidden; }
   .task.new-sub .cb-hit input { opacity: 0.4; pointer-events: none; }
   .task-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -4123,7 +4122,6 @@ function appendRows(card, rows, key) {
 let inlineEdit = null;
 // pendingChild: 만들고 있는 하위 할 일(부모 줄 번호 + 초안). 글을 넣고 Enter 하면 그때 저장
 let pendingChild = null;
-const inlineHint = () => (IS_PC ? 'Enter 저장 · Esc 취소 · Shift+Enter 하위 할 일' : '');
 function autosize(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
 function startInlineEdit(item, row) {
   if (inlineEdit && inlineEdit.line === item.lineIndex && inlineEdit.raw === item.raw) return;
@@ -4156,10 +4154,14 @@ function mountInlineEditor(span, item, row) {
   ta.setAttribute('enterkeyhint', 'done');
   ta.autocomplete = 'off';
   span.appendChild(ta);
-  const tools = document.createElement('div');
-  tools.className = 'inline-tools';
-  tools.innerHTML = `<button type="button" class="text-btn" data-act="sub">${item.indent === 0 ? '+ 하위 할 일' : '+ 다음 하위 할 일'}</button><button type="button" class="text-btn" data-act="archive">보관함으로</button>${inlineHint() ? `<span class="hint">${inlineHint()}</span>` : ''}`;
-  span.appendChild(tools);
+  // 도구 줄: PC는 없음(Enter 저장·Esc 취소·Shift+Enter 하위 할 일), 모바일은 "+ 하위 할 일" 버튼만
+  let tools = null;
+  if (!IS_PC) {
+    tools = document.createElement('div');
+    tools.className = 'inline-tools';
+    tools.innerHTML = `<button type="button" class="text-btn" data-act="sub">${item.indent === 0 ? '+ 하위 할 일' : '+ 다음 하위 할 일'}</button>`;
+    span.appendChild(tools);
+  }
   let done = false;
   const finish = async (mode) => {
     if (done) return; done = true;
@@ -4169,7 +4171,6 @@ function mountInlineEditor(span, item, row) {
     const pLine = parentLineOf(item);
     if (changed) await saveInlineEdit(item, text); else renderApp();
     if (mode === 'sub' && pLine != null) startNewChild(pLine);
-    else if (mode === 'archive') onDelete(item, taskRowFor(item));
     else if (mode !== 'blur') focusTaskText(changed ? text : item.text);
   };
   ta.addEventListener('input', () => { inlineEdit && (inlineEdit.draft = ta.value); autosize(ta); });
@@ -4179,8 +4180,10 @@ function mountInlineEditor(span, item, row) {
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done = true; inlineEdit = null; renderApp(); focusTaskText(item.text); }
   });
   ta.addEventListener('blur', () => { setTimeout(() => { if (!done && inlineEdit && inlineEdit.line === item.lineIndex) finish('blur'); }, 0); });
-  tools.addEventListener('pointerdown', (e) => e.preventDefault()); // 버튼을 눌러도 textarea가 blur로 먼저 저장되지 않게
-  tools.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); finish(b.dataset.act); });
+  if (tools) {
+    tools.addEventListener('pointerdown', (e) => e.preventDefault()); // 버튼을 눌러도 textarea가 blur로 먼저 저장되지 않게
+    tools.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); finish(b.dataset.act); });
+  }
   autosize(ta);
   ta.focus({ preventScroll: true });
   try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
@@ -4232,10 +4235,13 @@ function renderNewChildRow(parent) {
   ta.setAttribute('enterkeyhint', 'done');
   ta.autocomplete = 'off';
   span.appendChild(ta);
-  const tools = document.createElement('div');
-  tools.className = 'inline-tools';
-  tools.innerHTML = `<button type="button" class="text-btn" data-act="save">추가</button><button type="button" class="text-btn" data-act="cancel">취소</button>${IS_PC ? '<span class="hint">Enter 추가 · Esc 취소 · Shift+Enter 추가하고 하나 더</span>' : ''}`;
-  span.appendChild(tools);
+  let tools = null;
+  if (!IS_PC) {
+    tools = document.createElement('div');
+    tools.className = 'inline-tools';
+    tools.innerHTML = '<button type="button" class="text-btn" data-act="save">추가</button><button type="button" class="text-btn" data-act="cancel">취소</button>';
+    span.appendChild(tools);
+  }
   t.appendChild(toggle); t.appendChild(hit); t.appendChild(span);
   let done = false;
   const finish = (mode) => {
@@ -4251,8 +4257,10 @@ function renderNewChildRow(parent) {
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish('cancel'); }
   });
   ta.addEventListener('blur', () => { setTimeout(() => { if (!done && pendingChild && pendingChild.parentLine === parent.lineIndex) finish('blur'); }, 0); });
-  tools.addEventListener('pointerdown', (e) => e.preventDefault());
-  tools.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); finish(b.dataset.act); });
+  if (tools) {
+    tools.addEventListener('pointerdown', (e) => e.preventDefault());
+    tools.addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); finish(b.dataset.act); });
+  }
   setTimeout(() => autosize(ta), 0);
   return t;
 }
