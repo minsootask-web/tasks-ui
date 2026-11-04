@@ -212,7 +212,16 @@
 
   /* 카테고리 아이콘(서비스 아이콘 20px). 행에서는 18px */
   .cat-ic { width: 20px; height: 20px; flex-shrink: 0; display: block; }
-  .task .task-cat { width: 18px; height: 18px; margin: 2px 0 0 -4px; }
+  /* 행의 카테고리 아이콘 = 버튼(누르면 그 할 일의 카테고리만 바꾸는 메뉴). 아이콘 자리는 그대로, 누르는 영역은 44px */
+  .task-cat-btn {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent; padding: 0; cursor: pointer;
+    width: 22px; height: 22px; margin-left: -6px; border-radius: 6px; flex-shrink: 0; position: relative;
+    display: inline-flex; align-items: center; justify-content: center; transition: background var(--dur-fast);
+  }
+  .task-cat-btn::before { content: ""; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+  .task-cat-btn:hover, .task-cat-btn[aria-expanded="true"] { background: var(--surface-2); }
+  .task-cat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .task .task-cat { width: 18px; height: 18px; }
   .task.done .task-cat { opacity: 0.45; }
   .task.cat-gap { margin-top: 10px; }
 
@@ -4215,7 +4224,7 @@ function renderTask(item, key, opts = {}) {
   // 터치: 행을 길게 눌러 옮기기(B2). 체크박스·펼침 화살표는 제외
   t.addEventListener('pointerdown', (e) => {
     if (!e.pointerType || e.pointerType === 'mouse') return;
-    if (e.target.closest('input, .cb-hit, .task-toggle, a, .task-actions')) return;
+    if (e.target.closest('input, .cb-hit, .task-toggle, a, .task-actions, .cat-anchor')) return;
     longPress(e, t, {
       onStart: (ev) => {
         suppressRowClick(t, 600); // 놓은 뒤 따라오는 클릭이 편집 시트를 열지 않게(이 행만)
@@ -4258,13 +4267,29 @@ function renderTask(item, key, opts = {}) {
   t.appendChild(toggle);
   t.appendChild(hit);
   if (showCat) {
+    // 카테고리 아이콘 버튼: 누르면 이 할 일의 카테고리만 고르는 메뉴(PC 드롭다운·모바일 바텀시트)
+    const wrap = document.createElement('span');
+    wrap.className = 'cat-anchor';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'task-cat-btn';
+    btn.title = `${CAT[normCat(key)].label} · 카테고리 바꾸기`;
+    btn.setAttribute('aria-label', `카테고리 바꾸기: ${item.text} (${CAT[normCat(key)].label})`);
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
     const ic = document.createElement('img');
     ic.className = 'cat-ic task-cat';
     ic.src = CAT[normCat(key)].icon;
     ic.alt = '';
-    ic.title = CAT[normCat(key)].label;
     ic.draggable = false;
-    t.appendChild(ic);
+    btn.appendChild(ic);
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation()); // 행의 길게 누르기·끌기 시작을 막는다
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCatMenu(btn, { current: normCat(key), label: '카테고리 바꾸기', onPick: (k) => onChangeCat(item, k) });
+    });
+    wrap.appendChild(btn);
+    t.appendChild(wrap);
   }
   t.appendChild(span);
   t.appendChild(actions);
@@ -4747,6 +4772,21 @@ function onDragEnd(e) {
     else record(undo, srcItem.text);
   });
   return pr;
+}
+
+// 행의 카테고리 아이콘에서 고른 카테고리로 바꾼다(글·자리는 그대로, 줄 끝 태그만). 토스트로 알리고 되돌릴 수 있다
+async function onChangeCat(item, key) {
+  const next = normCat(key);
+  const live = state.items.find((i) => i.lineIndex === item.lineIndex && i.raw === item.raw) || item;
+  const cur = normCat(live.cat);
+  if (next === cur) return;
+  const rec = {};
+  const record = reserveUndo();
+  const ok = await safeMutate(opEdit(live, live.text, rec, next), `cat: ${live.text}`, null, { flash: live.text, failMsg: '카테고리를 바꾸지 못했어요' });
+  if (!ok) return;
+  const undo = () => { safeMutate(opEditBack(rec, live.text, cur), 'undo cat', null, { failMsg: '되돌리지 못했어요' }); };
+  notify.undo(`${CAT[next].label} 카테고리로 바꿨어요`, undo);
+  record(undo, live.text);
 }
 
 // ============ Sheet (add/edit) ============
