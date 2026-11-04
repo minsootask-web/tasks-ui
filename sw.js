@@ -1,6 +1,6 @@
 // 정적 아이콘은 cache-first, HTML/스크립트는 network-first.
 // 새 배포는 일반 새로고침으로도 즉시 반영된다.
-const CACHE = "tasks-v10";
+const CACHE = "tasks-v11";
 const ASSETS = [
   "./manifest.json",
   "./favicon.svg",
@@ -12,7 +12,8 @@ const ASSETS = [
   "./apple-touch-icon.png",
   // 카테고리(서비스) 아이콘
   "./icons/ainote.svg", "./icons/paperon.svg", "./icons/portal.svg", "./icons/page.svg", "./icons/board.svg",
-  "./icons/contact.svg", "./icons/drive.svg", "./icons/home.svg", "./icons/mail.svg", "./icons/survey.svg", "./icons/etc.svg",
+  "./icons/contact.svg", "./icons/drive.svg", "./icons/home.svg", "./icons/mail.svg", "./icons/survey.svg",
+  "./icons/mybox.svg", "./icons/etc.svg",
 ];
 
 self.addEventListener("install", (e) => {

@@ -177,7 +177,7 @@ test('태그: 줄 끝 #카테고리만 떼고(대소문자 무시), 글 안의 #
   eq(T.setLineCat('- [x] a #portal', 'mail'), '- [x] a #mail');
   eq(T.setLineCat('- [ ] a #portal', null), '- [ ] a');
   eq(T.setLineCat('- [ ] a', 'etc'), '- [ ] a');
-  eq(T.CAT_ORDER, ['ainote', 'paperon', 'portal', 'page', 'board', 'contact', 'drive', 'home', 'mail', 'survey', 'etc']);
+  eq(T.CAT_ORDER, ['ainote', 'paperon', 'portal', 'page', 'board', 'contact', 'drive', 'home', 'mail', 'survey', 'mybox', 'etc']);
 });
 
 test('해석: 상위는 자기 태그(없으면 etc), 하위는 부모의 카테고리, 옛 섹션 헤더(## 🔥 High)는 무시', () => {
