@@ -248,13 +248,8 @@
   /* 손잡이·제목 줄: 여기를 잡고 끌어 내리면 닫힘(스크롤과 안 겹치게 touch-action: none) */
   .cat-menu.sheet-mode .opt-grab { flex-shrink: 0; height: 22px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
   .cat-menu.sheet-mode .opt-grab::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: var(--border); }
-  .cat-menu.sheet-mode .opt-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 0 6px 10px; touch-action: none; }
+  .cat-menu.sheet-mode .opt-head { flex-shrink: 0; display: flex; align-items: center; padding: 0 10px 8px; touch-action: none; }
   .cat-menu.sheet-mode .opt-title { font-size: 13px; font-weight: 600; color: var(--muted); }
-  .cat-menu.sheet-mode .opt-close {
-    appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--muted); cursor: pointer;
-    width: 40px; height: 40px; border-radius: 10px; font-size: 16px; display: inline-flex; align-items: center; justify-content: center;
-  }
-  .cat-menu.sheet-mode .opt-close:hover, .cat-menu.sheet-mode .opt-close:focus-visible { background: var(--surface-2); color: var(--text); outline: none; }
   .cat-menu.sheet-mode .cat-opt { flex-shrink: 0; min-height: 48px; font-size: 15px; border-radius: 10px; }
   .cat-menu.sheet-mode .cat-opt .cat-ic { width: 22px; height: 22px; }
   .cat-menu.sheet-mode .cat-opt.all + .cat-opt { margin-top: 8px; }
@@ -4785,7 +4780,7 @@ function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', 
     const room = (openUp ? r.top : window.innerHeight - r.bottom) - 16;
     menu.style.maxHeight = Math.max(120, Math.min(520, room)) + 'px';
   }
-  const head = sheetMode ? `<div class="opt-grab" aria-hidden="true"></div><div class="opt-head"><span class="opt-title" aria-hidden="true">${esc(label)}</span><button type="button" class="opt-close" aria-label="닫기">✕</button></div>` : '';
+  const head = sheetMode ? `<div class="opt-grab" aria-hidden="true"></div><div class="opt-head"><span class="opt-title" aria-hidden="true">${esc(label)}</span></div>` : '';
   menu.innerHTML = head + items.map(({ key, label: text, icon = '', count = null, cls = '' }) =>
     `<button type="button" class="cat-opt${key === current ? ' on' : ''}${count ? ' has-n' : ''}${cls}" role="option" aria-selected="${key === current}" data-cat="${key}" tabindex="-1">${icon}${esc(text)}${count ? `<span class="opt-n">${count}</span>` : ''}</button>`).join('');
   let scrim = null;
@@ -4813,7 +4808,6 @@ function openOptMenu(anchor, { items, current = null, onPick, label = '메뉴', 
   const pick = (k) => { closeCatMenu(); onPick && onPick(k); };
   menu.addEventListener('click', (e) => {
     if (menu._dragged) { menu._dragged = false; return; } // 끌어 내린 손가락을 뗄 때 생기는 click은 고르기가 아님
-    if (e.target.closest('.opt-close')) { e.stopPropagation(); closeCatMenu({ focus: false }); return; }
     const b = e.target.closest('.cat-opt'); if (!b) return; e.stopPropagation(); pick(b.dataset.cat);
   });
   menu.addEventListener('keydown', (e) => {
